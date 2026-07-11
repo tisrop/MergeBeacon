@@ -23,11 +23,17 @@ const number = Number(route.params.number);
 const activeTab = ref<"diff" | "reviews" | "ai">("diff");
 
 const inlineComments = ref<ReviewCommentPosition[]>([]);
+const reviewListRef = ref<InstanceType<typeof ReviewList> | null>(null);
 
-async function handleAddComment(path: string, startLine: number, endLine: number, _side: string, body?: string) {
+async function handleAddComment(path: string, startLine: number, endLine: number, side: string, body?: string) {
   if (!pr.currentPr?.head_sha || !body) return;
   try {
-    await reviewCommentAdd(platform, owner, repo, number, pr.currentPr.head_sha, path, endLine, body);
+    const sl = startLine !== endLine ? startLine : null;
+    await reviewCommentAdd(platform, owner, repo, number, pr.currentPr.head_sha, path, sl, endLine, side, body);
+    // Refresh review list after successful comment submission
+    if (reviewListRef.value) {
+      reviewListRef.value.refresh();
+    }
   } catch (e) {
     console.error("Failed to add review comment:", e);
   }

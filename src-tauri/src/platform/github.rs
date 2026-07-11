@@ -67,7 +67,8 @@ impl GitHubAdapter {
                         .find('>')
                         .unwrap_or(part.len() - url_start);
                     let url = &part[url_start + 1..url_start + url_end];
-                    for seg in url.split('&').chain(url.split('?')) {
+                    let query = url.split('?').nth(1).unwrap_or("");
+                    for seg in query.split('&') {
                         if let Some(page_str) = seg.strip_prefix("page=") {
                             if let Ok(n) = page_str.parse::<u32>() {
                                 return n;
@@ -421,19 +422,37 @@ impl GitPlatform for GitHubAdapter {
         pr_number: u64,
         commit_id: &str,
         path: &str,
+        start_line: Option<u32>,
         line: u32,
+        side: &str,
         body: &str,
     ) -> Result<(), AppError> {
         let url = format!(
             "{}/repos/{}/{}/pulls/{}/comments",
             self.base_url, owner, repo, pr_number
         );
-        let payload = serde_json::json!({
-            "body": body,
-            "commit_id": commit_id,
-            "path": path,
-            "line": line,
-        });
+        let gh_side = match side {
+            "left" => "LEFT",
+            _ => "RIGHT",
+        };
+        let payload = if let Some(sl) = start_line {
+            serde_json::json!({
+                "body": body,
+                "commit_id": commit_id,
+                "path": path,
+                "start_line": sl,
+                "line": line,
+                "side": gh_side,
+            })
+        } else {
+            serde_json::json!({
+                "body": body,
+                "commit_id": commit_id,
+                "path": path,
+                "line": line,
+                "side": gh_side,
+            })
+        };
         self.post_json(&url, &payload).await?;
         Ok(())
     }
@@ -456,6 +475,7 @@ impl GitPlatform for GitHubAdapter {
                 body: c["body"].as_str().unwrap_or("").to_string(),
                 path: c["path"].as_str().unwrap_or("").to_string(),
                 line: c["line"].as_u64().map(|n| n as u32),
+                start_line: c["start_line"].as_u64().map(|n| n as u32),
                 author: Self::map_user(&c["user"]),
                 created_at: c["created_at"].as_str().unwrap_or("").to_string(),
             })
@@ -505,6 +525,7 @@ impl GitPlatform for GitHubAdapter {
 
         let issues: Vec<IssueSummary> = items
             .iter()
+            .filter(|i| !i["pull_request"].is_object())
             .map(|i| IssueSummary {
                 number: i["number"].as_u64().unwrap_or(0),
                 title: i["title"].as_str().unwrap_or("").to_string(),

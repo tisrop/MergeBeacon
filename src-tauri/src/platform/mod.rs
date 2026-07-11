@@ -65,7 +65,9 @@ pub trait GitPlatform: Send + Sync {
         pr_number: u64,
         commit_id: &str,
         path: &str,
+        start_line: Option<u32>,
         line: u32,
+        side: &str,
         body: &str,
     ) -> Result<(), AppError>;
 

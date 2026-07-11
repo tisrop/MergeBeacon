@@ -32,7 +32,7 @@ function toggle(id: string) {
   }
 }
 
-onMounted(async () => {
+async function loadReviews() {
   loading.value = true;
   try {
     const [reviews, comments] = await Promise.all([
@@ -63,6 +63,12 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+}
+
+onMounted(loadReviews);
+
+defineExpose({
+  refresh: loadReviews,
 });
 
 const PREVIEW_LEN = 120;

@@ -335,7 +335,9 @@ impl GitPlatform for GitLabAdapter {
         _pr_number: u64,
         _commit_id: &str,
         _path: &str,
+        _start_line: Option<u32>,
         _line: u32,
+        _side: &str,
         _body: &str,
     ) -> Result<(), AppError> {
         // TODO: implement GitLab MR comment

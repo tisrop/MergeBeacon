@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useRepoStore } from "@/stores/useRepoStore";
@@ -16,6 +16,10 @@ const platforms: { value: Platform; label: string }[] = [
   { value: "gitee", label: "Gitee" },
 ];
 
+const visiblePlatforms = computed(() =>
+  platforms.filter((p) => auth.platformVisibility[p.value])
+);
+
 onMounted(async () => {
   for (const p of platforms) {
     await auth.checkAuth(p.value);
@@ -27,7 +31,10 @@ onMounted(async () => {
 
 function selectPlatform(p: Platform) {
   auth.setActivePlatform(p);
-  repo.fetchRepos(p);
+  if (repo.reposCache[p].length === 0) {
+    repo.loading = true;
+    repo.fetchRepos(p);
+  }
 }
 
 function selectRepo(r: { owner: string; repo: string }) {
@@ -76,7 +83,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
 
     <div class="platform-selector">
       <button
-        v-for="p in platforms"
+        v-for="p in visiblePlatforms"
         :key="p.value"
         :class="{ active: auth.activePlatform === p.value }"
         @click="selectPlatform(p.value)"
@@ -104,19 +111,18 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         Issues
       </router-link>
-      <router-link to="/settings" :class="{ active: isActive('settings') }">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-        设置
-      </router-link>
     </nav>
 
     <!-- Repo list -->
     <div class="repo-section" v-if="auth.isLoggedIn">
-      <h4>仓库</h4>
-      <div v-if="repo.loading && repo.repos.length === 0" class="skeleton repo-loading-skeleton">
-        <div class="skeleton-line" />
-        <div class="skeleton-line" />
-        <div class="skeleton-line" />
+      <div class="repo-header">
+        <h4>仓库</h4>
+        <button class="refresh-btn" title="刷新仓库列表" :disabled="repo.loading" @click="repo.refreshRepos(auth.activePlatform)">
+          <svg :class="{ spinning: repo.loading }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+        </button>
+      </div>
+      <div v-if="repo.loading && repo.repos.length === 0" class="repo-list">
+        <div class="loading-hint">加载中...</div>
       </div>
       <div v-else class="repo-list">
         <template v-for="r in repo.repos" :key="r.id">
@@ -254,37 +260,62 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
   padding: var(--space-2);
 }
 
-.repo-section h4 {
+.repo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-1) var(--space-1);
+}
+
+.repo-header h4 {
   font-size: 11px;
   text-transform: uppercase;
   color: var(--color-text-tertiary);
-  padding: var(--space-2) var(--space-1) var(--space-1);
   letter-spacing: 0.05em;
   font-weight: 600;
+  padding: 0;
+  margin: 0;
 }
 
-.repo-loading-skeleton {
-  padding: var(--space-2);
+.refresh-btn {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.skeleton-line {
-  height: 28px;
-  background: var(--color-surface-hover);
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
   border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
 }
 
-.repo-loading-skeleton .skeleton-line {
-  background: linear-gradient(90deg, var(--color-surface-hover) 25%, var(--color-border-light) 50%, var(--color-surface-hover) 75%);
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+.refresh-btn:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
 }
 
-@keyframes skeleton-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+.refresh-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6) var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-tertiary);
 }
 
 .repo-list {

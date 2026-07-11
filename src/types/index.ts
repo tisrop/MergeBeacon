@@ -79,6 +79,7 @@ export interface PrComment {
   body: string;
   path: string;
   line: number | null;
+  start_line: number | null;
   author: User;
   created_at: string;
 }

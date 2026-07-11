@@ -22,7 +22,6 @@ pub async fn review_submit(
         "request_changes" => ReviewEvent::RequestChanges,
         _ => ReviewEvent::Comment,
     };
-    // TODO: handle inline comments (comments param) for platforms that support it
     p.create_review(&owner, &repo, pr_number, &body, &review_event)
         .await
         .map_err(|e| e.to_string())
@@ -66,11 +65,15 @@ pub async fn review_comment_add(
     pr_number: u64,
     commit_id: String,
     path: String,
+    start_line: Option<u32>,
     line: u32,
+    side: String,
     body: String,
 ) -> Result<(), String> {
     let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.create_pr_comment(&owner, &repo, pr_number, &commit_id, &path, line, &body)
-        .await
-        .map_err(|e| e.to_string())
+    p.create_pr_comment(
+        &owner, &repo, pr_number, &commit_id, &path, start_line, line, &side, &body,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }

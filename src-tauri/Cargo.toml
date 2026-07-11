@@ -33,3 +33,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [[test]]
 name = "github_adapter"
 path = "tests/github_adapter_test.rs"
+
+[[test]]
+name = "gitee_adapter"
+path = "tests/gitee_adapter_test.rs"
