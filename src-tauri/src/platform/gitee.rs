@@ -427,6 +427,7 @@ impl GitPlatform for GiteeAdapter {
 
         let issues = items
             .iter()
+            .filter(|i| !i["pull_request"].is_object())
             .map(|i| IssueSummary {
                 number: i["number"].as_u64().unwrap_or(0),
                 title: i["title"].as_str().unwrap_or("").to_string(),
