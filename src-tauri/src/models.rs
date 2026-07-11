@@ -130,6 +130,7 @@ pub struct PrComment {
     pub body: String,
     pub path: String,
     pub line: Option<u32>,
+    pub start_line: Option<u32>,
     pub author: User,
     pub created_at: String,
 }

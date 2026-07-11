@@ -50,6 +50,39 @@ const categoryLabels: Record<string, string> = {
   logic: "逻辑类", security: "安全类", performance: "性能类", style: "代码风格类", log: "日志类",
 };
 
+const opinionTemplates: Record<string, string> = {
+  "边界条件": "请检查此处的边界条件是否处理完整，包括空值、越界、临界值等场景。",
+  "空值处理": "此处缺少空值判断，建议增加 null/undefined 保护。",
+  "异常处理": "建议完善异常处理逻辑，确保异常路径能被正确捕获和处理。",
+  "并发问题": "此处存在并发安全问题，建议考虑加锁或使用原子操作。",
+  "状态管理": "状态管理逻辑不够清晰，建议简化或拆分状态管理。",
+  "类型错误": "存在类型不匹配问题，建议使用更精确的类型定义。",
+  "注入攻击": "存在注入风险，建议使用参数化查询或对输入进行严格过滤。",
+  "权限控制": "缺少必要的权限校验，建议在此处增加权限检查。",
+  "敏感信息泄露": "可能泄露敏感信息，建议避免在输出中暴露内部细节。",
+  "加密问题": "加密方案不够安全，建议使用更安全的加密算法。",
+  "输入校验": "缺少输入校验，建议对用户输入进行合法性检查。",
+  "CSRF/XSS": "存在跨站攻击风险，建议增加 CSRF Token 或 XSS 过滤。",
+  "算法复杂度": "算法复杂度过高，建议优化以提升性能。",
+  "内存泄漏": "可能存在内存泄漏风险，请检查资源释放路径。",
+  "IO阻塞": "IO 操作未异步处理，可能阻塞主线程，建议异步化。",
+  "重复计算": "存在重复计算，建议提取为变量或缓存结果。",
+  "缓存优化": "缓存策略可以进一步优化，减少不必要的缓存更新。",
+  "数据库查询": "数据库查询效率较低，建议添加索引或优化查询。",
+  "命名规范": "命名不够规范，建议遵循项目命名约定。",
+  "注释缺失": "此处逻辑较复杂，建议补充注释说明意图。",
+  "代码冗余": "代码存在冗余，建议抽取为公共方法复用。",
+  "硬编码": "存在硬编码值，建议抽取为常量或配置项。",
+  "函数过长": "函数过长，建议拆分为多个小函数。",
+  "结构混乱": "代码结构不够清晰，建议重新组织逻辑。",
+  "日志级别不当": "日志级别设置不当，建议根据场景调整。",
+  "敏感信息打印": "日志中可能包含敏感信息，建议脱敏处理。",
+  "日志缺失": "关键路径缺少日志，建议补充以方便排查。",
+  "异常信息不全": "异常信息不够详细，建议补充上下文。",
+  "日志格式": "日志格式不规范，建议统一格式。",
+  "日志过多": "日志输出过于频繁，可能影响性能。",
+};
+
 function getFileFromNode(node: Node): HTMLElement | null {
   let el: HTMLElement | null =
     node.nodeType === Node.ELEMENT_NODE
@@ -150,15 +183,19 @@ function handleDocClick() {
 
 async function submitQuickComment() {
   if (!quickComment.value || !quickBody.value.trim()) return;
-  const main = categoryLabels[quickCategory.value] || quickCategory.value;
-  const sub = quickSubCategory.value ? `-${quickSubCategory.value}` : "";
+  let finalBody = quickBody.value.trim();
+  if (!finalBody.startsWith("【")) {
+    const main = categoryLabels[quickCategory.value] || quickCategory.value;
+    const sub = quickSubCategory.value ? `-${quickSubCategory.value}` : "";
+    finalBody = `【${main}${sub}】${finalBody}`;
+  }
   emit(
     "addComment",
     quickComment.value.path,
     quickComment.value.startLine,
     quickComment.value.endLine,
     quickComment.value.side,
-    `【${main}${sub}】${quickBody.value.trim()}`,
+    finalBody,
   );
   quickSubmitting.value = true;
   await new Promise((r) => setTimeout(r, 200));
@@ -168,9 +205,14 @@ async function submitQuickComment() {
 }
 
 function onSubCategoryChange() {
-  if (quickSubCategory.value) {
+  if (!quickSubCategory.value) {
+    quickBody.value = "";
+    return;
+  }
+  const tpl = opinionTemplates[quickSubCategory.value];
+  if (tpl) {
     const main = categoryLabels[quickCategory.value] || quickCategory.value;
-    quickBody.value = '【' + main + '-' + quickSubCategory.value + '】';
+    quickBody.value = `【${main}-${quickSubCategory.value}】${tpl}`;
   }
 }
 
@@ -231,7 +273,7 @@ onUnmounted(() => {
           <AppSelect
             v-model="quickCategory"
             :options="Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))"
-            @update:model-value="quickSubCategory = ''"
+            @update:model-value="quickSubCategory = ''; quickBody = ''"
           />
           <AppSelect
             v-if="categories[quickCategory]"

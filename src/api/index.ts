@@ -104,10 +104,12 @@ export async function reviewCommentAdd(
   prNumber: number,
   commitId: string,
   path: string,
+  startLine: number | null,
   line: number,
+  side: string,
   body: string,
 ): Promise<void> {
-  return invoke("review_comment_add", { platform, owner, repo, prNumber, commitId, path, line, body });
+  return invoke("review_comment_add", { platform, owner, repo, prNumber, commitId, path, startLine, line, side, body });
 }
 
 // ── Issue ──
