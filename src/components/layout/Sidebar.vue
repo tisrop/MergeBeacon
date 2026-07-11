@@ -32,6 +32,7 @@ onMounted(async () => {
 function selectPlatform(p: Platform) {
   auth.setActivePlatform(p);
   if (repo.reposCache[p].length === 0) {
+    repo.loading = true;
     repo.fetchRepos(p);
   }
 }
@@ -120,10 +121,8 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
           <svg :class="{ spinning: repo.loading }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
         </button>
       </div>
-      <div v-if="repo.loading && repo.repos.length === 0" class="skeleton repo-loading-skeleton">
-        <div class="skeleton-line" />
-        <div class="skeleton-line" />
-        <div class="skeleton-line" />
+      <div v-if="repo.loading && repo.repos.length === 0" class="repo-list">
+        <div class="loading-hint">加载中...</div>
       </div>
       <div v-else class="repo-list">
         <template v-for="r in repo.repos" :key="r.id">
@@ -310,28 +309,13 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
   animation: spin 0.8s linear infinite;
 }
 
-.repo-loading-skeleton {
-  padding: var(--space-2);
+.loading-hint {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.skeleton-line {
-  height: 28px;
-  background: var(--color-surface-hover);
-  border-radius: var(--radius-sm);
-}
-
-.repo-loading-skeleton .skeleton-line {
-  background: linear-gradient(90deg, var(--color-surface-hover) 25%, var(--color-border-light) 50%, var(--color-surface-hover) 75%);
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.5s ease-in-out infinite;
-}
-
-@keyframes skeleton-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6) var(--space-2);
+  font-size: 13px;
+  color: var(--color-text-tertiary);
 }
 
 .repo-list {

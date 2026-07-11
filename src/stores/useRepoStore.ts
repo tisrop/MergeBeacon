@@ -43,12 +43,10 @@ export const useRepoStore = defineStore("repo", () => {
   });
 
   function refreshRepos(platform: Platform) {
-    reposCache.value = { ...reposCache.value, [platform]: [] };
     return fetchRepos(platform);
   }
 
   async function fetchRepos(platform: Platform, page: number = 1) {
-    reposCache.value = { ...reposCache.value, [platform]: [] };
     loading.value = true;
     try {
       const result: Paginated<RepoSummary> = await repoList(platform, page);
