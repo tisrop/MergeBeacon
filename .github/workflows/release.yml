@@ -3,31 +3,35 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+
+permissions:
+  contents: write
 
 jobs:
-  publish:
-    permissions:
-      contents: write
+  build:
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
           - platform: macos-latest
-            args: '--target x86_64-apple-darwin'
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
           - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             args: ''
           - platform: windows-latest
+            target: x86_64-pc-windows-msvc
             args: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -35,14 +39,47 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.target }}
+
+      - name: Compute Rust dependency hash
+        id: deps-hash
+        shell: bash
+        run: |
+          {
+            find . -name Cargo.toml -not -path './target/*' -print0 \
+              | sort -z \
+              | xargs -0 sed -E '/^version = /d'
+            grep -v '^version = ' Cargo.lock
+          } | sha256sum | cut -d' ' -f1 | {
+            read -r hash
+            echo "hash=${hash:0:20}" >> "$GITHUB_OUTPUT"
+          }
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: release-${{ matrix.target }}-${{ steps.deps-hash.outputs.hash }}
+          add-rust-environment-hash-key: false
+          cache-on-failure: true
+
+      - name: Install Apple certificate (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
+          security create-keychain -p "" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "" $KEYCHAIN_PATH
+          security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "" $KEYCHAIN_PATH
+          security list-keychains -d user -s $KEYCHAIN_PATH login.keychain-db
 
       - name: Install dependencies (ubuntu)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -53,14 +90,88 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev
 
+      - name: Setup Tauri signing key
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_BASE64 }}" ]; then
+            echo "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/updater.key"
+            KEY_B64=$(base64 < "$RUNNER_TEMP/updater.key" | tr -d '\r\n')
+            echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+            if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
+              echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+            fi
+          fi
+
+      - name: Generate release notes
+        id: release-notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${GITHUB_REF_NAME}" \
+            --jq '.body')"
+          if [ -z "$BODY" ]; then
+            BODY="MergePilot ${GITHUB_REF_NAME}"
+          fi
+          DELIM="RELEASE_NOTES_$(date +%s%N)"
+          {
+            echo "body<<$DELIM"
+            printf '%s\n' "$BODY"
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
+
       - run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_TEAM_ID || '' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'MergePilot ${{ github.ref_name }}'
+          releaseBody: ${{ steps.release-notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  cleanup-release-signatures:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove standalone updater signature assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          mapfile -t SIG_ASSETS < <(
+            gh release view "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --json assets \
+              --jq '.assets[].name | select(endswith(".sig"))'
+          )
+
+          if [ "${#SIG_ASSETS[@]}" -eq 0 ]; then
+            echo "No standalone .sig release assets found."
+            exit 0
+          fi
+
+          for ASSET in "${SIG_ASSETS[@]}"; do
+            echo "Deleting release asset: ${ASSET}"
+            gh release delete-asset "${GITHUB_REF_NAME}" "${ASSET}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --yes
+          done
+
+  publish:
+    needs: [cleanup-release-signatures]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit ${{ github.ref_name }} --repo ${{ github.repository }} --draft=false

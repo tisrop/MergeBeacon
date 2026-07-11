@@ -1,0 +1,46 @@
+name: "💡 Feature Request / 功能建议"
+description: Propose a new feature, interaction improvement, or enhancement. / 提议新功能、交互改进或现有功能增强。
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        好的建议最好说明使用场景和期望效果。请尽量避免只写"支持 X"。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 当前痛点
+      description: 现在做这件事有什么不方便？
+      placeholder: "例如：每次 Merge Request 都要手动切换到网页查看 CI 状态。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望方案
+      description: 希望怎么支持？
+      placeholder: "例如：在 PR 列表页直接展示 CI 状态图标。"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 优先级（是否紧急）
+      description: 紧急 = 希望下个版本优先做。维护者可根据实际情况调整。
+      options:
+        - "🔴 P0 紧急 · 下个版本必须做"
+        - "🟠 P1 重要 · 尽快处理"
+        - "🟡 P2 普通 · 按排期处理"
+        - "🟢 P3 低优 · 有空再做"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 参考截图、替代方案、特殊环境等。
