@@ -22,6 +22,9 @@ reasonix.toml
 .DS_Store
 Thumbs.db
 
+# Husky internal
+.husky/_
+
 # Env
 .env
 .env.local
