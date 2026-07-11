@@ -24,13 +24,18 @@ function switchToFork() {
   repo.switchForkView();
 }
 
-onMounted(async () => {
-  if (!auth.isLoggedIn) {
-    router.push("/login");
-    return;
+onMounted(() => {
+  if (auth.isLoggedIn) {
+    fetchPrs();
   }
-  await fetchPrs();
 });
+
+watch(
+  () => auth.isLoggedIn,
+  (loggedIn) => {
+    if (loggedIn) fetchPrs();
+  },
+);
 
 watch(
   () => repo.activeRepo,
