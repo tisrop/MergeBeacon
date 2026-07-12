@@ -16,17 +16,35 @@ const platformList: { value: Platform; label: string }[] = [
 <template>
   <AppLayout>
     <template #header>
-      <h2>设置</h2>
+      <div class="settings-header">
+        <h2>设置</h2>
+        <p>管理代码平台显示方式与 AI 评审服务</p>
+      </div>
     </template>
 
     <div class="settings-page">
       <section class="section">
-        <h3>界面设置</h3>
+        <div class="section-heading">
+          <span class="section-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M9 4v16" />
+            </svg>
+          </span>
+          <div>
+            <h3>界面设置</h3>
+            <p>选择需要在侧边栏中显示的代码托管平台。</p>
+          </div>
+        </div>
         <div v-for="p in platformList" :key="p.value" class="setting-row">
-          <span class="setting-label">{{ p.label }}</span>
+          <span>
+            <span class="setting-label">{{ p.label }}</span>
+            <span class="setting-hint">在平台切换器中显示</span>
+          </span>
           <label class="toggle">
             <input
               type="checkbox"
+              :aria-label="`显示 ${p.label}`"
               :checked="auth.platformVisibility[p.value]"
               :disabled="
                 auth.platformVisibility[p.value] &&
@@ -42,7 +60,19 @@ const platformList: { value: Platform; label: string }[] = [
       </section>
 
       <section class="section">
-        <h3>AI 评审设置</h3>
+        <div class="section-heading">
+          <span class="section-icon ai" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
+              <circle cx="12" cy="12" r="5" />
+              <path d="m15.5 8.5 2-2M6.5 17.5l2-2M8.5 8.5l-2-2M17.5 17.5l-2-2" />
+            </svg>
+          </span>
+          <div>
+            <h3>AI 评审设置</h3>
+            <p>配置兼容 OpenAI 协议的模型服务与访问凭据。</p>
+          </div>
+        </div>
         <AiSettings />
       </section>
     </div>
@@ -51,26 +81,80 @@ const platformList: { value: Platform; label: string }[] = [
 
 <style scoped>
 .settings-page {
-  max-width: 640px;
+  max-width: 720px;
 }
 
 .section {
-  margin-bottom: var(--space-8);
+  margin-bottom: var(--space-6);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
 }
 
-.section h3 {
-  font-size: 16px;
-  margin-bottom: var(--space-4);
-  padding-bottom: var(--space-2);
+.settings-header h2 {
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.settings-header p {
+  margin-top: 2px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--color-border);
+}
+
+.section-heading h3 {
+  font-size: 15px;
   font-weight: 600;
+}
+
+.section-heading p,
+.setting-hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.section-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.section-icon.ai {
+  color: var(--color-success);
+  background: var(--color-success-light);
+}
+
+.section-icon svg {
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) 0;
+  min-height: 54px;
+  padding: var(--space-2) 0;
 }
 
 .setting-label {
@@ -119,6 +203,11 @@ const platformList: { value: Platform; label: string }[] = [
 
 .toggle input:checked + .toggle-slider::before {
   transform: translateX(20px);
+}
+
+.toggle input:focus-visible + .toggle-slider {
+  outline: 3px solid rgba(57, 120, 189, 0.28);
+  outline-offset: 2px;
 }
 
 .toggle input:disabled + .toggle-slider {

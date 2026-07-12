@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import type { Platform } from "@/types";
 import AppSelect from "@/components/shared/AppSelect.vue";
+import BrandMark from "@/components/shared/BrandMark.vue";
 import { authLogin } from "@/api";
 import { open } from "@tauri-apps/plugin-shell";
 
@@ -70,100 +71,114 @@ async function handleLogin() {
 
 <template>
   <div class="login-page">
-    <div class="login-card">
-      <div class="login-brand">
-        <svg
-          width="40"
-          height="40"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="var(--color-primary)"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="18" cy="18" r="3" />
-          <circle cx="6" cy="6" r="3" />
-          <path d="M13 6h3a2 2 0 0 1 2 2v7" />
-          <line x1="6" y1="6" x2="6" y2="15" />
-        </svg>
-        <h1>MergePilot</h1>
-      </div>
-      <p class="subtitle">跨平台 Code Merge 工具</p>
+    <div class="login-shell">
+      <section class="login-intro" aria-label="产品介绍">
+        <div class="intro-mark" aria-hidden="true">
+          <BrandMark />
+        </div>
+        <p class="intro-kicker">MERGE WORKSPACE</p>
+        <p class="intro-title">让每一次合并都更清晰、更可靠</p>
+        <p>在一个工作台中管理多平台仓库、代码差异、评审意见与 AI 建议。</p>
+        <ul>
+          <li><span>01</span> GitHub、GitLab 与 Gitee 统一工作流</li>
+          <li><span>02</span> 聚焦上下文的代码评审体验</li>
+          <li><span>03</span> Token 安全保存，敏感信息不出本机</li>
+        </ul>
+      </section>
 
-      <div class="form-group">
-        <label>平台</label>
-        <AppSelect v-model="platform" :options="platforms" />
-      </div>
+      <main class="login-card">
+        <div class="login-brand">
+          <span class="login-brand-mark" aria-hidden="true">
+            <BrandMark />
+          </span>
+          <h1>MergePilot</h1>
+        </div>
+        <p class="subtitle">登录代码托管平台，开始你的合并工作流</p>
 
-      <div v-if="needsCustomUrl" class="form-group">
-        <label>服务器地址（可选）</label>
-        <input
-          v-model="gitlabUrl"
-          class="input"
-          type="text"
-          :placeholder="
-            platform === 'gitlab'
-              ? 'https://gitlab.com（留空使用官方）'
-              : 'https://gitee.com（留空使用官方）'
-          "
-        />
-        <p class="hint">私有化部署请填写完整地址，如 https://gitlab.example.com</p>
-        <p v-if="usesInsecureHttp" class="http-warning">
-          HTTP 连接不会加密 Token，请仅用于可信内网。
+        <div class="form-group">
+          <label>平台</label>
+          <AppSelect v-model="platform" :options="platforms" />
+        </div>
+
+        <div v-if="needsCustomUrl" class="form-group">
+          <label for="server-url">服务器地址（可选）</label>
+          <input
+            v-model="gitlabUrl"
+            class="input"
+            type="text"
+            :placeholder="
+              platform === 'gitlab'
+                ? 'https://gitlab.com（留空使用官方）'
+                : 'https://gitee.com（留空使用官方）'
+            "
+          />
+          <p class="hint">私有化部署请填写完整地址，如 https://gitlab.example.com</p>
+          <p v-if="usesInsecureHttp" class="http-warning">
+            HTTP 连接不会加密 Token，请仅用于可信内网。
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label for="access-token">Personal Access Token</label>
+          <input
+            v-model="token"
+            class="input"
+            type="password"
+            placeholder="输入你的 Token..."
+            @keyup.enter="handleLogin"
+          />
+          <p class="hint">Token 优先保存到系统凭证库；不可用时保存到本地加密文件。</p>
+        </div>
+
+        <div v-if="error" class="error-box" role="alert">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="15" y1="9" x2="9" y2="15" />
+            <line x1="9" y1="9" x2="15" y2="15" />
+          </svg>
+          {{ error }}
+        </div>
+
+        <button class="btn btn-primary login-btn" :disabled="loading" @click="handleLogin">
+          <div v-if="loading" class="btn-spinner" />
+          {{ loading ? "登录中..." : "登录" }}
+        </button>
+
+        <div class="help-links" aria-label="Token 获取链接">
+          <button
+            type="button"
+            class="token-link"
+            @click="open('https://github.com/settings/tokens')"
+          >
+            GitHub Token
+          </button>
+          <button
+            type="button"
+            class="token-link"
+            @click="open('https://gitlab.com/-/user_settings/personal_access_tokens')"
+          >
+            GitLab Token
+          </button>
+          <button
+            type="button"
+            class="token-link"
+            @click="open('https://gitee.com/profile/personal_access_tokens')"
+          >
+            Gitee Token
+          </button>
+        </div>
+
+        <p class="skip">
+          <router-link to="/settings">跳过登录，先去设置 →</router-link>
         </p>
-      </div>
-
-      <div class="form-group">
-        <label>Personal Access Token</label>
-        <input
-          v-model="token"
-          class="input"
-          type="password"
-          placeholder="输入你的 Token..."
-          @keyup.enter="handleLogin"
-        />
-        <p class="hint">Token 优先保存到系统凭证库；不可用时保存到本地加密文件。</p>
-      </div>
-
-      <div v-if="error" class="error-box">
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <circle cx="12" cy="12" r="10" />
-          <line x1="15" y1="9" x2="9" y2="15" />
-          <line x1="9" y1="9" x2="15" y2="15" />
-        </svg>
-        {{ error }}
-      </div>
-
-      <button class="btn btn-primary login-btn" :disabled="loading" @click="handleLogin">
-        <div v-if="loading" class="btn-spinner" />
-        {{ loading ? "登录中..." : "登录" }}
-      </button>
-
-      <div class="help-links">
-        <span class="token-link" @click="open('https://github.com/settings/tokens')"
-          >GitHub Token</span
-        >
-        <span
-          class="token-link"
-          @click="open('https://gitlab.com/-/user_settings/personal_access_tokens')"
-          >GitLab Token</span
-        >
-        <span class="token-link" @click="open('https://gitee.com/profile/personal_access_tokens')"
-          >Gitee Token</span
-        >
-      </div>
-
-      <p class="skip">
-        <router-link to="/settings">跳过登录，先去设置 →</router-link>
-      </p>
+      </main>
     </div>
   </div>
 </template>
@@ -171,44 +186,158 @@ async function handleLogin() {
 <style scoped>
 .login-page {
   display: flex;
+  min-height: 100%;
   align-items: center;
   justify-content: center;
-  height: 100%;
-  background: var(--color-bg);
+  padding: var(--space-8);
+  background:
+    radial-gradient(circle at 15% 15%, rgba(57, 120, 189, 0.13), transparent 32%),
+    radial-gradient(circle at 85% 90%, rgba(19, 125, 104, 0.1), transparent 28%), var(--color-bg);
+}
+
+.login-shell {
+  display: grid;
+  width: min(920px, 100%);
+  min-height: 570px;
+  grid-template-columns: minmax(0, 1fr) minmax(400px, 0.92fr);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 20px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-xl);
+}
+
+.login-intro {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--space-12);
+  overflow: hidden;
+  color: #fff;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.06), transparent 40%), var(--color-primary);
+}
+
+.login-intro::after {
+  content: "";
+  position: absolute;
+  right: -90px;
+  bottom: -110px;
+  width: 280px;
+  height: 280px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  box-shadow: 0 0 0 40px rgba(255, 255, 255, 0.035);
+}
+
+.intro-mark {
+  display: inline-flex;
+  width: 50px;
+  height: 50px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-8);
+  border: 1px solid rgba(112, 222, 197, 0.38);
+  border-radius: var(--radius-lg);
+  color: var(--color-brand-accent);
+  background: rgba(112, 222, 197, 0.09);
+  box-shadow: 0 8px 22px rgba(7, 24, 43, 0.16);
+}
+
+.intro-mark svg {
+  width: 28px;
+  height: 28px;
+}
+
+.intro-kicker {
+  margin-bottom: var(--space-3);
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.intro-title {
+  max-width: 360px;
+  margin-bottom: var(--space-4);
+  font-size: 28px;
+  line-height: 1.3;
+  letter-spacing: -0.035em;
+}
+
+.login-intro > p:not(.intro-kicker) {
+  max-width: 380px;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.7;
+}
+
+.login-intro ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+  list-style: none;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+}
+
+.login-intro li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.login-intro li span {
+  color: var(--color-brand-accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .login-card {
-  width: 440px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   padding: var(--space-10);
   background: var(--color-surface);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
 }
 
 .login-brand {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-1);
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
-.login-brand svg {
-  opacity: 0.8;
+.login-brand-mark {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 10px;
+  color: var(--color-brand-accent);
+  background: linear-gradient(145deg, #294f78, var(--color-primary-hover));
+  box-shadow: 0 6px 16px rgba(20, 43, 73, 0.18);
+}
+
+.login-brand-mark svg {
+  width: 24px;
+  height: 24px;
 }
 
 h1 {
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
-  text-align: center;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.035em;
 }
 
 .subtitle {
-  text-align: center;
   color: var(--color-text-secondary);
   margin-bottom: var(--space-6);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .form-group {
@@ -218,38 +347,34 @@ h1 {
 label {
   display: block;
   font-weight: 600;
-  margin-bottom: var(--space-1);
-  font-size: 13px;
-}
-
-select {
-  width: 100%;
+  margin-bottom: 6px;
+  font-size: 12px;
 }
 
 .hint {
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--color-text-tertiary);
-  margin-top: var(--space-1);
+  margin-top: 6px;
 }
 
 .error-box {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   background: var(--color-danger-light);
   color: var(--color-danger);
   border: 1px solid var(--color-danger-border);
   border-radius: var(--radius-md);
   margin-bottom: var(--space-4);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .login-btn {
   width: 100%;
-  padding: var(--space-3);
-  font-size: 15px;
-  font-weight: 600;
+  min-height: 42px;
+  font-size: 14px;
 }
 
 .btn-spinner {
@@ -269,25 +394,29 @@ select {
 
 .help-links {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
+  gap: var(--space-3);
   margin-top: var(--space-4);
-  font-size: 12px;
+}
+
+.token-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.token-link:hover {
+  text-decoration: underline;
 }
 
 .skip {
   text-align: center;
   margin-top: var(--space-4);
-  font-size: 13px;
-}
-
-.token-link {
-  color: var(--color-primary);
-  cursor: pointer;
-  font-weight: 500;
-}
-
-.token-link:hover {
-  text-decoration: underline;
+  font-size: 12px;
 }
 
 .skip a {
@@ -297,9 +426,35 @@ select {
 .skip a:hover {
   color: var(--color-primary);
 }
+
 .http-warning {
   margin-top: var(--space-2);
   color: var(--color-warning);
-  font-size: 12px;
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .login-page {
+    align-items: flex-start;
+    padding: var(--space-4);
+    overflow-y: auto;
+  }
+
+  .login-shell {
+    min-height: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .login-intro {
+    padding: var(--space-8);
+  }
+
+  .login-intro ul {
+    display: none;
+  }
+
+  .login-card {
+    padding: var(--space-8);
+  }
 }
 </style>

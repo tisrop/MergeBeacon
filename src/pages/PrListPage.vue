@@ -79,8 +79,12 @@ function onSelectPr(prNumber: number) {
   <AppLayout>
     <template #header>
       <div class="header-row">
-        <h2>Pull Requests</h2>
-        <span v-if="repo.activeFullName" class="repo-name">{{ repo.activeFullName }}</span>
+        <div>
+          <h2>Pull Requests</h2>
+          <p v-if="repo.activeFullName" class="repo-name">{{ repo.activeFullName }}</p>
+          <p v-else class="repo-name">选择仓库后查看合并请求</p>
+        </div>
+        <span v-if="pr.list.length" class="result-count">{{ pr.list.length }} 条结果</span>
       </div>
       <div v-if="repo.forkContext" class="fork-banner">
         <svg
@@ -236,19 +240,33 @@ function onSelectPr(prNumber: number) {
 <style scoped>
 .header-row {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
 }
 
 .header-row h2 {
   font-size: 20px;
   font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .repo-name {
+  margin-top: 2px;
   font-size: 13px;
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
+}
+
+.result-count {
+  margin-top: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .fork-banner {
@@ -286,7 +304,7 @@ function onSelectPr(prNumber: number) {
 }
 
 .skeleton-card {
-  height: 76px;
+  height: 84px;
   border-radius: var(--radius-lg);
 }
 
@@ -295,7 +313,11 @@ function onSelectPr(prNumber: number) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 240px;
+  min-height: 280px;
+  padding: var(--space-8);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.72);
   gap: var(--space-3);
   color: var(--color-text-tertiary);
 }
@@ -342,7 +364,7 @@ function onSelectPr(prNumber: number) {
 .pr-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
 .pagination {
