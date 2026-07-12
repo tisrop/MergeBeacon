@@ -4,6 +4,7 @@ import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useRepoStore } from "@/stores/useRepoStore";
 import type { Platform, RepoSummary } from "@/types";
+import BrandMark from "@/components/shared/BrandMark.vue";
 
 interface OwnerGroup {
   owner: string;
@@ -113,7 +114,13 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
 <template>
   <aside class="sidebar">
     <div class="sidebar-header">
-      <router-link to="/" class="logo">MergePilot</router-link>
+      <router-link to="/" class="logo" aria-label="MergePilot 首页">
+        <span class="logo-mark" aria-hidden="true">
+          <BrandMark />
+        </span>
+        <span>MergePilot</span>
+      </router-link>
+      <span class="app-caption">Code Merge Workspace</span>
     </div>
 
     <div class="platform-selector">
@@ -121,6 +128,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
         v-for="p in visiblePlatforms"
         :key="p.value"
         :class="{ active: auth.activePlatform === p.value }"
+        :aria-pressed="auth.activePlatform === p.value"
         @click="selectPlatform(p.value)"
       >
         {{ p.label }}
@@ -130,8 +138,11 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
     <!-- Auth status -->
     <div class="auth-status">
       <template v-if="auth.isLoggedIn && auth.activeUser">
-        <img :src="auth.activeUser.avatar_url" class="avatar" />
-        <span class="username">{{ auth.activeUser.login }}</span>
+        <img :src="auth.activeUser.avatar_url" class="avatar" alt="" />
+        <span class="user-copy">
+          <span class="user-label">当前账号</span>
+          <span class="username">{{ auth.activeUser.login }}</span>
+        </span>
       </template>
       <router-link
         v-else
@@ -143,7 +154,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
     </div>
 
     <!-- Navigation -->
-    <nav class="nav">
+    <nav class="nav" aria-label="主导航">
       <router-link to="/pr" :class="{ active: isActive('pr') }">
         <svg
           width="16"
@@ -189,6 +200,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
         <button
           class="refresh-btn"
           title="刷新仓库列表"
+          aria-label="刷新仓库列表"
           :disabled="repo.loading"
           @click="repo.refreshRepos(auth.activePlatform)"
         >
@@ -308,42 +320,85 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  overflow-y: auto;
+  overflow: hidden;
+  box-shadow: 1px 0 0 rgba(255, 255, 255, 0.8);
 }
 
 .sidebar-header {
   padding: var(--space-4) var(--space-4) var(--space-3);
-  border-bottom: 1px solid var(--color-border);
 }
 
 .logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: 18px;
   font-weight: 700;
   color: var(--color-text);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+}
+
+.logo:hover {
+  color: var(--color-text);
+}
+
+.logo-mark {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: var(--color-brand-accent);
+  background: linear-gradient(145deg, #294f78, var(--color-primary-hover));
+  box-shadow: 0 5px 12px rgba(20, 43, 73, 0.22);
+}
+
+.logo-mark svg {
+  width: 20px;
+  height: 20px;
+}
+
+.app-caption {
+  display: block;
+  margin: 3px 0 0 40px;
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .platform-selector {
   display: flex;
-  padding: var(--space-2);
-  gap: var(--space-1);
+  margin: var(--space-1) var(--space-3) var(--space-2);
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
 }
 
 .platform-selector button {
   flex: 1;
-  padding: 6px 4px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  min-height: 30px;
+  padding: 5px 4px;
+  border: none;
+  border-radius: 6px;
   background: none;
   font-size: 11px;
-  font-weight: 500;
-  transition: all var(--transition-fast);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .platform-selector button.active {
-  background: var(--color-primary);
-  color: #fff;
-  border-color: var(--color-primary);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .platform-selector button:hover:not(.active) {
@@ -354,19 +409,39 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 48px;
   padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--color-border);
+  border-top: 1px solid var(--color-border-light);
+  border-bottom: 1px solid var(--color-border-light);
 }
 
 .avatar {
   width: 24px;
   height: 24px;
   border-radius: 50%;
+  border: 1px solid var(--color-border);
+}
+
+.user-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.user-label {
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .username {
   font-size: 13px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .login-link {
@@ -376,14 +451,16 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
 .nav {
   display: flex;
   flex-direction: column;
-  padding: var(--space-2);
-  gap: 2px;
+  padding: var(--space-3);
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--color-border-light);
 }
 
 .nav a {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 38px;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   font-size: 13px;
@@ -401,6 +478,11 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
   background: var(--color-primary-light);
   color: var(--color-primary);
   font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--color-brand-accent-strong);
+}
+
+.nav a.active svg {
+  color: var(--color-brand-accent-strong);
 }
 
 .repo-section {
@@ -408,7 +490,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
 }
 
 .repo-header {
@@ -432,8 +514,8 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 30px;
+  height: 30px;
   border: none;
   background: none;
   border-radius: var(--radius-sm);
@@ -505,7 +587,8 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
   align-items: center;
   gap: var(--space-1);
   text-align: left;
-  padding: 4px var(--space-2) 4px var(--space-4);
+  min-height: 32px;
+  padding: 5px var(--space-2) 5px var(--space-4);
   border: none;
   background: none;
   font-size: 12px;
@@ -526,6 +609,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
   background: var(--color-primary-light);
   color: var(--color-primary);
   font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--color-primary);
 }
 
 .repo-list button.is-fork {
@@ -558,5 +642,11 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean) {
 
 .load-more-btn {
   margin-top: var(--space-2);
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    width: 224px;
+  }
 }
 </style>

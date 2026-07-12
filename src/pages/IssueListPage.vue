@@ -48,7 +48,11 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
   <AppLayout>
     <template #header>
       <div class="issue-header">
-        <h2>Issues</h2>
+        <div>
+          <h2>Issues</h2>
+          <p v-if="repo.activeFullName">{{ repo.activeFullName }}</p>
+          <p v-else>选择仓库后查看与管理 Issue</p>
+        </div>
         <router-link to="/issue/new" class="btn btn-success btn-sm">
           <svg
             width="14"
@@ -122,6 +126,14 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
 .issue-header h2 {
   font-size: 20px;
   font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.issue-header p {
+  margin-top: 2px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .loading-skeleton {
@@ -131,7 +143,7 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
 }
 
 .skeleton-card {
-  height: 76px;
+  height: 84px;
   border-radius: var(--radius-lg);
 }
 
@@ -140,7 +152,11 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 240px;
+  min-height: 280px;
+  padding: var(--space-8);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.72);
   gap: var(--space-3);
   color: var(--color-text-tertiary);
 }
@@ -156,6 +172,6 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
 .issue-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 </style>

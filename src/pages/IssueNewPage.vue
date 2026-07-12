@@ -47,7 +47,11 @@ async function handleSubmit() {
 <template>
   <AppLayout>
     <template #header>
-      <h2>新建 Issue</h2>
+      <div class="issue-new-header">
+        <h2>新建 Issue</h2>
+        <p v-if="repo.activeFullName">将在 {{ repo.activeFullName }} 中创建</p>
+        <p v-else>请先选择目标仓库</p>
+      </div>
     </template>
 
     <IssueForm
@@ -60,3 +64,17 @@ async function handleSubmit() {
     />
   </AppLayout>
 </template>
+
+<style scoped>
+.issue-new-header h2 {
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.issue-new-header p {
+  margin-top: 2px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+</style>

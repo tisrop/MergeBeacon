@@ -5,10 +5,10 @@ import type { PrState } from "@/types";
 const pr = usePrStore();
 
 const states: { value: PrState; label: string }[] = [
-  { value: "open", label: "Open" },
-  { value: "closed", label: "Closed" },
-  { value: "merged", label: "Merged" },
-  { value: "all", label: "All" },
+  { value: "open", label: "开放" },
+  { value: "closed", label: "已关闭" },
+  { value: "merged", label: "已合并" },
+  { value: "all", label: "全部" },
 ];
 </script>
 
@@ -19,6 +19,7 @@ const states: { value: PrState; label: string }[] = [
         v-for="s in states"
         :key="s.value"
         :class="{ active: pr.filters.state === s.value }"
+        :aria-pressed="pr.filters.state === s.value"
         @click="pr.setFilter(s.value)"
       >
         {{ s.label }}
@@ -33,18 +34,23 @@ const states: { value: PrState; label: string }[] = [
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-2) 0;
+  padding-top: var(--space-3);
 }
 
 .filters {
   display: flex;
-  gap: var(--space-1);
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
 }
 
 .filters button {
-  padding: 6px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  min-height: 32px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 6px;
   background: none;
   font-size: 13px;
   font-weight: 500;
@@ -53,9 +59,9 @@ const states: { value: PrState; label: string }[] = [
 }
 
 .filters button.active {
-  background: var(--color-primary);
-  color: #fff;
-  border-color: var(--color-primary);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .filters button:hover:not(.active) {
@@ -80,7 +86,7 @@ const states: { value: PrState; label: string }[] = [
 }
 
 .active .count {
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 </style>

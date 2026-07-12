@@ -29,10 +29,11 @@ function removeLabel(label: string) {
 </script>
 
 <template>
-  <div class="issue-form">
+  <div class="issue-form card">
     <div class="field">
-      <label>标题</label>
+      <label for="issue-title">标题 <span class="required">必填</span></label>
       <input
+        id="issue-title"
         class="input"
         :value="title"
         @input="emit('update:title', ($event.target as HTMLInputElement).value)"
@@ -41,8 +42,9 @@ function removeLabel(label: string) {
     </div>
 
     <div class="field">
-      <label>描述</label>
+      <label for="issue-body">描述</label>
       <textarea
+        id="issue-body"
         class="input"
         :value="body"
         @input="emit('update:body', ($event.target as HTMLTextAreaElement).value)"
@@ -52,7 +54,7 @@ function removeLabel(label: string) {
     </div>
 
     <div class="field">
-      <label>标签</label>
+      <label for="issue-labels">标签</label>
       <div class="labels-input">
         <div class="labels-list">
           <span v-for="label in labels" :key="label" class="label-chip">
@@ -75,6 +77,7 @@ function removeLabel(label: string) {
           </span>
         </div>
         <input
+          id="issue-labels"
           class="input"
           style="border: none; padding: 4px 6px"
           placeholder="输入标签后回车"
@@ -86,9 +89,10 @@ function removeLabel(label: string) {
       </div>
     </div>
 
-    <div v-if="error" class="error">{{ error }}</div>
+    <div v-if="error" class="error" role="alert">{{ error }}</div>
 
     <div class="form-actions">
+      <router-link to="/issue" class="btn">取消</router-link>
       <button
         class="btn btn-success"
         :disabled="submitting || !title.trim()"
@@ -102,7 +106,8 @@ function removeLabel(label: string) {
 
 <style scoped>
 .issue-form {
-  max-width: 640px;
+  max-width: 720px;
+  padding: var(--space-6);
 }
 
 .field {
@@ -114,6 +119,13 @@ label {
   font-weight: 600;
   margin-bottom: var(--space-1);
   font-size: 13px;
+}
+
+.required {
+  margin-left: var(--space-1);
+  color: var(--color-danger);
+  font-size: 10px;
+  font-weight: 500;
 }
 
 .labels-input {
@@ -151,7 +163,9 @@ label {
   background: none;
   color: var(--color-primary);
   cursor: pointer;
-  padding: 0;
+  width: 22px;
+  height: 22px;
+  justify-content: center;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -165,5 +179,12 @@ label {
   margin-bottom: var(--space-4);
   font-size: 13px;
   border: 1px solid var(--color-danger-border);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
 }
 </style>

@@ -11,39 +11,98 @@ defineEmits<{
 </script>
 
 <template>
-  <div class="pr-card" @click="$emit('click')">
-    <div class="pr-card-top">
-      <span class="pr-title">{{ pr.title }}</span>
-      <span class="badge" :class="`badge-${pr.state}`">{{ pr.state }}</span>
-    </div>
-    <div class="pr-card-meta">
-      <span class="pr-number">#{{ pr.number }}</span>
-      <span>{{ pr.author.login }}</span>
-      <span>{{ new Date(pr.updated_at).toLocaleDateString() }}</span>
-      <span v-if="pr.labels.length" class="pr-labels">
-        <span v-for="label in pr.labels" :key="label" class="label-tag">
-          {{ label }}
+  <button type="button" class="pr-card" @click="$emit('click')">
+    <span class="pr-icon" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <circle cx="6" cy="5" r="2.5" />
+        <circle cx="18" cy="19" r="2.5" />
+        <path d="M6 7.5V16a3 3 0 0 0 3 3h6.5" />
+        <path d="M12 5h3a3 3 0 0 1 3 3v8.5" />
+      </svg>
+    </span>
+    <span class="pr-content">
+      <div class="pr-card-top">
+        <span class="pr-title">{{ pr.title }}</span>
+        <span class="badge" :class="`badge-${pr.state}`">{{ pr.state }}</span>
+      </div>
+      <div class="pr-card-meta">
+        <span class="pr-number">#{{ pr.number }}</span>
+        <span>由 {{ pr.author.login }} 更新</span>
+        <span>{{ new Date(pr.updated_at).toLocaleDateString("zh-CN") }}</span>
+        <span v-if="pr.labels.length" class="pr-labels">
+          <span v-for="label in pr.labels" :key="label" class="label-tag">
+            {{ label }}
+          </span>
         </span>
-      </span>
-    </div>
-  </div>
+      </div>
+    </span>
+    <svg
+      class="chevron"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      aria-hidden="true"
+    >
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  </button>
 </template>
 
 <style scoped>
 .pr-card {
-  padding: var(--space-4) var(--space-4);
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
+  color: var(--color-text);
+  text-align: left;
   cursor: pointer;
+  box-shadow: var(--shadow-sm);
   transition:
     box-shadow var(--transition-base),
-    border-color var(--transition-base);
+    border-color var(--transition-base),
+    transform var(--transition-base);
 }
 
 .pr-card:hover {
   box-shadow: var(--shadow-md);
   border-color: var(--color-primary-border);
+  transform: translateY(-1px);
+}
+
+.pr-card:active {
+  transform: translateY(0);
+}
+
+.pr-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  color: var(--color-success);
+  background: var(--color-success-light);
+  border: 1px solid var(--color-success-border);
+}
+
+.pr-icon svg,
+.chevron {
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pr-content {
+  min-width: 0;
+  flex: 1;
 }
 
 .pr-card-top {
@@ -82,10 +141,22 @@ defineEmits<{
 }
 
 .label-tag {
-  padding: 1px 6px;
+  padding: 2px 7px;
   background: var(--color-surface-hover);
+  border: 1px solid var(--color-border-light);
   border-radius: var(--radius-sm);
   font-size: 11px;
   color: var(--color-text-secondary);
+}
+
+.chevron {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  transition: transform var(--transition-fast);
+}
+
+.pr-card:hover .chevron {
+  color: var(--color-primary);
+  transform: translateX(2px);
 }
 </style>
