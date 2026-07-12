@@ -7,6 +7,10 @@ Tauri 2 + Vue 3 + Rust 跨平台 Code Merge 桌面客户端（GitHub/GitLab/Gite
 所有实现与代码评审必须遵循 [`CODE_STANDARDS.md`](CODE_STANDARDS.md)。该文件定义前端、
 Rust/Tauri、跨平台语义、异步生命周期、安全、测试和合并门禁；本文件中的项目约束仍同时生效。
 
+所有前端页面、组件和样式实现还必须遵循
+[`FRONTEND_STANDARDS.md`](FRONTEND_STANDARDS.md)。该文件定义视觉语言、设计 Token、布局、
+组件状态、交互、可访问性和视觉验收门禁。
+
 ## 开发者命令
 
 ```bash
