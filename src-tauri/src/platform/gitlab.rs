@@ -23,7 +23,7 @@ impl GitLabAdapter {
 
     #[allow(dead_code)]
     pub fn with_base_url(mut self, url: String) -> Self {
-        self.base_url = url.trim_end_matches('/').to_string();
+        self.base_url = super::normalize_api_base("gitlab", &url);
         self
     }
 
@@ -96,7 +96,41 @@ impl GitPlatform for GitLabAdapter {
             "{}/projects?membership=true&per_page=100&page={}",
             self.base_url, page
         );
-        let items: Vec<Value> = self.get_json(&url).await?;
+        let resp = self
+            .client
+            .get(&url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .header("User-Agent", "mergepilot")
+            .send()
+            .await?;
+        let total_count = resp
+            .headers()
+            .get("x-total")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0);
+        let next_page = resp
+            .headers()
+            .get("x-next-page")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u32>().ok());
+        let total_pages = resp
+            .headers()
+            .get("x-total-pages")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u32>().ok())
+            .or_else(|| (total_count > 0).then(|| total_count.div_ceil(100)))
+            .or(next_page)
+            .unwrap_or(page)
+            .max(page);
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Api(format!(
+                "GitLab API {status} ({url}): {body}"
+            )));
+        }
+        let items: Vec<Value> = resp.json().await?;
 
         let repos: Vec<RepoSummary> = items
             .iter()
@@ -142,8 +176,8 @@ impl GitPlatform for GitLabAdapter {
         Ok(Paginated {
             items: repos,
             page,
-            total_pages: 1,
-            total_count: 0,
+            total_pages,
+            total_count,
         })
     }
 
@@ -328,9 +362,12 @@ impl GitPlatform for GitLabAdapter {
         repo: &str,
         pr_number: u64,
         body: &str,
-        _event: &ReviewEvent,
+        event: &ReviewEvent,
         _comments: &[ReviewCommentPosition],
     ) -> Result<Review, AppError> {
+        if !matches!(event, ReviewEvent::Comment) {
+            return Err(AppError::NotImplemented("该平台仅支持评论评审".to_string()));
+        }
         let project_id = urlencoding(owner, repo);
 
         // GitLab uses notes for reviews; approval API is separate
@@ -572,5 +609,5 @@ impl GitPlatform for GitLabAdapter {
 }
 
 fn urlencoding(owner: &str, repo: &str) -> String {
-    format!("{}%2F{}", owner, repo)
+    urlencoding::encode(&format!("{owner}/{repo}")).into_owned()
 }

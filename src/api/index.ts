@@ -7,7 +7,7 @@ import type {
   PrDetail,
   DiffResult,
   MergeStrategy,
-  MergeResult,
+  PrMergeOutcome,
   Review,
   ReviewCommentPosition,
   IssueState,
@@ -16,6 +16,7 @@ import type {
   Paginated,
   RepoSummary,
   User,
+  AuthLoginResult,
   AiConfig,
   AiReviewRequest,
   AiReviewResult,
@@ -30,7 +31,7 @@ export async function authLogin(
   platform: Platform,
   token: string,
   customUrl?: string,
-): Promise<User> {
+): Promise<AuthLoginResult> {
   return invoke("auth_login", { platform, token, customUrl: customUrl ?? null });
 }
 
@@ -97,7 +98,7 @@ export async function prMerge(
   commitTitle?: string,
   commitMessage?: string,
   closeIssues?: boolean,
-): Promise<MergeResult> {
+): Promise<PrMergeOutcome> {
   return invoke("pr_merge", {
     platform,
     owner,
@@ -226,8 +227,12 @@ export async function aiReview(request: AiReviewRequest): Promise<AiReviewResult
   return invoke("ai_review", { request });
 }
 
-export async function aiReviewStream(request: AiReviewRequest): Promise<void> {
-  return invoke("ai_review_stream", { request });
+export async function aiReviewStream(requestId: string, request: AiReviewRequest): Promise<void> {
+  return invoke("ai_review_stream", { requestId, request });
+}
+
+export async function aiReviewCancel(requestId: string): Promise<void> {
+  return invoke("ai_review_cancel", { requestId });
 }
 
 export async function aiListModels(endpoint: string): Promise<string[]> {

@@ -10,6 +10,13 @@ export interface User {
   avatar_url: string;
 }
 
+export type CredentialStorage = "system_keyring" | "encrypted_file";
+
+export interface AuthLoginResult {
+  user: User;
+  credential_storage: CredentialStorage;
+}
+
 // ── 平台 ──
 export type Platform = "github" | "gitlab" | "gitee";
 
@@ -41,6 +48,17 @@ export interface MergeResult {
   merged: boolean;
   sha: string;
   message: string;
+}
+
+export interface IssueCloseFailure {
+  number: number;
+  error: string;
+}
+
+export interface PrMergeOutcome {
+  merge: MergeResult;
+  closed_issues: number[];
+  issue_close_failures: IssueCloseFailure[];
 }
 
 export interface PrFile {
@@ -168,6 +186,11 @@ export interface AiReviewRequest {
   context: PrContext | null;
   file_filter: string[] | null;
   focus: AiReviewFocus | null;
+}
+
+export interface AiStreamEvent<T> {
+  request_id: string;
+  payload: T;
 }
 
 export interface PrContext {

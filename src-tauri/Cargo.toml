@@ -21,6 +21,9 @@ sha2 = "0.10"
 rand = "0.8"
 base64 = "0.22"
 rusqlite = { version = "0.31", features = ["bundled"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+eventsource-stream = "0.2"
+urlencoding = "2"
 
 [dev-dependencies]
 wiremock = "0.6"
@@ -39,3 +42,7 @@ path = "tests/github_adapter_test.rs"
 [[test]]
 name = "gitee_adapter"
 path = "tests/gitee_adapter_test.rs"
+
+[[test]]
+name = "gitlab_adapter"
+path = "tests/gitlab_adapter_test.rs"

@@ -24,7 +24,7 @@ impl GiteeAdapter {
 
     #[allow(dead_code)]
     pub fn with_base_url(mut self, url: String) -> Self {
-        self.base_url = url.trim_end_matches('/').to_string();
+        self.base_url = super::normalize_api_base("gitee", &url);
         self
     }
 
@@ -211,7 +211,18 @@ impl GitPlatform for GiteeAdapter {
             .await?;
 
         let link_header = resp.headers().get("link").and_then(|v| v.to_str().ok());
-        let last_page = Self::parse_last_page_gitee(link_header, page);
+        let last_page = resp
+            .headers()
+            .get("x-total-pages")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or_else(|| Self::parse_last_page_gitee(link_header, page));
+        let header_total_count = resp
+            .headers()
+            .get("x-total-count")
+            .or_else(|| resp.headers().get("x-total"))
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u32>().ok());
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -223,6 +234,13 @@ impl GitPlatform for GiteeAdapter {
         }
 
         let items: Vec<Value> = resp.json().await?;
+        let total_count = header_total_count.unwrap_or_else(|| {
+            if page == last_page {
+                page.saturating_sub(1) * 100 + items.len() as u32
+            } else {
+                last_page * 100
+            }
+        });
 
         let mut repos: Vec<RepoSummary> = items
             .iter()
@@ -281,7 +299,7 @@ impl GitPlatform for GiteeAdapter {
             items: repos,
             page,
             total_pages: last_page,
-            total_count: 0,
+            total_count,
         })
     }
 
@@ -514,9 +532,12 @@ impl GitPlatform for GiteeAdapter {
         repo: &str,
         pr_number: u64,
         body: &str,
-        _event: &ReviewEvent,
+        event: &ReviewEvent,
         comments: &[ReviewCommentPosition],
     ) -> Result<Review, AppError> {
+        if !matches!(event, ReviewEvent::Comment) {
+            return Err(AppError::NotImplemented("该平台仅支持评论评审".to_string()));
+        }
         // Gitee API does not support batch inline comments in review creation.
         // Create the main review comment first.
         let url = format!(

@@ -9,6 +9,12 @@ pub struct User {
     pub avatar_url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthLoginResult {
+    pub user: User,
+    pub credential_storage: crate::vault::CredentialStorage,
+}
+
 // ── Repository ──
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoSummary {
@@ -209,6 +215,19 @@ pub struct PrMergeResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueCloseFailure {
+    pub number: u64,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrMergeOutcome {
+    pub merge: PrMergeResult,
+    pub closed_issues: Vec<u64>,
+    pub issue_close_failures: Vec<IssueCloseFailure>,
+}
+
 // ── Pagination ──
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Paginated<T> {
@@ -219,6 +238,12 @@ pub struct Paginated<T> {
 }
 
 // ── AI ──
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiStreamEvent<T> {
+    pub request_id: String,
+    pub payload: T,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AiConfig {
     pub endpoint: String,
