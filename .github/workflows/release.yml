@@ -102,6 +102,31 @@ jobs:
             fi
           fi
 
+      - name: Create portable zip (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          $zipName = "MergePilot_${version}_x64-portable.zip"
+          $exe = Get-ChildItem -Path src-tauri\target\release\*.exe |
+            Where-Object { $_.Name -notmatch 'setup|install' } |
+            Select-Object -First 1
+          if (-not $exe) { throw "No executable found" }
+          $tmpExe = Join-Path $env:RUNNER_TEMP "MergePilot.exe"
+          Copy-Item $exe.FullName $tmpExe
+          $tmpZip = Join-Path $env:RUNNER_TEMP $zipName
+          Compress-Archive -Path $tmpExe -DestinationPath $tmpZip
+          echo "PORTABLE_ZIP=$tmpZip" >> $env:GITHUB_ENV
+          Write-Output "Created $zipName"
+
+      - name: Upload portable zip (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" "$PORTABLE_ZIP" --repo "$GITHUB_REPOSITORY"
+
       - name: Generate release notes
         id: release-notes
         shell: bash
