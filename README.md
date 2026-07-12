@@ -3,7 +3,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.96.1%20verified-orange.svg)](https://www.rust-lang.org)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue.svg)](https://v2.tauri.app)
 [![Vue](https://img.shields.io/badge/Vue-3.x-42b883.svg)](https://vuejs.org)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 基于 **Tauri 2 + Vue 3 + Rust** 的跨平台 Code Merge 桌面客户端。
 使用统一界面连接 GitHub、GitLab 和 Gitee，并可通过 OpenAI 兼容接口对 PR / MR
@@ -237,4 +237,4 @@ cargo test
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)
