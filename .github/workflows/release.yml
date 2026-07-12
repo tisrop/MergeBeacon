@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   build:
+    env:
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +65,7 @@ jobs:
           cache-on-failure: true
 
       - name: Install Apple certificate (macOS)
-        if: startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE != ''
+        if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
