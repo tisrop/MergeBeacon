@@ -49,7 +49,7 @@ jobs:
             find . -name Cargo.toml -not -path './target/*' -print0 \
               | sort -z \
               | xargs -0 sed -E '/^version = /d'
-            grep -v '^version = ' Cargo.lock
+            grep -v '^version = ' src-tauri/Cargo.lock
           } | sha256sum | cut -d' ' -f1 | {
             read -r hash
             echo "hash=${hash:0:20}" >> "$GITHUB_OUTPUT"
