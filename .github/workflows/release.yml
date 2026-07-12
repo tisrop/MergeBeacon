@@ -104,41 +104,6 @@ jobs:
             fi
           fi
 
-      - name: Create portable zip (Windows)
-        if: matrix.platform == 'windows-latest'
-        shell: bash
-        run: |
-          echo "=== Target release dir ==="
-          ls -la src-tauri/target/release/ 2>/dev/null || echo "(dir not found)"
-          echo "=== Recursive exe search ==="
-          find . -name "*.exe" -not -path "./target/*" 2>/dev/null | head -20
-          version="${GITHUB_REF_NAME#v}"
-          zipName="MergePilot_${version}_x64-portable.zip"
-          exe=$(find . -name "mergepilot.exe" -not -path "./target/*" 2>/dev/null | head -1)
-          if [ -z "$exe" ]; then
-            exe=$(find src-tauri/target -name "*.exe" -not -path "*/deps/*" 2>/dev/null \
-              | grep -viE 'setup|install' | head -1)
-          fi
-          if [ -z "$exe" ]; then
-            echo "ERROR: no executable found"
-            exit 1
-          fi
-          echo "Found: $exe"
-          tmpExe="$RUNNER_TEMP/MergePilot.exe"
-          tmpZip="$RUNNER_TEMP/$zipName"
-          cp "$exe" "$tmpExe"
-          (cd "$RUNNER_TEMP" && zip -r "$zipName" "MergePilot.exe")
-          echo "PORTABLE_ZIP=$tmpZip" >> "$GITHUB_ENV"
-          echo "Created $zipName"
-
-      - name: Upload portable zip (Windows)
-        if: matrix.platform == 'windows-latest'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "$GITHUB_REF_NAME" "$PORTABLE_ZIP" --repo "$GITHUB_REPOSITORY"
-
       - name: Generate release notes
         id: release-notes
         shell: bash
@@ -191,6 +156,31 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Create portable zip (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/release/mergepilot.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "$exe not found"
+            exit 1
+          }
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $zipName = "MergePilot_${version}_x64-portable.zip"
+          $tmpDir = $env:RUNNER_TEMP
+          Copy-Item $exe "$tmpDir/MergePilot.exe"
+          Compress-Archive -Path "$tmpDir/MergePilot.exe" -DestinationPath "$tmpDir/$zipName"
+          "PORTABLE_ZIP=$tmpDir/$zipName" >> $env:GITHUB_ENV
+          Write-Host "Created $zipName"
+
+      - name: Upload portable zip (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$env:GITHUB_REF_NAME" "$env:PORTABLE_ZIP" --repo "$env:GITHUB_REPOSITORY"
 
   cleanup-release-signatures:
     needs: build
