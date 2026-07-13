@@ -44,6 +44,7 @@ function mountPage() {
 describe("SettingsPage 诊断信息", () => {
   beforeEach(() => {
     storage.clear();
+    storage.set("mergepilot:auto-update-check", "false");
     setActivePinia(createPinia());
     vi.mocked(copySupportInfo).mockReset();
     vi.mocked(getAppVersion).mockResolvedValue("0.3.0");
@@ -250,5 +251,51 @@ describe("SettingsPage 诊断信息", () => {
     await wrapper.get("button.install-update-button").trigger("click");
 
     expect(restartAfterUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("启用后启动时最多每天后台检查一次", async () => {
+    storage.set("mergepilot:auto-update-check", "true");
+    vi.mocked(checkForUpdates).mockResolvedValue({
+      current_version: "0.3.0",
+      available: false,
+      version: null,
+      notes: null,
+      published_at: null,
+    });
+
+    const first = mountPage();
+    await flushPromises();
+    first.unmount();
+    const second = mountPage();
+    await flushPromises();
+
+    expect(checkForUpdates).toHaveBeenCalledOnce();
+    expect(storage.get("mergepilot:last-update-check")).toBeTruthy();
+    second.unmount();
+  });
+
+  it("后台检查失败不显示阻断错误", async () => {
+    storage.set("mergepilot:auto-update-check", "true");
+    vi.mocked(checkForUpdates).mockRejectedValue("network unavailable");
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(checkForUpdates).toHaveBeenCalledOnce();
+    expect(wrapper.find(".support-status.error").exists()).toBe(false);
+  });
+
+  it("允许关闭自动检查且不记录敏感网络数据", async () => {
+    storage.set("mergepilot:auto-update-check", "true");
+    storage.set("mergepilot:last-update-check", String(Date.now()));
+    const wrapper = mountPage();
+    const toggle = wrapper.get<HTMLInputElement>('input[aria-label="每日自动检查更新"]');
+
+    await toggle.setValue(false);
+
+    expect(storage.get("mergepilot:auto-update-check")).toBe("false");
+    expect([...storage.keys()].sort()).toEqual([
+      "mergepilot:auto-update-check",
+      "mergepilot:last-update-check",
+    ]);
   });
 });

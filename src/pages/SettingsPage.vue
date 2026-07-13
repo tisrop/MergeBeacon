@@ -30,6 +30,10 @@ const versionError = ref("");
 const isCheckingUpdate = ref(false);
 const updateResult = ref<UpdateCheckResult | null>(null);
 const updateError = ref("");
+const AUTO_UPDATE_CHECK_KEY = "mergepilot:auto-update-check";
+const LAST_UPDATE_CHECK_KEY = "mergepilot:last-update-check";
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const isAutoUpdateCheckEnabled = ref(localStorage.getItem(AUTO_UPDATE_CHECK_KEY) !== "false");
 const isConfirmingInstall = ref(false);
 const isInstallingUpdate = ref(false);
 const isUpdateInstalled = ref(false);
@@ -44,27 +48,60 @@ const updateProgressPercent = computed(() => {
   return Math.min(100, Math.round((updateDownloaded.value / updateTotal.value) * 100));
 });
 
+function isBackgroundCheckDue(now = Date.now()) {
+  const lastCheck = Number(localStorage.getItem(LAST_UPDATE_CHECK_KEY));
+  return (
+    !Number.isFinite(lastCheck) ||
+    lastCheck <= 0 ||
+    lastCheck > now ||
+    now - lastCheck >= UPDATE_CHECK_INTERVAL_MS
+  );
+}
+
+async function maybeCheckForUpdatesInBackground() {
+  if (!isAutoUpdateCheckEnabled.value || !isBackgroundCheckDue()) return;
+  localStorage.setItem(LAST_UPDATE_CHECK_KEY, String(Date.now()));
+  await checkUpdate(true);
+}
+
 onMounted(async () => {
   try {
     appVersion.value = await getAppVersion();
   } catch (error) {
     versionError.value = getErrorMessage(error, "无法读取当前版本");
   }
+  await maybeCheckForUpdatesInBackground();
 });
 
-async function checkUpdate() {
+async function checkUpdate(isBackground = false) {
   if (isCheckingUpdate.value) return;
+  if (!isBackground) {
+    localStorage.setItem(LAST_UPDATE_CHECK_KEY, String(Date.now()));
+  }
   isCheckingUpdate.value = true;
-  updateError.value = "";
-  updateResult.value = null;
+  if (!isBackground) {
+    updateError.value = "";
+    updateResult.value = null;
+  }
   isConfirmingInstall.value = false;
   isUpdateInstalled.value = false;
   try {
     updateResult.value = await checkForUpdates();
   } catch (error) {
-    updateError.value = getErrorMessage(error, "检查更新失败，请稍后重试");
+    if (!isBackground) {
+      updateError.value = getErrorMessage(error, "检查更新失败，请稍后重试");
+    }
   } finally {
     isCheckingUpdate.value = false;
+  }
+}
+
+async function setAutoUpdateCheckEnabled(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked;
+  isAutoUpdateCheckEnabled.value = enabled;
+  localStorage.setItem(AUTO_UPDATE_CHECK_KEY, String(enabled));
+  if (enabled) {
+    await maybeCheckForUpdatesInBackground();
   }
 }
 
@@ -225,10 +262,25 @@ async function copySupportInfo() {
             type="button"
             class="check-update-button"
             :disabled="isCheckingUpdate || isInstallingUpdate || isUpdateInstalled"
-            @click="checkUpdate"
+            @click="checkUpdate()"
           >
             {{ isCheckingUpdate ? "正在检查..." : "检查更新" }}
           </button>
+        </div>
+        <div class="auto-update-row">
+          <span>
+            <span class="setting-label">每日自动检查</span>
+            <span class="setting-hint">启动时最多每天检查一次；失败不会打扰其他操作。</span>
+          </span>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              aria-label="每日自动检查更新"
+              :checked="isAutoUpdateCheckEnabled"
+              @change="setAutoUpdateCheckEnabled"
+            />
+            <span class="toggle-slider" />
+          </label>
         </div>
         <p v-if="versionError" class="support-status error" role="status">{{ versionError }}</p>
         <p v-if="updateError" class="support-status error" role="status" aria-live="polite">
@@ -505,6 +557,14 @@ async function copySupportInfo() {
 .check-update-button:disabled {
   opacity: 0.6;
   cursor: wait;
+}
+
+.auto-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .update-result {
