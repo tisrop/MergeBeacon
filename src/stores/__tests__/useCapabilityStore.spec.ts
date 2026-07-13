@@ -1,0 +1,33 @@
+import { createPinia, setActivePinia } from "pinia";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getPlatformCapabilities } from "@/api";
+import { useCapabilityStore } from "@/stores/useCapabilityStore";
+import type { PlatformCapabilities } from "@/types";
+
+vi.mock("@/api", () => ({ getPlatformCapabilities: vi.fn() }));
+
+const github: PlatformCapabilities = {
+  platform: "github",
+  review_events: ["comment", "approve", "request_changes"],
+  merge_strategies: ["merge", "squash", "rebase"],
+  supports_fork_context: true,
+  supports_issue_auto_close: true,
+};
+
+describe("useCapabilityStore", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+  });
+
+  it("按平台缓存能力并合并并发请求", async () => {
+    vi.mocked(getPlatformCapabilities).mockResolvedValue(github);
+    const store = useCapabilityStore();
+
+    const [first, second] = await Promise.all([store.load("github"), store.load("github")]);
+    expect(first).toEqual(github);
+    expect(second).toEqual(github);
+    expect(getPlatformCapabilities).toHaveBeenCalledTimes(1);
+    expect(store.values.github?.review_events).toContain("approve");
+  });
+});

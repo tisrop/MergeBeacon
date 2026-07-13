@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import type { Platform, ReviewEvent } from "@/types";
 import { reviewSubmit } from "@/api";
 import { getErrorMessage } from "@/utils/error";
+import { useCapabilityStore } from "@/stores/useCapabilityStore";
 
 const props = defineProps<{
   platform: Platform;
@@ -11,6 +12,7 @@ const props = defineProps<{
   prNumber: number;
 }>();
 
+const capabilities = useCapabilityStore();
 const body = ref("");
 const event = ref<ReviewEvent>("comment");
 const submitting = ref(false);
@@ -22,23 +24,24 @@ const allEvents: { value: ReviewEvent; label: string }[] = [
   { value: "approve", label: "批准" },
   { value: "request_changes", label: "请求修改" },
 ];
-const supportedEvents: Record<Platform, ReviewEvent[]> = {
-  github: ["comment", "approve", "request_changes"],
-  gitlab: ["comment"],
-  gitee: ["comment"],
-};
-const events = computed(() =>
-  allEvents.filter((candidate) => supportedEvents[props.platform].includes(candidate.value)),
-);
+const platformCapabilities = computed(() => capabilities.values[props.platform]);
+const isSupported = (candidate: ReviewEvent) =>
+  platformCapabilities.value?.review_events.includes(candidate) ?? false;
 watch(
   () => props.platform,
-  () => {
-    if (!supportedEvents[props.platform].includes(event.value)) event.value = "comment";
+  async (platform) => {
+    try {
+      const loaded = await capabilities.load(platform);
+      if (!loaded.review_events.includes(event.value)) event.value = "comment";
+    } catch {
+      // Store exposes the localized loading error; submitting remains disabled below.
+    }
   },
+  { immediate: true },
 );
 
 async function handleSubmit() {
-  if (!body.value.trim()) return;
+  if (!body.value.trim() || !isSupported(event.value)) return;
   submitting.value = true;
   error.value = "";
   success.value = false;
@@ -68,9 +71,11 @@ async function handleSubmit() {
 
     <div class="event-select">
       <button
-        v-for="ev in events"
+        v-for="ev in allEvents"
         :key="ev.value"
         :class="{ active: event === ev.value }"
+        :disabled="!isSupported(ev.value)"
+        :title="isSupported(ev.value) ? undefined : '当前平台不支持此评审操作'"
         @click="event = ev.value"
       >
         {{ ev.label }}
@@ -80,11 +85,17 @@ async function handleSubmit() {
     <textarea v-model="body" class="input" placeholder="输入你的评审意见..." rows="5" />
 
     <div class="form-actions">
-      <button class="btn btn-primary" :disabled="submitting || !body.trim()" @click="handleSubmit">
+      <button
+        class="btn btn-primary"
+        :disabled="submitting || !body.trim() || !isSupported(event)"
+        @click="handleSubmit"
+      >
         {{ submitting ? "提交中..." : "提交评审" }}
       </button>
       <span v-if="success" class="success-msg">✓ 评审已提交</span>
-      <span v-if="error" class="error-msg">{{ error }}</span>
+      <span v-if="error || capabilities.errors[platform]" class="error-msg">{{
+        error || capabilities.errors[platform]
+      }}</span>
     </div>
   </div>
 </template>

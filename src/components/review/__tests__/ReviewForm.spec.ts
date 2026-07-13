@@ -1,26 +1,57 @@
 import { flushPromises, mount } from "@vue/test-utils";
-import { describe, expect, it, vi } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReviewForm from "../ReviewForm.vue";
-import { reviewSubmit } from "@/api";
+import { getPlatformCapabilities, reviewSubmit } from "@/api";
+import type { Platform, PlatformCapabilities } from "@/types";
 
-vi.mock("@/api", () => ({ reviewSubmit: vi.fn() }));
+vi.mock("@/api", () => ({ reviewSubmit: vi.fn(), getPlatformCapabilities: vi.fn() }));
 
 const props = { owner: "team", repo: "repo", prNumber: 1 };
+function capabilities(platform: Platform): PlatformCapabilities {
+  return {
+    platform,
+    review_events: platform === "github" ? ["comment", "approve", "request_changes"] : ["comment"],
+    merge_strategies: platform === "gitlab" ? ["merge", "squash"] : ["merge", "squash", "rebase"],
+    supports_fork_context: true,
+    supports_issue_auto_close: true,
+  };
+}
+
+async function mountForm(platform: Platform) {
+  vi.mocked(getPlatformCapabilities).mockImplementation(async (candidate) =>
+    capabilities(candidate),
+  );
+  const wrapper = mount(ReviewForm, { props: { ...props, platform } });
+  await flushPromises();
+  return wrapper;
+}
 
 describe("ReviewForm", () => {
-  it.each(["gitlab", "gitee"] as const)("%s 只展示评论操作", (platform) => {
-    const wrapper = mount(ReviewForm, { props: { ...props, platform } });
-    const labels = wrapper.findAll(".event-select button").map((button) => button.text());
-    expect(labels).toEqual(["评论"]);
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
   });
 
-  it("GitHub 展示全部评审操作", () => {
-    const wrapper = mount(ReviewForm, { props: { ...props, platform: "github" } });
-    expect(wrapper.findAll(".event-select button").map((button) => button.text())).toEqual([
-      "评论",
-      "批准",
-      "请求修改",
+  it.each(["gitlab", "gitee"] as const)("%s 禁用不支持的批准和请求修改操作", async (platform) => {
+    const wrapper = await mountForm(platform);
+    const buttons = wrapper.findAll(".event-select button");
+    expect(buttons.map((button) => button.text())).toEqual(["评论", "批准", "请求修改"]);
+    expect(buttons.map((button) => button.attributes("disabled") !== undefined)).toEqual([
+      false,
+      true,
+      true,
     ]);
+    expect(buttons[1].attributes("title")).toBe("当前平台不支持此评审操作");
+  });
+
+  it("GitHub 启用全部评审操作", async () => {
+    const wrapper = await mountForm("github");
+    expect(
+      wrapper
+        .findAll(".event-select button")
+        .every((button) => button.attributes("disabled") === undefined),
+    ).toBe(true);
   });
 
   it("从 GitHub 切换到 GitLab 时重置不支持的评审事件", async () => {
@@ -31,9 +62,10 @@ describe("ReviewForm", () => {
       author: { id: 1, login: "user", name: "User", avatar_url: "" },
       submitted_at: "",
     });
-    const wrapper = mount(ReviewForm, { props: { ...props, platform: "github" } });
+    const wrapper = await mountForm("github");
     await wrapper.findAll(".event-select button")[1].trigger("click");
     await wrapper.setProps({ platform: "gitlab" });
+    await flushPromises();
     await wrapper.get("textarea").setValue("切换平台后的评论");
     await wrapper.get(".btn-primary").trigger("click");
     await flushPromises();
