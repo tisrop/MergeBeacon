@@ -76,7 +76,7 @@
 | 桌面框架 | Tauri 2 |
 | 前端 | Vue 3、Composition API、Pinia、Vue Router |
 | 前端构建 | TypeScript、Vite 6 |
-| 代码规范 | ESLint + oxfmt（平面配置） |
+| 代码规范 | oxlint + oxfmt + 前端规范检查器 |
 | 后端 | Rust 2021、Tokio、Reqwest |
 | 平台抽象 | `GitPlatform` trait + GitHub / GitLab / Gitee Adapter |
 | Diff 渲染 | diff2html、highlight.js |
@@ -213,7 +213,7 @@ mergepilot/
 │   └── tauri.conf.json
 ├── AGENTS.md              # AI 编码代理的项目上下文与操作约束
 ├── CODE_STANDARDS.md      # 代码实现与评审规范
-├── eslint.config.js       # ESLint 平面配置
+├── .oxlintrc.json         # oxlint 规则与忽略配置
 ├── .oxfmtrc.json          # oxfmt 配置
 ├── package.json
 ├── vite.config.ts
@@ -226,7 +226,8 @@ mergepilot/
 Rust/Tauri 架构边界、跨平台行为、异步生命周期、凭据安全、测试要求和合并门禁。
 AI 编码代理还需同时遵循 [`AGENTS.md`](AGENTS.md) 中的项目操作约束。
 
-格式和静态检查分别由 ESLint、oxfmt、rustfmt 与 Clippy 执行；涉及认证、平台切换、分页、AI
+前端静态检查由 oxlint、oxfmt 和项目前端规范检查器执行，Rust 侧由 rustfmt 与 Clippy 执行；
+涉及认证、平台切换、分页、AI
 请求生命周期或合并结果的改动必须同步增加回归测试。
 
 ## 开发与测试
@@ -239,6 +240,9 @@ npm test
 # 代码检查与格式化
 npm run lint
 npm run format
+npm run check:frontend-standards
+npm run check:frontend
+npm run lint:fix
 npm run format:fix
 
 # Rust 格式、静态检查与测试

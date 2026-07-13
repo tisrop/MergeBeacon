@@ -29,7 +29,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Lint (ESLint)
+      - name: Lint (oxlint)
         run: npm run lint
 
       - name: Frontend standards
@@ -159,7 +159,7 @@ jobs:
               - 'AGENTS.md'
               - 'CODE_STANDARDS.md'
               - 'FRONTEND_STANDARDS.md'
-              - 'eslint.config.js'
+              - '.oxlintrc*'
               - '.oxfmtrc*'
               - '.github/workflows/ci.yml'
             rust:

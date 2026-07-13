@@ -18,10 +18,11 @@ npm run dev              # 仅前端 Vite dev server（port 1420）
 npm run tauri -- dev     # 完整 Tauri 桌面应用（dev server + 原生窗口）
 npm run build            # vue-tsc --noEmit 类型检查 → vite build
 npm run tauri -- build   # 生产构建，产物在 src-tauri/target/release/bundle/
-npm run lint             # ESLint 检查
-npm run lint:fix         # ESLint 自动修复
+npm run lint             # oxlint 静态检查
+npm run lint:fix         # oxlint 安全自动修复
 npm run format           # oxfmt 格式检查
 npm run format:fix       # oxfmt 格式化
+npm run check:frontend    # oxlint + oxfmt + 前端规范检查器
 npm test                 # Vitest（Vue Test Utils + jsdom）
 cd src-tauri && cargo fmt --all -- --check
 cd src-tauri && cargo clippy --all-targets -- -D warnings
@@ -81,7 +82,8 @@ src-tauri/
 - 仓库首次加载替换第一页；“加载更多”追加并按 `id + full_name` 去重；失败保留已有数据并可重试。
 - AI 流式事件只消费当前 `request_id`；新评审和组件卸载必须取消旧请求并解除监听；取消不是错误提示。
 - 模型 ID 等远端字符串只能作为文本渲染，不使用 `v-html`。
-- ESLint 使用平面配置；禁止内联 `eslint-disable`。oxfmt：双引号、分号、尾逗号、100 列宽。
+- oxlint 使用 `.oxlintrc.json`；禁止内联 `oxlint-disable`。oxfmt：双引号、分号、尾逗号、
+  100 列宽。
 - `src/main.ts` 有 `/settings` HMR 保护；菜单“设置...”通过 `window.__goToSettings()` 跳转。
 - 界面和 AI Prompt 使用中文。
 

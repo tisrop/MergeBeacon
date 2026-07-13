@@ -24,6 +24,8 @@
 <!-- 说明如何验证你的改动，例如：命令、测试用例、手动操作步骤 -->
 
 - [ ] `npm run lint` 通过
+- [ ] `npm run check:frontend-standards` 通过
+- [ ] `npm run format` 通过
 - [ ] `npm run build` 通过
 - [ ] `cargo test` 通过
 
