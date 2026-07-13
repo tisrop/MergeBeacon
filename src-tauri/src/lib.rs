@@ -8,6 +8,7 @@ pub mod models;
 pub mod platform;
 mod state;
 pub mod vault;
+mod window_state;
 
 use commands::{ai as ai_cmds, auth, issue, pr, review, support};
 use local_store::CommentSnapshotStore;
@@ -16,15 +17,32 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::Manager;
+use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED)
+                .skip_initial_state("main")
+                .build(),
+        )
         .manage(AppState::new())
         .setup(|app| {
             let app_dir = app.path().app_data_dir().unwrap_or_default();
             let comment_store = CommentSnapshotStore::new(&app_dir.join("comment_cache.db"));
             app.manage(comment_store);
+
+            if let Some(window) = app.get_webview_window("main") {
+                let restored = window
+                    .restore_state(StateFlags::POSITION | StateFlags::SIZE)
+                    .and_then(|()| window_state::ensure_visible(&window))
+                    .and_then(|()| window.restore_state(StateFlags::MAXIMIZED));
+                if let Err(error) = restored {
+                    eprintln!("恢复窗口状态失败：{error}");
+                }
+            }
 
             let settings = MenuItem::with_id(app, "open-settings", "设置...", true, Some("Cmd+,"))?;
             let app_menu = Submenu::with_items(
