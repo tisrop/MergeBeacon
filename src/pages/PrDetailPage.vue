@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
 import { reviewCommentAdd } from "@/api";
+import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { getErrorMessage } from "@/utils/error";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import DiffViewer from "@/components/diff/DiffViewer.vue";
@@ -53,6 +54,7 @@ function extractDiffHunk(files: PrFile[], path: string, line: number): string | 
 
 const route = useRoute();
 const pr = usePrStore();
+const capabilityStore = useCapabilityStore();
 
 const platform = route.params.platform as Platform;
 const owner = route.params.owner as string;
@@ -77,24 +79,18 @@ const defaultCommitMessage = computed(
 );
 const commitMessage = ref("");
 
-const STRATEGIES: Record<Platform, { value: MergeStrategy; label: string }[]> = {
-  github: [
-    { value: "merge", label: "Merge commit" },
-    { value: "squash", label: "Squash and merge" },
-    { value: "rebase", label: "Rebase and merge" },
-  ],
-  gitlab: [
-    { value: "merge", label: "Merge commit" },
-    { value: "squash", label: "Squash and merge" },
-  ],
-  gitee: [
-    { value: "merge", label: "Merge commit" },
-    { value: "squash", label: "Squash and merge" },
-    { value: "rebase", label: "Rebase and merge" },
-  ],
+const strategyLabels: Record<MergeStrategy, string> = {
+  merge: "Merge commit",
+  squash: "Squash and merge",
+  rebase: "Rebase and merge",
 };
-
-const availableStrategies = computed(() => STRATEGIES[platform] ?? STRATEGIES.github);
+const platformCapabilities = computed(() => capabilityStore.values[platform]);
+const availableStrategies = computed(() =>
+  (platformCapabilities.value?.merge_strategies ?? []).map((value) => ({
+    value,
+    label: strategyLabels[value],
+  })),
+);
 
 const mergeButtonLabel = computed(() => {
   const s = availableStrategies.value.find((s) => s.value === selectedStrategy.value);
@@ -112,7 +108,12 @@ watch(
 const isOpen = computed(() => pr.currentPr?.summary.state === "open");
 const isClosed = computed(() => pr.currentPr?.summary.state === "closed");
 const isMerged = computed(() => pr.currentPr?.summary.state === "merged");
-const canMerge = computed(() => isOpen.value && pr.currentPr?.mergeable !== false);
+const canMerge = computed(
+  () =>
+    isOpen.value &&
+    pr.currentPr?.mergeable !== false &&
+    (platformCapabilities.value?.merge_strategies.includes(selectedStrategy.value) ?? false),
+);
 const canClose = computed(() => isOpen.value);
 const canReopen = computed(() => isClosed.value && !isMerged.value);
 
@@ -216,7 +217,11 @@ onMounted(async () => {
   await Promise.all([
     pr.fetchPrDetail(platform, owner, repo, number),
     pr.fetchPrDiff(platform, owner, repo, number),
+    capabilityStore.load(platform).catch(() => null),
   ]);
+  if (!platformCapabilities.value?.merge_strategies.includes(selectedStrategy.value)) {
+    selectedStrategy.value = platformCapabilities.value?.merge_strategies[0] ?? "merge";
+  }
 });
 </script>
 
@@ -322,10 +327,16 @@ onMounted(async () => {
               :disabled="operating"
               placeholder="Commit message"
             />
-            <label class="close-issues-checkbox">
+            <label
+              v-if="platformCapabilities?.supports_issue_auto_close"
+              class="close-issues-checkbox"
+            >
               <input v-model="closeRelatedIssues" type="checkbox" :disabled="operating" />
               合并后关闭关联 Issue
             </label>
+            <p v-if="capabilityStore.errors[platform]" class="error-msg">
+              {{ capabilityStore.errors[platform] }}，合并与评审操作暂不可用
+            </p>
           </div>
 
           <div v-if="isOpen" class="close-btn-wrapper">

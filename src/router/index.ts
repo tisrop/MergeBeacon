@@ -64,7 +64,7 @@ router.beforeEach(async (to, _from, next) => {
   const routePlatform = parsePlatform(to.params.platform);
   const loginPlatform = to.path === "/login" ? parsePlatform(to.query.platform) : undefined;
   const targetPlatform = routePlatform ?? loginPlatform;
-  const requiresAuthentication = to.path === "/login" || Boolean(to.meta.requiresAuth);
+  const requiresAuthentication = Boolean(to.meta.requiresAuth);
 
   if (loginPlatform) {
     store.setActivePlatform(loginPlatform);
@@ -74,12 +74,10 @@ router.beforeEach(async (to, _from, next) => {
     ? (store.platforms[targetPlatform]?.isLoggedIn ?? false)
     : store.isLoggedIn;
 
+  // 显式进入登录页时不再用持久化 Token 自动恢复，否则侧栏刚显示“未登录”时，
+  // 路由守卫可能又把用户重定向回工作台，表现为登录链接无法打开。
   if (requiresAuthentication && !isLoggedIn) {
-    if (loginPlatform) {
-      await store.restorePlatformSession(loginPlatform);
-    } else {
-      await store.restoreSession(routePlatform);
-    }
+    await store.restoreSession(routePlatform);
     isLoggedIn = targetPlatform
       ? (store.platforms[targetPlatform]?.isLoggedIn ?? false)
       : store.isLoggedIn;

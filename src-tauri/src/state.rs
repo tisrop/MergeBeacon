@@ -2,7 +2,7 @@ use crate::ai::config::AiConfigManager;
 use crate::http_client::HttpClient;
 use crate::vault::TokenVault;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
@@ -38,6 +38,10 @@ impl AiTaskRegistry {
         }
     }
 
+    pub async fn has_active_tasks(&self) -> bool {
+        !self.tasks.lock().await.is_empty()
+    }
+
     pub async fn remove_if_current(&self, request_id: &str, generation: u64) {
         let mut tasks = self.tasks.lock().await;
         if tasks.get(request_id).is_some_and(|entry| entry.generation == generation) {
@@ -52,6 +56,7 @@ pub struct AppState {
     pub token_vault: Arc<TokenVault>,
     pub ai_config: Arc<AiConfigManager>,
     pub ai_tasks: Arc<AiTaskRegistry>,
+    pub update_operation_active: AtomicBool,
 }
 
 impl AppState {
@@ -61,6 +66,7 @@ impl AppState {
             token_vault: Arc::new(TokenVault::new()),
             ai_config: Arc::new(AiConfigManager::new()),
             ai_tasks: Arc::new(AiTaskRegistry::new()),
+            update_operation_active: AtomicBool::new(false),
         }
     }
 }

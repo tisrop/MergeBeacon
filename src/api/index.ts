@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Platform,
+  PlatformCapabilities,
   PrComment,
   PrState,
   PrSummary,
@@ -20,6 +22,9 @@ import type {
   AiConfig,
   AiReviewRequest,
   AiReviewResult,
+  SupportInfo,
+  UpdateCheckResult,
+  UpdateProgressEvent,
 } from "@/types";
 
 // ============================================================
@@ -49,6 +54,44 @@ export async function authHasAnyToken(): Promise<boolean> {
 
 export async function authHasToken(platform: Platform): Promise<boolean> {
   return invoke("auth_has_token", { platform });
+}
+
+export async function getPlatformCapabilities(platform: Platform): Promise<PlatformCapabilities> {
+  return invoke("platform_capabilities", { platform });
+}
+
+// ── Support ──
+export async function getAppVersion(): Promise<string> {
+  return invoke("app_version");
+}
+
+export async function checkForUpdates(): Promise<UpdateCheckResult> {
+  return invoke("update_check");
+}
+
+export async function downloadAndInstallUpdate(
+  requestId: string,
+  expectedVersion: string,
+): Promise<void> {
+  return invoke("update_download_and_install", { requestId, expectedVersion });
+}
+
+export async function restartAfterUpdate(): Promise<void> {
+  return invoke("update_restart");
+}
+
+export async function listenToUpdateProgress(
+  callback: (event: UpdateProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<UpdateProgressEvent>("update-progress", (event) => callback(event.payload));
+}
+
+export async function getSupportInfo(platform: Platform): Promise<SupportInfo> {
+  return invoke("support_info", { platform });
+}
+
+export async function copySupportInfo(platform: Platform): Promise<void> {
+  return invoke("copy_support_info", { platform });
 }
 
 // ── Repo ──

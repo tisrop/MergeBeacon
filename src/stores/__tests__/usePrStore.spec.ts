@@ -1,8 +1,8 @@
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { prDetail, prList, prMerge } from "@/api";
+import { prDetail, prDiff, prList, prMerge } from "@/api";
 import { usePrStore } from "@/stores/usePrStore";
-import type { Paginated, PrDetail, PrSummary } from "@/types";
+import type { DiffResult, Paginated, PrDetail, PrSummary } from "@/types";
 
 vi.mock("@/api", () => ({
   prList: vi.fn(),
@@ -88,5 +88,44 @@ describe("usePrStore", () => {
     expect(result).toEqual(outcome);
     expect(prDetail).toHaveBeenCalledWith("github", "o", "r", 42);
     expect(store.currentPr?.summary.title).toBe("已合并");
+  });
+
+  it("忽略同类请求中较早返回的详情和 diff", async () => {
+    const oldDetail = deferred<PrDetail>();
+    const oldDiff = deferred<DiffResult>();
+    const currentDetail: PrDetail = {
+      summary: {
+        number: 2,
+        title: "当前仓库 PR",
+        author: { id: 2, login: "new", name: "New", avatar_url: "" },
+        state: "open",
+        created_at: "",
+        updated_at: "",
+        labels: [],
+      },
+      body: "",
+      source_branch: "current",
+      target_branch: "main",
+      mergeable: true,
+      head_sha: "new-sha",
+    };
+    const currentDiff: DiffResult = { diff: "current diff", files: [] };
+    vi.mocked(prDetail).mockReturnValueOnce(oldDetail.promise).mockResolvedValueOnce(currentDetail);
+    vi.mocked(prDiff).mockReturnValueOnce(oldDiff.promise).mockResolvedValueOnce(currentDiff);
+    const store = usePrStore();
+
+    const oldDetailRequest = store.fetchPrDetail("github", "old", "repo", 1);
+    const oldDiffRequest = store.fetchPrDiff("github", "old", "repo", 1);
+    await store.fetchPrDetail("gitlab", "new", "repo", 2);
+    await store.fetchPrDiff("gitlab", "new", "repo", 2);
+    oldDetail.resolve({
+      ...currentDetail,
+      summary: { ...currentDetail.summary, title: "迟到 PR" },
+    });
+    oldDiff.resolve({ diff: "late diff", files: [] });
+    await Promise.all([oldDetailRequest, oldDiffRequest]);
+
+    expect(store.currentPr?.summary.title).toBe("当前仓库 PR");
+    expect(store.diff).toEqual(currentDiff);
   });
 });

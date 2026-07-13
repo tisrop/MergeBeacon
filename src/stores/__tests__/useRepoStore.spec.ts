@@ -37,6 +37,16 @@ function repo(id: number, fullName: string): RepoSummary {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("useRepoStore", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -89,5 +99,84 @@ describe("useRepoStore", () => {
     expect(store.errors.github).toContain("network");
     await store.retry("github");
     expect(store.reposCache.github).toHaveLength(2);
+  });
+
+  it("刷新第一页会替换旧列表而不是追加", async () => {
+    vi.mocked(repoList)
+      .mockResolvedValueOnce({
+        items: [repo(1, "a/old")],
+        page: 1,
+        total_pages: 1,
+        total_count: 1,
+      })
+      .mockResolvedValueOnce({
+        items: [repo(2, "a/new")],
+        page: 1,
+        total_pages: 1,
+        total_count: 1,
+      });
+    const store = useRepoStore();
+
+    await store.refreshRepos("github");
+    await store.refreshRepos("github");
+
+    expect(store.reposCache.github.map((item) => item.full_name)).toEqual(["a/new"]);
+  });
+
+  it("平台切换后旧平台的迟到成功结果不会覆盖当前列表", async () => {
+    const githubRequest = deferred<{
+      items: RepoSummary[];
+      page: number;
+      total_pages: number;
+      total_count: number;
+    }>();
+    vi.mocked(repoList)
+      .mockReturnValueOnce(githubRequest.promise)
+      .mockResolvedValueOnce({
+        items: [repo(2, "gitlab/current")],
+        page: 1,
+        total_pages: 1,
+        total_count: 1,
+      });
+    const auth = useAuthStore();
+    const store = useRepoStore();
+
+    const oldRequest = store.fetchRepos("github");
+    auth.setActivePlatform("gitlab");
+    await store.fetchRepos("gitlab");
+    githubRequest.resolve({
+      items: [repo(1, "github/late")],
+      page: 1,
+      total_pages: 1,
+      total_count: 1,
+    });
+    await oldRequest;
+
+    expect(store.repos.map((item) => item.full_name)).toEqual(["gitlab/current"]);
+    expect(store.error).toBeNull();
+  });
+
+  it("平台切换后旧平台的迟到错误不会显示在当前平台", async () => {
+    const githubRequest = deferred<never>();
+    vi.mocked(repoList)
+      .mockReturnValueOnce(githubRequest.promise)
+      .mockResolvedValueOnce({
+        items: [repo(2, "gitlab/current")],
+        page: 1,
+        total_pages: 1,
+        total_count: 1,
+      });
+    const auth = useAuthStore();
+    const store = useRepoStore();
+
+    const oldRequest = store.fetchRepos("github");
+    auth.setActivePlatform("gitlab");
+    await store.fetchRepos("gitlab");
+    githubRequest.reject(new Error("github late error"));
+    await oldRequest;
+
+    expect(store.repos.map((item) => item.full_name)).toEqual(["gitlab/current"]);
+    expect(store.error).toBeNull();
+    expect(store.errors.github).toContain("github late error");
   });
 });

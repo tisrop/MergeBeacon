@@ -177,6 +177,7 @@ button {
 .btn:hover:not(:disabled) {
   background: var(--color-surface-hover);
   border-color: var(--color-primary-border);
+  color: var(--color-text);
   box-shadow: 0 3px 8px rgba(20, 43, 73, 0.08);
 }
 
@@ -200,6 +201,7 @@ button {
 .btn-primary:hover:not(:disabled) {
   background: var(--color-primary-hover);
   border-color: var(--color-primary-hover);
+  color: #ffffff;
 }
 
 .btn-sm {
@@ -217,6 +219,7 @@ button {
 .btn-success:hover:not(:disabled) {
   background: var(--color-success-hover);
   border-color: var(--color-success-hover);
+  color: #ffffff;
 }
 
 .btn-danger {

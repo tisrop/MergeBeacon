@@ -53,7 +53,7 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
           <p v-if="repo.activeFullName">{{ repo.activeFullName }}</p>
           <p v-else>选择仓库后查看与管理 Issue</p>
         </div>
-        <router-link to="/issue/new" class="btn btn-success btn-sm">
+        <router-link v-if="repo.activeRepo" to="/issue/new" class="btn btn-success btn-sm">
           <svg
             width="14"
             height="14"
@@ -63,12 +63,30 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
             stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
+            aria-hidden="true"
           >
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
           新建 Issue
         </router-link>
+        <button v-else type="button" class="btn btn-success btn-sm" disabled title="请先选择仓库">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          新建 Issue
+        </button>
       </div>
     </template>
 

@@ -20,6 +20,43 @@ export interface AuthLoginResult {
 // ── 平台 ──
 export type Platform = "github" | "gitlab" | "gitee";
 
+/** 平台 API 的静态协议能力，不包含登录、Token 权限或 PR 运行时状态。 */
+export interface PlatformCapabilities {
+  platform: Platform;
+  review_events: ReviewEvent[];
+  merge_strategies: MergeStrategy[];
+  supports_fork_context: boolean;
+  supports_issue_auto_close: boolean;
+}
+
+export interface UpdateProgressEvent {
+  request_id: string;
+  downloaded: number;
+  total: number | null;
+  phase: "downloading" | "installing";
+}
+
+export interface UpdateCheckResult {
+  current_version: string;
+  available: boolean;
+  version: string | null;
+  notes: string | null;
+  published_at: string | null;
+}
+
+export interface SupportInfo {
+  app_version: string;
+  operating_system: string;
+  architecture: string;
+  current_platform: string;
+  platform_endpoint: string;
+  credential_storage: string;
+  ai_configured: boolean;
+  ai_endpoint: string;
+  local_cache_available: boolean;
+  formatted: string;
+}
+
 // ── PR ──
 export type PrState = "open" | "closed" | "merged" | "all";
 
