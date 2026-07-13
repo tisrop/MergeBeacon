@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Platform,
   PlatformCapabilities,
@@ -23,6 +24,7 @@ import type {
   AiReviewResult,
   SupportInfo,
   UpdateCheckResult,
+  UpdateProgressEvent,
 } from "@/types";
 
 // ============================================================
@@ -65,6 +67,20 @@ export async function getAppVersion(): Promise<string> {
 
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
   return invoke("update_check");
+}
+
+export async function downloadAndInstallUpdate(requestId: string): Promise<void> {
+  return invoke("update_download_and_install", { requestId });
+}
+
+export async function restartAfterUpdate(): Promise<void> {
+  return invoke("update_restart");
+}
+
+export async function listenToUpdateProgress(
+  callback: (event: UpdateProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<UpdateProgressEvent>("update-progress", (event) => callback(event.payload));
 }
 
 export async function getSupportInfo(platform: Platform): Promise<SupportInfo> {

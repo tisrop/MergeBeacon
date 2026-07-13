@@ -1,5 +1,7 @@
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, State};
+
+use crate::state::AppState;
 use tauri_plugin_updater::{Error as UpdaterError, UpdaterExt};
 
 #[derive(Debug, Serialize)]
@@ -9,6 +11,22 @@ pub struct UpdateCheckResult {
     pub version: Option<String>,
     pub notes: Option<String>,
     pub published_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct UpdateProgressEvent {
+    pub request_id: String,
+    pub downloaded: u64,
+    pub total: Option<u64>,
+    pub phase: &'static str,
+}
+
+fn ensure_no_active_ai_tasks(has_active_tasks: bool) -> Result<(), String> {
+    if has_active_tasks {
+        Err("存在进行中的 AI 评审，请等待完成或取消后再安装更新".into())
+    } else {
+        Ok(())
+    }
 }
 
 fn check_result(
@@ -43,9 +61,69 @@ pub async fn update_check(app: AppHandle) -> Result<UpdateCheckResult, String> {
     ))
 }
 
+#[tauri::command]
+pub async fn update_download_and_install(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: String,
+) -> Result<(), String> {
+    if request_id.trim().is_empty() {
+        return Err("更新请求标识不能为空".into());
+    }
+    ensure_no_active_ai_tasks(state.ai_tasks.has_active_tasks().await)?;
+
+    let updater = app.updater().map_err(|error| format!("初始化更新下载失败：{error}"))?;
+    let update =
+        updater.check().await.map_err(update_error)?.ok_or_else(|| "当前已是最新版本，无需下载安装".to_string())?;
+
+    let progress_app = app.clone();
+    let progress_request_id = request_id.clone();
+    let finish_app = app.clone();
+    let finish_request_id = request_id.clone();
+    let mut downloaded = 0_u64;
+    let bytes = update
+        .download(
+            move |chunk_size, total| {
+                downloaded = downloaded.saturating_add(chunk_size as u64);
+                let _ = progress_app.emit(
+                    "update-progress",
+                    UpdateProgressEvent {
+                        request_id: progress_request_id.clone(),
+                        downloaded,
+                        total,
+                        phase: "downloading",
+                    },
+                );
+            },
+            move || {
+                let _ = finish_app.emit(
+                    "update-progress",
+                    UpdateProgressEvent {
+                        request_id: finish_request_id,
+                        downloaded: 0,
+                        total: None,
+                        phase: "installing",
+                    },
+                );
+            },
+        )
+        .await
+        .map_err(|error| format!("下载更新失败：{error}"))?;
+
+    ensure_no_active_ai_tasks(state.ai_tasks.has_active_tasks().await)?;
+    update.install(bytes).map_err(|error| format!("安装更新失败：{error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_restart(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    ensure_no_active_ai_tasks(state.ai_tasks.has_active_tasks().await)?;
+    app.restart()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{check_result, update_error};
+    use super::{check_result, ensure_no_active_ai_tasks, update_error};
     use tauri_plugin_updater::Error as UpdaterError;
 
     #[test]
@@ -72,5 +150,10 @@ mod tests {
             update_error(UpdaterError::ReleaseNotFound),
             "更新源暂未提供有效的发布元数据，请确认已发布包含 latest.json 的正式版本后重试"
         );
+    }
+    #[test]
+    fn blocks_install_while_ai_review_is_active() {
+        assert_eq!(ensure_no_active_ai_tasks(true), Err("存在进行中的 AI 评审，请等待完成或取消后再安装更新".into()));
+        assert!(ensure_no_active_ai_tasks(false).is_ok());
     }
 }

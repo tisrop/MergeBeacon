@@ -29,6 +29,13 @@ export interface PlatformCapabilities {
   supports_issue_auto_close: boolean;
 }
 
+export interface UpdateProgressEvent {
+  request_id: string;
+  downloaded: number;
+  total: number | null;
+  phase: "downloading" | "installing";
+}
+
 export interface UpdateCheckResult {
   current_version: string;
   available: boolean;

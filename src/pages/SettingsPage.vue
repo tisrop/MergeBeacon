@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   checkForUpdates,
   copySupportInfo as copySupportInfoToClipboard,
+  downloadAndInstallUpdate,
   getAppVersion,
+  listenToUpdateProgress,
+  restartAfterUpdate,
 } from "@/api";
 import { getErrorMessage } from "@/utils/error";
 import { useAuthStore } from "@/stores/useAuthStore";
@@ -27,6 +30,19 @@ const versionError = ref("");
 const isCheckingUpdate = ref(false);
 const updateResult = ref<UpdateCheckResult | null>(null);
 const updateError = ref("");
+const isConfirmingInstall = ref(false);
+const isInstallingUpdate = ref(false);
+const isUpdateInstalled = ref(false);
+const updateDownloaded = ref(0);
+const updateTotal = ref<number | null>(null);
+const updatePhase = ref<"downloading" | "installing" | null>(null);
+let unlistenUpdateProgress: (() => void) | null = null;
+let activeUpdateRequestId: string | null = null;
+
+const updateProgressPercent = computed(() => {
+  if (!updateTotal.value || updateTotal.value <= 0) return null;
+  return Math.min(100, Math.round((updateDownloaded.value / updateTotal.value) * 100));
+});
 
 onMounted(async () => {
   try {
@@ -41,6 +57,8 @@ async function checkUpdate() {
   isCheckingUpdate.value = true;
   updateError.value = "";
   updateResult.value = null;
+  isConfirmingInstall.value = false;
+  isUpdateInstalled.value = false;
   try {
     updateResult.value = await checkForUpdates();
   } catch (error) {
@@ -49,6 +67,65 @@ async function checkUpdate() {
     isCheckingUpdate.value = false;
   }
 }
+
+async function installUpdate() {
+  if (isInstallingUpdate.value || !updateResult.value?.available) return;
+  if (!isConfirmingInstall.value) {
+    isConfirmingInstall.value = true;
+    return;
+  }
+
+  const requestId = crypto.randomUUID();
+  activeUpdateRequestId = requestId;
+  isInstallingUpdate.value = true;
+  isConfirmingInstall.value = false;
+  updateError.value = "";
+  updateDownloaded.value = 0;
+  updateTotal.value = null;
+  updatePhase.value = "downloading";
+
+  try {
+    unlistenUpdateProgress?.();
+    unlistenUpdateProgress = await listenToUpdateProgress((progress) => {
+      if (progress.request_id !== activeUpdateRequestId) return;
+      updatePhase.value = progress.phase;
+      if (progress.phase === "downloading") {
+        updateDownloaded.value = progress.downloaded;
+        updateTotal.value = progress.total;
+      }
+    });
+    await downloadAndInstallUpdate(requestId);
+    isUpdateInstalled.value = true;
+    updatePhase.value = null;
+  } catch (error) {
+    updateError.value = getErrorMessage(error, "下载安装更新失败，请稍后重试");
+    updatePhase.value = null;
+  } finally {
+    activeUpdateRequestId = null;
+    isInstallingUpdate.value = false;
+    unlistenUpdateProgress?.();
+    unlistenUpdateProgress = null;
+  }
+}
+
+function cancelInstallConfirmation() {
+  isConfirmingInstall.value = false;
+}
+
+async function restartApp() {
+  updateError.value = "";
+  try {
+    await restartAfterUpdate();
+  } catch (error) {
+    updateError.value = getErrorMessage(error, "重启失败，请手动重新打开应用");
+  }
+}
+
+onUnmounted(() => {
+  activeUpdateRequestId = null;
+  unlistenUpdateProgress?.();
+  unlistenUpdateProgress = null;
+});
 
 async function copySupportInfo() {
   if (isCopyingSupportInfo.value) return;
@@ -147,7 +224,7 @@ async function copySupportInfo() {
           <button
             type="button"
             class="check-update-button"
-            :disabled="isCheckingUpdate"
+            :disabled="isCheckingUpdate || isInstallingUpdate || isUpdateInstalled"
             @click="checkUpdate"
           >
             {{ isCheckingUpdate ? "正在检查..." : "检查更新" }}
@@ -157,10 +234,57 @@ async function copySupportInfo() {
         <p v-if="updateError" class="support-status error" role="status" aria-live="polite">
           {{ updateError }}
         </p>
-        <div v-else-if="updateResult?.available" class="update-result" role="status">
+        <div v-if="updateResult?.available" class="update-result" role="status">
           <strong>发现新版本 v{{ updateResult.version }}</strong>
-          <p>更新包将在下载和安装功能启用后提供。</p>
+          <p v-if="!isUpdateInstalled">下载完成后将安装更新，并由你确认何时重启应用。</p>
+          <p v-else>更新已安装，重启应用后生效。</p>
           <pre v-if="updateResult.notes" class="update-notes">{{ updateResult.notes }}</pre>
+          <div v-if="isInstallingUpdate" class="update-progress" aria-live="polite">
+            <progress
+              v-if="updateProgressPercent !== null"
+              :value="updateProgressPercent"
+              max="100"
+            />
+            <span v-if="updatePhase === 'installing'">正在安装更新...</span>
+            <span v-else-if="updateProgressPercent !== null">
+              正在下载... {{ updateProgressPercent }}%
+            </span>
+            <span v-else>正在下载更新...</span>
+          </div>
+          <div class="update-actions">
+            <template v-if="isUpdateInstalled">
+              <button type="button" class="install-update-button" @click="restartApp">
+                重启完成更新
+              </button>
+            </template>
+            <template v-else-if="isConfirmingInstall">
+              <span class="install-warning">安装前请保存工作并结束正在进行的 AI 评审。</span>
+              <button
+                type="button"
+                class="install-update-button"
+                :disabled="isInstallingUpdate"
+                @click="installUpdate"
+              >
+                确认安装
+              </button>
+              <button
+                type="button"
+                class="cancel-install-button"
+                @click="cancelInstallConfirmation"
+              >
+                取消
+              </button>
+            </template>
+            <button
+              v-else
+              type="button"
+              class="install-update-button"
+              :disabled="isInstallingUpdate"
+              @click="installUpdate"
+            >
+              {{ isInstallingUpdate ? "正在更新..." : "下载并安装" }}
+            </button>
+          </div>
         </div>
         <p v-else-if="updateResult" class="support-status" role="status" aria-live="polite">
           当前已是最新版本。
@@ -406,6 +530,54 @@ async function copySupportInfo() {
   font: inherit;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.update-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.install-warning {
+  width: 100%;
+  color: var(--color-warning, #a16207);
+  font-size: 12px;
+}
+
+.install-update-button,
+.cancel-install-button {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font: inherit;
+  cursor: pointer;
+}
+
+.install-update-button {
+  color: white;
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+}
+
+.cancel-install-button {
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.update-progress progress {
+  width: 180px;
 }
 
 .privacy-note,

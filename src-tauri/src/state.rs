@@ -38,6 +38,10 @@ impl AiTaskRegistry {
         }
     }
 
+    pub async fn has_active_tasks(&self) -> bool {
+        !self.tasks.lock().await.is_empty()
+    }
+
     pub async fn remove_if_current(&self, request_id: &str, generation: u64) {
         let mut tasks = self.tasks.lock().await;
         if tasks.get(request_id).is_some_and(|entry| entry.generation == generation) {

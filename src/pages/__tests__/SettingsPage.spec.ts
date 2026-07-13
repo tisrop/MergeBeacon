@@ -1,7 +1,14 @@
 import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { checkForUpdates, copySupportInfo, getAppVersion } from "@/api";
+import {
+  checkForUpdates,
+  copySupportInfo,
+  downloadAndInstallUpdate,
+  getAppVersion,
+  listenToUpdateProgress,
+  restartAfterUpdate,
+} from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
 import SettingsPage from "../SettingsPage.vue";
 
@@ -18,6 +25,9 @@ vi.mock("@/api", () => ({
   copySupportInfo: vi.fn(),
   getAppVersion: vi.fn(),
   checkForUpdates: vi.fn(),
+  downloadAndInstallUpdate: vi.fn(),
+  listenToUpdateProgress: vi.fn(),
+  restartAfterUpdate: vi.fn(),
 }));
 
 function mountPage() {
@@ -38,6 +48,10 @@ describe("SettingsPage 诊断信息", () => {
     vi.mocked(copySupportInfo).mockReset();
     vi.mocked(getAppVersion).mockResolvedValue("0.3.0");
     vi.mocked(checkForUpdates).mockReset();
+    vi.mocked(downloadAndInstallUpdate).mockReset();
+    vi.mocked(listenToUpdateProgress).mockReset();
+    vi.mocked(listenToUpdateProgress).mockResolvedValue(() => undefined);
+    vi.mocked(restartAfterUpdate).mockReset();
   });
 
   it("使用当前平台获取后端脱敏文本并复制", async () => {
@@ -143,5 +157,98 @@ describe("SettingsPage 诊断信息", () => {
 
     expect(checkForUpdates).toHaveBeenCalledTimes(2);
     expect(wrapper.text()).toContain("当前已是最新版本");
+  });
+
+  it("要求二次确认后才下载安装更新", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue({
+      current_version: "0.3.0",
+      available: true,
+      version: "0.4.0",
+      notes: null,
+      published_at: null,
+    });
+    vi.mocked(downloadAndInstallUpdate).mockResolvedValue(undefined);
+    const wrapper = mountPage();
+
+    await wrapper.get("button.check-update-button").trigger("click");
+    await flushPromises();
+    await wrapper.get("button.install-update-button").trigger("click");
+
+    expect(downloadAndInstallUpdate).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("安装前请保存工作");
+
+    await wrapper.get("button.install-update-button").trigger("click");
+    await flushPromises();
+
+    expect(downloadAndInstallUpdate).toHaveBeenCalledOnce();
+    expect(wrapper.text()).toContain("更新已安装，重启应用后生效");
+  });
+
+  it("下载失败后清理进度监听并允许重试", async () => {
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "update-current") });
+    let progressCallback:
+      | ((event: {
+          request_id: string;
+          downloaded: number;
+          total: number | null;
+          phase: "downloading" | "installing";
+        }) => void)
+      | null = null;
+    vi.mocked(listenToUpdateProgress).mockImplementation(async (callback) => {
+      progressCallback = callback;
+      return () => undefined;
+    });
+    vi.mocked(checkForUpdates).mockResolvedValue({
+      current_version: "0.3.0",
+      available: true,
+      version: "0.4.0",
+      notes: null,
+      published_at: null,
+    });
+    vi.mocked(downloadAndInstallUpdate).mockImplementation(async () => {
+      progressCallback?.({ request_id: "old", downloaded: 90, total: 100, phase: "downloading" });
+      progressCallback?.({
+        request_id: "update-current",
+        downloaded: 25,
+        total: 100,
+        phase: "downloading",
+      });
+      await Promise.resolve();
+      throw new Error("download failed");
+    });
+    const wrapper = mountPage();
+
+    await wrapper.get("button.check-update-button").trigger("click");
+    await flushPromises();
+    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get("button.install-update-button").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Error: download failed");
+    expect(wrapper.get<HTMLButtonElement>("button.install-update-button").element.disabled).toBe(
+      false,
+    );
+  });
+
+  it("更新安装完成后由用户主动确认重启", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue({
+      current_version: "0.3.0",
+      available: true,
+      version: "0.4.0",
+      notes: null,
+      published_at: null,
+    });
+    vi.mocked(downloadAndInstallUpdate).mockResolvedValue(undefined);
+    vi.mocked(restartAfterUpdate).mockResolvedValue(undefined);
+    const wrapper = mountPage();
+
+    await wrapper.get("button.check-update-button").trigger("click");
+    await flushPromises();
+    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get("button.install-update-button").trigger("click");
+    await flushPromises();
+    await wrapper.get("button.install-update-button").trigger("click");
+
+    expect(restartAfterUpdate).toHaveBeenCalledOnce();
   });
 });
