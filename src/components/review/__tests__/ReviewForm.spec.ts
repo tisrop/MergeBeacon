@@ -1,6 +1,7 @@
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 import ReviewForm from "../ReviewForm.vue";
+import { reviewSubmit } from "@/api";
 
 vi.mock("@/api", () => ({ reviewSubmit: vi.fn() }));
 
@@ -20,5 +21,31 @@ describe("ReviewForm", () => {
       "批准",
       "请求修改",
     ]);
+  });
+
+  it("从 GitHub 切换到 GitLab 时重置不支持的评审事件", async () => {
+    vi.mocked(reviewSubmit).mockResolvedValue({
+      id: 1,
+      body: "切换平台后的评论",
+      state: "commented",
+      author: { id: 1, login: "user", name: "User", avatar_url: "" },
+      submitted_at: "",
+    });
+    const wrapper = mount(ReviewForm, { props: { ...props, platform: "github" } });
+    await wrapper.findAll(".event-select button")[1].trigger("click");
+    await wrapper.setProps({ platform: "gitlab" });
+    await wrapper.get("textarea").setValue("切换平台后的评论");
+    await wrapper.get(".btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(reviewSubmit).toHaveBeenCalledWith(
+      "gitlab",
+      "team",
+      "repo",
+      1,
+      "切换平台后的评论",
+      "comment",
+      [],
+    );
   });
 });
