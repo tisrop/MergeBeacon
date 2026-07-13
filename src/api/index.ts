@@ -22,6 +22,7 @@ import type {
   AiReviewRequest,
   AiReviewResult,
   SupportInfo,
+  UpdateCheckResult,
 } from "@/types";
 
 // ============================================================
@@ -58,8 +59,20 @@ export async function getPlatformCapabilities(platform: Platform): Promise<Platf
 }
 
 // ── Support ──
+export async function getAppVersion(): Promise<string> {
+  return invoke("app_version");
+}
+
+export async function checkForUpdates(): Promise<UpdateCheckResult> {
+  return invoke("update_check");
+}
+
 export async function getSupportInfo(platform: Platform): Promise<SupportInfo> {
   return invoke("support_info", { platform });
+}
+
+export async function copySupportInfo(platform: Platform): Promise<void> {
+  return invoke("copy_support_info", { platform });
 }
 
 // ── Repo ──

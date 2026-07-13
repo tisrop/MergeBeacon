@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { getSupportInfo } from "@/api";
+import { onMounted, ref } from "vue";
+import {
+  checkForUpdates,
+  copySupportInfo as copySupportInfoToClipboard,
+  getAppVersion,
+} from "@/api";
 import { getErrorMessage } from "@/utils/error";
 import { useAuthStore } from "@/stores/useAuthStore";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import AiSettings from "@/components/ai/AiSettings.vue";
-import type { Platform } from "@/types";
+import type { Platform, UpdateCheckResult } from "@/types";
 
 const auth = useAuthStore();
 
@@ -18,6 +22,33 @@ const platformList: { value: Platform; label: string }[] = [
 const isCopyingSupportInfo = ref(false);
 const supportInfoStatus = ref("");
 const isSupportInfoError = ref(false);
+const appVersion = ref("");
+const versionError = ref("");
+const isCheckingUpdate = ref(false);
+const updateResult = ref<UpdateCheckResult | null>(null);
+const updateError = ref("");
+
+onMounted(async () => {
+  try {
+    appVersion.value = await getAppVersion();
+  } catch (error) {
+    versionError.value = getErrorMessage(error, "无法读取当前版本");
+  }
+});
+
+async function checkUpdate() {
+  if (isCheckingUpdate.value) return;
+  isCheckingUpdate.value = true;
+  updateError.value = "";
+  updateResult.value = null;
+  try {
+    updateResult.value = await checkForUpdates();
+  } catch (error) {
+    updateError.value = getErrorMessage(error, "检查更新失败，请稍后重试");
+  } finally {
+    isCheckingUpdate.value = false;
+  }
+}
 
 async function copySupportInfo() {
   if (isCopyingSupportInfo.value) return;
@@ -26,8 +57,7 @@ async function copySupportInfo() {
   supportInfoStatus.value = "";
   isSupportInfoError.value = false;
   try {
-    const info = await getSupportInfo(auth.activePlatform);
-    await navigator.clipboard.writeText(info.formatted);
+    await copySupportInfoToClipboard(auth.activePlatform);
     supportInfoStatus.value = "诊断信息已复制，可直接粘贴到 Issue 中。";
   } catch (error) {
     isSupportInfoError.value = true;
@@ -99,6 +129,43 @@ async function copySupportInfo() {
           </div>
         </div>
         <AiSettings />
+      </section>
+
+      <section class="section">
+        <div class="section-heading update-heading">
+          <span class="section-icon update" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M12 3v12" />
+              <path d="m7 10 5 5 5-5" />
+              <path d="M5 21h14" />
+            </svg>
+          </span>
+          <div>
+            <h3>应用更新</h3>
+            <p>当前版本：{{ appVersion ? `v${appVersion}` : "读取中..." }}</p>
+          </div>
+          <button
+            type="button"
+            class="check-update-button"
+            :disabled="isCheckingUpdate"
+            @click="checkUpdate"
+          >
+            {{ isCheckingUpdate ? "正在检查..." : "检查更新" }}
+          </button>
+        </div>
+        <p v-if="versionError" class="support-status error" role="status">{{ versionError }}</p>
+        <p v-if="updateError" class="support-status error" role="status" aria-live="polite">
+          {{ updateError }}
+        </p>
+        <div v-else-if="updateResult?.available" class="update-result" role="status">
+          <strong>发现新版本 v{{ updateResult.version }}</strong>
+          <p>更新包将在下载和安装功能启用后提供。</p>
+          <pre v-if="updateResult.notes" class="update-notes">{{ updateResult.notes }}</pre>
+        </div>
+        <p v-else-if="updateResult" class="support-status" role="status" aria-live="polite">
+          当前已是最新版本。
+        </p>
+        <p v-else class="privacy-note">仅从 MergePilot 官方签名更新源读取元数据。</p>
       </section>
 
       <section class="section">
@@ -276,7 +343,8 @@ async function copySupportInfo() {
 .toggle input:disabled ~ .toggle-slider {
   cursor: not-allowed;
 }
-.support-heading {
+.support-heading,
+.update-heading {
   align-items: center;
 }
 
@@ -285,7 +353,8 @@ async function copySupportInfo() {
   background: var(--color-surface-hover);
 }
 
-.copy-support-button {
+.copy-support-button,
+.check-update-button {
   min-height: 36px;
   margin-left: auto;
   padding: 0 var(--space-4);
@@ -302,14 +371,41 @@ async function copySupportInfo() {
     background var(--transition-fast);
 }
 
-.copy-support-button:hover:not(:disabled) {
+.copy-support-button:hover:not(:disabled),
+.check-update-button:hover:not(:disabled) {
   border-color: var(--color-primary);
   background: var(--color-primary-light);
 }
 
-.copy-support-button:disabled {
+.copy-support-button:disabled,
+.check-update-button:disabled {
   opacity: 0.6;
   cursor: wait;
+}
+
+.update-result {
+  margin-top: var(--space-3);
+  color: var(--color-text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.update-result strong {
+  color: var(--color-success);
+}
+
+.update-notes {
+  max-height: 180px;
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .privacy-note,

@@ -11,7 +11,7 @@ mod state;
 pub mod vault;
 mod window_state;
 
-use commands::{ai as ai_cmds, auth, capabilities, issue, pr, review, support};
+use commands::{ai as ai_cmds, auth, capabilities, issue, pr, review, support, update};
 use local_store::CommentSnapshotStore;
 use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +33,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED)
@@ -109,6 +111,9 @@ pub fn run() {
             auth::auth_has_token,
             // Support / platform capabilities
             support::support_info,
+            support::copy_support_info,
+            support::app_version,
+            update::update_check,
             capabilities::platform_capabilities,
             // Repo
             auth::repo_list,

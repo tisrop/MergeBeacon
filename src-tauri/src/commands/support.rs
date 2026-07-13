@@ -1,5 +1,6 @@
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::local_store::CommentSnapshotStore;
 use crate::state::AppState;
@@ -89,6 +90,11 @@ fn build_support_info(input: SupportInfoInput<'_>) -> SupportInfo {
 }
 
 #[tauri::command]
+pub fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+#[tauri::command]
 pub async fn support_info(
     state: State<'_, AppState>,
     comment_store: State<'_, CommentSnapshotStore>,
@@ -110,6 +116,17 @@ pub async fn support_info(
         ai_endpoint: &ai_config.endpoint,
         local_cache_available: comment_store.is_available(),
     }))
+}
+
+#[tauri::command]
+pub async fn copy_support_info(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    comment_store: State<'_, CommentSnapshotStore>,
+    platform: String,
+) -> Result<(), String> {
+    let info = support_info(state, comment_store, platform).await?;
+    app.clipboard().write_text(info.formatted).map_err(|error| format!("写入系统剪贴板失败：{error}"))
 }
 
 #[cfg(test)]

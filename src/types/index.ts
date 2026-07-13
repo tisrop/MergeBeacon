@@ -29,6 +29,14 @@ export interface PlatformCapabilities {
   supports_issue_auto_close: boolean;
 }
 
+export interface UpdateCheckResult {
+  current_version: string;
+  available: boolean;
+  version: string | null;
+  notes: string | null;
+  published_at: string | null;
+}
+
 export interface SupportInfo {
   app_version: string;
   operating_system: string;
