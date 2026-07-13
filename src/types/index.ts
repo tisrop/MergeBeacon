@@ -20,6 +20,15 @@ export interface AuthLoginResult {
 // ── 平台 ──
 export type Platform = "github" | "gitlab" | "gitee";
 
+/** 平台 API 的静态协议能力，不包含登录、Token 权限或 PR 运行时状态。 */
+export interface PlatformCapabilities {
+  platform: Platform;
+  review_events: ReviewEvent[];
+  merge_strategies: MergeStrategy[];
+  supports_fork_context: boolean;
+  supports_issue_auto_close: boolean;
+}
+
 export interface SupportInfo {
   app_version: string;
   operating_system: string;

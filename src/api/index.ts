@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Platform,
+  PlatformCapabilities,
   PrComment,
   PrState,
   PrSummary,
@@ -50,6 +51,10 @@ export async function authHasAnyToken(): Promise<boolean> {
 
 export async function authHasToken(platform: Platform): Promise<boolean> {
   return invoke("auth_has_token", { platform });
+}
+
+export async function getPlatformCapabilities(platform: Platform): Promise<PlatformCapabilities> {
+  return invoke("platform_capabilities", { platform });
 }
 
 // ── Support ──

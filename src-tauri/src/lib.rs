@@ -11,7 +11,7 @@ mod state;
 pub mod vault;
 mod window_state;
 
-use commands::{ai as ai_cmds, auth, issue, pr, review, support};
+use commands::{ai as ai_cmds, auth, capabilities, issue, pr, review, support};
 use local_store::CommentSnapshotStore;
 use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -107,8 +107,9 @@ pub fn run() {
             auth::auth_check,
             auth::auth_has_any_token,
             auth::auth_has_token,
-            // Support
+            // Support / platform capabilities
             support::support_info,
+            capabilities::platform_capabilities,
             // Repo
             auth::repo_list,
             // PR
