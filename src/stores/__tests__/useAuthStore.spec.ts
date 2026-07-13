@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { authCheck, authHasToken } from "@/api";
+import { authCheck, authHasToken, authLogin, authLogout } from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
 
 const storage = new Map<string, string>();
@@ -60,5 +60,24 @@ describe("useAuthStore session restore", () => {
     expect(authHasToken).toHaveBeenCalledWith("gitee");
     expect(authCheck).not.toHaveBeenCalledWith("github");
     expect(store.activePlatform).toBe("gitee");
+  });
+
+  it("登录状态按平台隔离，登出一个平台不影响其他平台", async () => {
+    const githubUser = { ...user, id: 1, login: "github-user" };
+    const gitlabUser = { ...user, id: 2, login: "gitlab-user" };
+    vi.mocked(authLogin)
+      .mockResolvedValueOnce({ user: githubUser, credential_storage: "system_keyring" })
+      .mockResolvedValueOnce({ user: gitlabUser, credential_storage: "encrypted_file" });
+    vi.mocked(authLogout).mockResolvedValue(undefined);
+    const store = useAuthStore();
+
+    await store.login("github", "github-token");
+    await store.login("gitlab", "gitlab-token");
+    await store.logout("github");
+
+    expect(store.platforms.github).toEqual({ user: null, isLoggedIn: false });
+    expect(store.platforms.gitlab).toEqual({ user: gitlabUser, isLoggedIn: true });
+    expect(store.activePlatform).toBe("gitlab");
+    expect(store.activeUser?.login).toBe("gitlab-user");
   });
 });
