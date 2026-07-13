@@ -218,6 +218,9 @@ jobs:
 
   validate-updater-metadata:
     needs: build
+    # GitHub only exposes draft release assets to tokens with push-level contents access.
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Download updater metadata
