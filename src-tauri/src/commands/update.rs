@@ -39,6 +39,26 @@ fn acquire_update_operation(active: &AtomicBool) -> Result<UpdateOperationGuard<
         .map_err(|_| "已有更新安装或重启操作正在进行，请稍候".into())
 }
 
+fn validate_update_request_id(request_id: &str) -> Result<(), String> {
+    if request_id.is_empty()
+        || request_id.len() > 64
+        || !request_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err("更新请求标识格式无效".into());
+    }
+    Ok(())
+}
+
+fn validate_expected_version(version: &str) -> Result<(), String> {
+    if version.is_empty()
+        || version.len() > 64
+        || !version.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
+    {
+        return Err("预期更新版本格式无效".into());
+    }
+    Ok(())
+}
+
 fn ensure_no_active_ai_tasks(has_active_tasks: bool) -> Result<(), String> {
     if has_active_tasks {
         Err("存在进行中的 AI 评审，请等待完成或取消后再安装更新".into())
@@ -48,9 +68,7 @@ fn ensure_no_active_ai_tasks(has_active_tasks: bool) -> Result<(), String> {
 }
 
 fn ensure_expected_update_version(expected: &str, actual: &str) -> Result<(), String> {
-    if expected.trim().is_empty() {
-        return Err("预期更新版本不能为空".into());
-    }
+    validate_expected_version(expected)?;
     if expected != actual {
         return Err(format!("可用更新已从 v{expected} 变更为 v{actual}，请重新检查并确认后再安装"));
     }
@@ -96,9 +114,7 @@ pub async fn update_download_and_install(
     request_id: String,
     expected_version: String,
 ) -> Result<(), String> {
-    if request_id.trim().is_empty() {
-        return Err("更新请求标识不能为空".into());
-    }
+    validate_update_request_id(&request_id)?;
     let _operation = acquire_update_operation(&state.update_operation_active)?;
     ensure_no_active_ai_tasks(state.ai_tasks.has_active_tasks().await)?;
 
@@ -156,7 +172,8 @@ pub async fn update_restart(app: AppHandle, state: State<'_, AppState>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_update_operation, check_result, ensure_expected_update_version, ensure_no_active_ai_tasks, update_error,
+        acquire_update_operation, check_result, ensure_expected_update_version, ensure_no_active_ai_tasks,
+        update_error, validate_expected_version, validate_update_request_id,
     };
     use std::sync::atomic::AtomicBool;
     use tauri_plugin_updater::Error as UpdaterError;
@@ -187,6 +204,17 @@ mod tests {
         );
     }
     #[test]
+    fn rejects_oversized_or_unsafe_update_inputs() {
+        assert!(validate_update_request_id("550e8400-e29b-41d4-a716-446655440000").is_ok());
+        assert_eq!(validate_update_request_id("bad\nrequest"), Err("更新请求标识格式无效".into()));
+        assert_eq!(validate_update_request_id(&"a".repeat(65)), Err("更新请求标识格式无效".into()));
+
+        assert!(validate_expected_version("1.2.3-beta.1+build.2").is_ok());
+        assert_eq!(validate_expected_version("1.2.3\n伪造错误"), Err("预期更新版本格式无效".into()));
+        assert_eq!(validate_expected_version(&"1".repeat(65)), Err("预期更新版本格式无效".into()));
+    }
+
+    #[test]
     fn serializes_update_install_and_restart_operations() {
         let active = AtomicBool::new(false);
         let first = acquire_update_operation(&active).expect("first operation should acquire guard");
@@ -198,7 +226,7 @@ mod tests {
     #[test]
     fn requires_reconfirmation_when_available_version_changes() {
         assert!(ensure_expected_update_version("0.4.0", "0.4.0").is_ok());
-        assert_eq!(ensure_expected_update_version("", "0.4.0"), Err("预期更新版本不能为空".into()));
+        assert_eq!(ensure_expected_update_version("", "0.4.0"), Err("预期更新版本格式无效".into()));
         assert_eq!(
             ensure_expected_update_version("0.4.0", "0.5.0"),
             Err("可用更新已从 v0.4.0 变更为 v0.5.0，请重新检查并确认后再安装".into())
