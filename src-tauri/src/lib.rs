@@ -6,6 +6,7 @@ pub mod http_client;
 pub mod local_store;
 pub mod models;
 pub mod platform;
+mod single_instance;
 mod state;
 pub mod vault;
 mod window_state;
@@ -20,7 +21,17 @@ use tauri::Manager;
 use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 pub fn run() {
+    let activation = Arc::new(single_instance::ActivationCoordinator::default());
+    let second_instance_activation = activation.clone();
+    let setup_activation = activation.clone();
+
     tauri::Builder::default()
+        // 官方要求 single-instance 必须是首个注册的插件。
+        .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
+            if second_instance_activation.request_activation() {
+                single_instance::activate_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -29,7 +40,7 @@ pub fn run() {
                 .build(),
         )
         .manage(AppState::new())
-        .setup(|app| {
+        .setup(move |app| {
             let app_dir = app.path().app_data_dir().unwrap_or_default();
             let comment_store = CommentSnapshotStore::new(&app_dir.join("comment_cache.db"));
             app.manage(comment_store);
@@ -42,6 +53,9 @@ pub fn run() {
                 if let Err(error) = restored {
                     eprintln!("恢复窗口状态失败：{error}");
                 }
+            }
+            if setup_activation.mark_ready() {
+                single_instance::activate_main_window(app.handle());
             }
 
             let settings = MenuItem::with_id(app, "open-settings", "设置...", true, Some("Cmd+,"))?;
