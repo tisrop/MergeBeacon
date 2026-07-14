@@ -4,13 +4,16 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { assembleUpdaterMetadata, createUpdaterFragment } from "../updater-metadata.mjs";
 
+const FIXTURE_VERSION = "0.3.5";
+const FIXTURE_RELEASE_DOWNLOAD_URL = `https://github.com/tisrop/MergePilot/releases/download/v${FIXTURE_VERSION}`;
+
 async function signatureFile(directory: string, name: string, signature: string) {
   const path = join(directory, name);
   await writeFile(path, signature);
   return path;
 }
 
-function fragment(platform: string, assetName: string) {
+function fragment(platform: string, assetName: string, version = FIXTURE_VERSION) {
   const entry = {
     signature: `signature-${platform}`,
     asset_label: assetName,
@@ -22,7 +25,7 @@ function fragment(platform: string, assetName: string) {
     ...(platform === "windows-x86_64"
       ? {
           portable: {
-            asset_name: "MergePilot_0.3.5_x64-portable.exe",
+            asset_name: `MergePilot_${version}_x64-portable.exe`,
             signature: "signature-windows-portable",
           },
         }
@@ -30,7 +33,7 @@ function fragment(platform: string, assetName: string) {
   };
 }
 
-function portableAsset(version: string, releaseName = `v${version}`) {
+function portableAsset(version = FIXTURE_VERSION, releaseName = `v${version}`) {
   const name = `MergePilot_${version}_x64-portable.exe`;
   return {
     name,
@@ -52,12 +55,12 @@ describe("updater 元数据汇总", () => {
       artifactPaths: [signature],
       platform: "darwin-aarch64",
       productName: "Merge Pilot",
-      version: "0.3.5",
+      version: FIXTURE_VERSION,
     });
 
     expect(result.platforms["darwin-aarch64"]).toMatchObject({
-      asset_label: "Merge Pilot_0.3.5_aarch64.app.tar.gz",
-      asset_name: "Merge.Pilot_0.3.5_aarch64.app.tar.gz",
+      asset_label: `Merge Pilot_${FIXTURE_VERSION}_aarch64.app.tar.gz`,
+      asset_name: `Merge.Pilot_${FIXTURE_VERSION}_aarch64.app.tar.gz`,
     });
     expect(result.platforms["darwin-aarch64-app"]).toEqual(result.platforms["darwin-aarch64"]);
   });
@@ -66,26 +69,30 @@ describe("updater 元数据汇总", () => {
     const directory = await mkdtemp(join(tmpdir(), "mergepilot-updater-"));
     const msiSignature = await signatureFile(
       directory,
-      "Merge Pilot_0.3.5_x64_en-US.msi.sig",
+      `Merge Pilot_${FIXTURE_VERSION}_x64_en-US.msi.sig`,
       "msi-signature",
     );
     const nsisSignature = await signatureFile(
       directory,
-      "Merge Pilot_0.3.5_x64-setup.exe.sig",
+      `Merge Pilot_${FIXTURE_VERSION}_x64-setup.exe.sig`,
       "nsis-signature",
     );
     const portableExecutable = await signatureFile(
       directory,
-      "MergePilot_0.3.5_x64-portable.exe",
+      `MergePilot_${FIXTURE_VERSION}_x64-portable.exe`,
       "portable executable",
     );
-    await signatureFile(directory, "MergePilot_0.3.5_x64-portable.exe.sig", "portable-signature");
+    await signatureFile(
+      directory,
+      `MergePilot_${FIXTURE_VERSION}_x64-portable.exe.sig`,
+      "portable-signature",
+    );
 
     const result = await createUpdaterFragment({
       artifactPaths: [nsisSignature, msiSignature],
       platform: "windows-x86_64",
       productName: "Merge Pilot",
-      version: "0.3.5",
+      version: FIXTURE_VERSION,
       portableExecutablePath: portableExecutable,
     });
 
@@ -93,7 +100,7 @@ describe("updater 元数据汇总", () => {
     expect(result.platforms["windows-x86_64-msi"].signature).toBe("msi-signature");
     expect(result.platforms["windows-x86_64-nsis"].signature).toBe("nsis-signature");
     expect(result.portable).toEqual({
-      asset_name: "MergePilot_0.3.5_x64-portable.exe",
+      asset_name: `MergePilot_${FIXTURE_VERSION}_x64-portable.exe`,
       signature: "portable-signature",
     });
   });
@@ -108,24 +115,24 @@ describe("updater 元数据汇总", () => {
         url: `https://api.github.com/repos/tisrop/MergePilot/releases/assets/${index + 1}`,
         browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/untagged-a1b2c3/${platform}.updater`,
       })),
-      portableAsset("0.3.5", "untagged-a1b2c3"),
+      portableAsset(FIXTURE_VERSION, "untagged-a1b2c3"),
     ];
 
     const metadata = assembleUpdaterMetadata({
       fragments,
       assets,
-      version: "0.3.5",
+      version: FIXTURE_VERSION,
       notes: "发布说明",
       pubDate: "2026-07-13T12:00:00.000Z",
-      assetDownloadUrlPrefix: "https://github.com/tisrop/MergePilot/releases/download/v0.3.5/",
+      assetDownloadUrlPrefix: `${FIXTURE_RELEASE_DOWNLOAD_URL}/`,
     });
 
     expect(Object.keys(metadata.platforms)).toEqual(platforms);
     expect(metadata.platforms["linux-x86_64"].url).toBe(
-      "https://github.com/tisrop/MergePilot/releases/download/v0.3.5/linux-x86_64.updater",
+      `${FIXTURE_RELEASE_DOWNLOAD_URL}/linux-x86_64.updater`,
     );
     expect(metadata.portable["windows-x86_64"].url).toBe(
-      "https://github.com/tisrop/MergePilot/releases/download/v0.3.5/MergePilot_0.3.5_x64-portable.exe",
+      `${FIXTURE_RELEASE_DOWNLOAD_URL}/MergePilot_${FIXTURE_VERSION}_x64-portable.exe`,
     );
     expect(metadata.portable["windows-x86_64"].url).not.toContain(".msi");
     expect(metadata.portable["windows-x86_64"].url).not.toContain(".zip");
@@ -141,20 +148,20 @@ describe("updater 元数据汇总", () => {
         label: `${platform}.updater`,
         browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/untagged-a1b2c3/${platform}.updater`,
       })),
-      portableAsset("0.3.5", "untagged-a1b2c3"),
+      portableAsset(FIXTURE_VERSION, "untagged-a1b2c3"),
     ];
 
     const metadata = assembleUpdaterMetadata({
       fragments,
       assets,
-      version: "0.3.5",
+      version: FIXTURE_VERSION,
       notes: "发布说明",
       pubDate: "2026-07-13T12:00:00.000Z",
-      assetDownloadUrlPrefix: "https://github.com/tisrop/MergePilot/releases/download/v0.3.5/",
+      assetDownloadUrlPrefix: `${FIXTURE_RELEASE_DOWNLOAD_URL}/`,
     });
 
     expect(metadata.platforms["darwin-aarch64"].url).toBe(
-      "https://github.com/tisrop/MergePilot/releases/download/v0.3.5/Merge%20Pilot.app.tar.gz",
+      `${FIXTURE_RELEASE_DOWNLOAD_URL}/Merge%20Pilot.app.tar.gz`,
     );
   });
 
@@ -170,17 +177,17 @@ describe("updater 元数据汇总", () => {
         name: `${platform}.updater`,
         label: `${platform}.updater`,
         url: `https://api.github.com/repos/tisrop/MergePilot/releases/assets/${platform}`,
-        browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/v0.3.5/${platform}.updater`,
+        browser_download_url: `${FIXTURE_RELEASE_DOWNLOAD_URL}/${platform}.updater`,
       })),
-      portableAsset("0.3.5"),
+      portableAsset(),
     ];
     const input = {
       fragments: validFragments,
       assets,
-      version: "0.3.5",
+      version: FIXTURE_VERSION,
       notes: "发布说明",
       pubDate: "2026-07-13T12:00:00.000Z",
-      assetDownloadUrlPrefix: "https://github.com/tisrop/MergePilot/releases/download/v0.3.5/",
+      assetDownloadUrlPrefix: `${FIXTURE_RELEASE_DOWNLOAD_URL}/`,
     };
 
     expect(() => assembleUpdaterMetadata({ ...input, fragments: validFragments.slice(1) })).toThrow(
