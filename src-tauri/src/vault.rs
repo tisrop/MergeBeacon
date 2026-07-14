@@ -50,10 +50,15 @@ impl TokenVault {
     }
 
     fn storage_dir() -> Result<PathBuf, AppError> {
-        let dir = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(".")).join(".mergepilot");
+        let dir =
+            Self::storage_dir_path().ok_or_else(|| AppError::Unknown("无法确定当前用户的凭证存储目录".to_string()))?;
         fs::create_dir_all(&dir)?;
         set_dir_permissions(&dir)?;
         Ok(dir)
+    }
+
+    fn storage_dir_path() -> Option<PathBuf> {
+        directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".mergepilot"))
     }
 
     fn config_path() -> Result<PathBuf, AppError> {
@@ -257,6 +262,15 @@ mod tests {
     #[test]
     fn configured_keyring_backend_persists_across_processes() {
         assert!(TokenVault::keyring_is_persistent());
+    }
+
+    #[test]
+    fn storage_dir_uses_platform_user_home_instead_of_process_working_directory() {
+        let storage_dir = TokenVault::storage_dir_path().expect("platform user home should exist");
+        let base_dirs = directories::BaseDirs::new().expect("platform user directories should exist");
+
+        assert_eq!(storage_dir, base_dirs.home_dir().join(".mergepilot"));
+        assert_ne!(storage_dir, std::path::PathBuf::from(".mergepilot"));
     }
 
     #[test]
