@@ -16,7 +16,27 @@ function fragment(platform: string, assetName: string) {
     asset_label: assetName,
     asset_name: assetName,
   };
-  return { platform, platforms: { [platform]: entry } };
+  return {
+    platform,
+    platforms: { [platform]: entry },
+    ...(platform === "windows-x86_64"
+      ? {
+          portable: {
+            asset_name: "MergePilot_0.3.5_x64-portable.exe",
+            signature: "signature-windows-portable",
+          },
+        }
+      : {}),
+  };
+}
+
+function portableAsset(version: string, releaseName = `v${version}`) {
+  const name = `MergePilot_${version}_x64-portable.exe`;
+  return {
+    name,
+    label: "",
+    browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/${releaseName}/${name}`,
+  };
 }
 
 describe("updater 元数据汇总", () => {
@@ -54,28 +74,42 @@ describe("updater 元数据汇总", () => {
       "Merge Pilot_0.3.5_x64-setup.exe.sig",
       "nsis-signature",
     );
+    const portableExecutable = await signatureFile(
+      directory,
+      "MergePilot_0.3.5_x64-portable.exe",
+      "portable executable",
+    );
+    await signatureFile(directory, "MergePilot_0.3.5_x64-portable.exe.sig", "portable-signature");
 
     const result = await createUpdaterFragment({
       artifactPaths: [nsisSignature, msiSignature],
       platform: "windows-x86_64",
       productName: "Merge Pilot",
       version: "0.3.5",
+      portableExecutablePath: portableExecutable,
     });
 
     expect(result.platforms["windows-x86_64"].signature).toBe("msi-signature");
     expect(result.platforms["windows-x86_64-msi"].signature).toBe("msi-signature");
     expect(result.platforms["windows-x86_64-nsis"].signature).toBe("nsis-signature");
+    expect(result.portable).toEqual({
+      asset_name: "MergePilot_0.3.5_x64-portable.exe",
+      signature: "portable-signature",
+    });
   });
 
   it("将 Draft Release 临时资源地址转换为发布后的稳定地址", () => {
     const platforms = ["darwin-aarch64", "darwin-x86_64", "linux-x86_64", "windows-x86_64"];
     const fragments = platforms.map((platform) => fragment(platform, `${platform}.updater`));
-    const assets = platforms.map((platform, index) => ({
-      name: `${platform}.updater`,
-      label: `${platform}.updater`,
-      url: `https://api.github.com/repos/tisrop/MergePilot/releases/assets/${index + 1}`,
-      browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/untagged-a1b2c3/${platform}.updater`,
-    }));
+    const assets = [
+      ...platforms.map((platform, index) => ({
+        name: `${platform}.updater`,
+        label: `${platform}.updater`,
+        url: `https://api.github.com/repos/tisrop/MergePilot/releases/assets/${index + 1}`,
+        browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/untagged-a1b2c3/${platform}.updater`,
+      })),
+      portableAsset("0.3.5", "untagged-a1b2c3"),
+    ];
 
     const metadata = assembleUpdaterMetadata({
       fragments,
@@ -90,16 +124,25 @@ describe("updater 元数据汇总", () => {
     expect(metadata.platforms["linux-x86_64"].url).toBe(
       "https://github.com/tisrop/MergePilot/releases/download/v0.3.5/linux-x86_64.updater",
     );
+    expect(metadata.portable["windows-x86_64"].url).toBe(
+      "https://github.com/tisrop/MergePilot/releases/download/v0.3.5/MergePilot_0.3.5_x64-portable.exe",
+    );
+    expect(metadata.portable["windows-x86_64"].url).not.toContain(".msi");
+    expect(metadata.portable["windows-x86_64"].url).not.toContain(".zip");
+    expect(metadata.portable["windows-x86_64"].signature).toBe("signature-windows-portable");
   });
 
   it("对稳定下载地址中的资源文件名进行 URL 编码", () => {
     const platforms = ["darwin-aarch64", "darwin-x86_64", "linux-x86_64", "windows-x86_64"];
     const fragments = platforms.map((platform) => fragment(platform, `${platform}.updater`));
-    const assets = platforms.map((platform) => ({
-      name: platform === "darwin-aarch64" ? "Merge Pilot.app.tar.gz" : `${platform}.updater`,
-      label: `${platform}.updater`,
-      browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/untagged-a1b2c3/${platform}.updater`,
-    }));
+    const assets = [
+      ...platforms.map((platform) => ({
+        name: platform === "darwin-aarch64" ? "Merge Pilot.app.tar.gz" : `${platform}.updater`,
+        label: `${platform}.updater`,
+        browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/untagged-a1b2c3/${platform}.updater`,
+      })),
+      portableAsset("0.3.5", "untagged-a1b2c3"),
+    ];
 
     const metadata = assembleUpdaterMetadata({
       fragments,
@@ -122,12 +165,15 @@ describe("updater 元数据汇总", () => {
       fragment("linux-x86_64", "linux-x86_64.updater"),
       fragment("windows-x86_64", "windows-x86_64.updater"),
     ];
-    const assets = validFragments.map(({ platform }) => ({
-      name: `${platform}.updater`,
-      label: `${platform}.updater`,
-      url: `https://api.github.com/repos/tisrop/MergePilot/releases/assets/${platform}`,
-      browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/v0.3.5/${platform}.updater`,
-    }));
+    const assets = [
+      ...validFragments.map(({ platform }) => ({
+        name: `${platform}.updater`,
+        label: `${platform}.updater`,
+        url: `https://api.github.com/repos/tisrop/MergePilot/releases/assets/${platform}`,
+        browser_download_url: `https://github.com/tisrop/MergePilot/releases/download/v0.3.5/${platform}.updater`,
+      })),
+      portableAsset("0.3.5"),
+    ];
     const input = {
       fragments: validFragments,
       assets,
@@ -143,6 +189,27 @@ describe("updater 元数据汇总", () => {
     expect(() =>
       assembleUpdaterMetadata({ ...input, fragments: [...validFragments, validFragments[0]] }),
     ).toThrow("updater 平台条目重复：darwin-aarch64");
+    expect(() => assembleUpdaterMetadata({ ...input, assets: assets.slice(0, -1) })).toThrow(
+      "Windows 便携版可执行文件无法唯一匹配 Release 资源",
+    );
+    expect(() =>
+      assembleUpdaterMetadata({
+        ...input,
+        fragments: validFragments.map((item) =>
+          item.platform === "windows-x86_64" ? { ...item, portable: undefined } : item,
+        ),
+      }),
+    ).toThrow("Windows 便携版可执行文件签名无效");
+    expect(() =>
+      assembleUpdaterMetadata({
+        ...input,
+        fragments: validFragments.map((item) =>
+          item.platform === "windows-x86_64"
+            ? { ...item, portable: { ...item.portable, signature: "   " } }
+            : item,
+        ),
+      }),
+    ).toThrow("Windows 便携版可执行文件签名无效");
     expect(() =>
       assembleUpdaterMetadata({
         ...input,
@@ -180,7 +247,13 @@ describe("updater 元数据汇总", () => {
     expect(workflow).toContain(
       "RELEASE_UPLOAD_URL: ${{ needs.prepare-release.outputs.release-upload-url }}",
     );
-    expect(workflow).not.toContain('gh release upload "$env:GITHUB_REF_NAME" "$env:PORTABLE_ZIP"');
+    expect(workflow).toContain('$portableName = "MergePilot_${version}_x64-portable.exe"');
+    expect(workflow).toContain('Copy-Item $exe "$tmpDir/$portableName"');
+    expect(workflow).toContain('npm run tauri -- signer sign "$tmpDir/$portableName"');
+    expect(workflow).toContain('Test-Path "$tmpDir/$portableName.sig"');
+    expect(workflow).toContain("PORTABLE_EXE=$tmpDir/$portableName");
+    expect(workflow).not.toContain("Compress-Archive");
+    expect(workflow).not.toContain("PORTABLE_ZIP");
     expect(workflow).toContain("uploadUpdaterJson: false");
     expect(workflow).toContain("name: updater-fragment-${{ matrix.updater-platform }}");
     expect(workflow).toContain("assemble-updater-metadata:");
