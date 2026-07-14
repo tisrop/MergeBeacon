@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   version-consistency:
     runs-on: ubuntu-latest
@@ -21,30 +25,95 @@ jobs:
       - name: Verify release tag matches manifests
         run: node .github/checks/version-consistency.mjs --tag "$GITHUB_REF_NAME"
 
-  build:
+      - name: Verify updater security configuration
+        run: node .github/checks/updater-config.mjs
+
+  prepare-release:
     needs: version-consistency
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: ${{ steps.release.outputs.release-id }}
+    steps:
+      - name: Create or update draft release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${GITHUB_REF_NAME}" \
+            --jq '.body')"
+          if [ -z "$BODY" ]; then
+            BODY="MergePilot ${GITHUB_REF_NAME}"
+          fi
+
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            | jq -s 'add' > "$RUNNER_TEMP/releases.json"
+          MATCH_COUNT="$(jq --arg tag "$GITHUB_REF_NAME" \
+            '[.[] | select(.tag_name == $tag)] | length' "$RUNNER_TEMP/releases.json")"
+          if [ "$MATCH_COUNT" -gt 1 ]; then
+            echo "同一 Tag 存在多个 Release，无法安全更新：${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+          RELEASE_ID="$(jq -r --arg tag "$GITHUB_REF_NAME" \
+            '.[] | select(.tag_name == $tag) | .id' "$RUNNER_TEMP/releases.json")"
+          if [ -n "$RELEASE_ID" ]; then
+            IS_DRAFT="$(jq -r --arg tag "$GITHUB_REF_NAME" \
+              '.[] | select(.tag_name == $tag) | .draft' "$RUNNER_TEMP/releases.json")"
+            if [ "$IS_DRAFT" != "true" ]; then
+              echo "Release 已发布，拒绝覆盖：${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -f name="MergePilot ${GITHUB_REF_NAME}" \
+              -f body="$BODY" \
+              -F draft=true \
+              -F prerelease=false > "$RUNNER_TEMP/release.json"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" \
+              -f tag_name="${GITHUB_REF_NAME}" \
+              -f name="MergePilot ${GITHUB_REF_NAME}" \
+              -f body="$BODY" \
+              -F draft=true \
+              -F prerelease=false > "$RUNNER_TEMP/release.json"
+            RELEASE_ID="$(jq -r '.id' "$RUNNER_TEMP/release.json")"
+          fi
+
+          if ! [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
+            echo "Draft Release ID 无效：${RELEASE_ID}" >&2
+            exit 1
+          fi
+          echo "release-id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare-release
     permissions:
       contents: write
     env:
       HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     strategy:
-      # tauri-action updates latest.json with read-modify-write semantics. Serializing
-      # matrix jobs prevents concurrent jobs from dropping another platform entry.
       fail-fast: false
-      max-parallel: 1
       matrix:
         include:
           - platform: macos-latest
             target: aarch64-apple-darwin
+            updater-platform: darwin-aarch64
             args: --target aarch64-apple-darwin
           - platform: macos-latest
             target: x86_64-apple-darwin
+            updater-platform: darwin-x86_64
             args: --target x86_64-apple-darwin
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            updater-platform: linux-x86_64
             args: ''
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
+            updater-platform: windows-x86_64
             args: ''
 
     runs-on: ${{ matrix.platform }}
@@ -127,9 +196,32 @@ jobs:
           UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_BASE64 }}
           UPDATER_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          printf '%s' "$UPDATER_KEY" | base64 --decode > "$RUNNER_TEMP/updater.key"
-          KEY_B64=$(base64 < "$RUNNER_TEMP/updater.key" | tr -d '\r\n')
-          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+          set -euo pipefail
+          umask 077
+
+          # `tauri signer generate` already writes the private key as the Base64
+          # string expected by Tauri. The secret must be the exact `.key` file
+          # contents and must not be Base64-encoded again.
+          ENCODED_KEY=$(printf '%s' "$UPDATER_KEY" | tr -d '\r\n')
+          DECODED_KEY="$RUNNER_TEMP/updater-key.decoded"
+
+          if ! printf '%s' "$ENCODED_KEY" | base64 --decode > "$DECODED_KEY"; then
+            echo "Updater signing key is not valid Tauri key data" >&2
+            exit 1
+          fi
+
+          COMMENT=$(sed -n '1p' "$DECODED_KEY")
+          ENCODED_LINE=$(sed -n '2p' "$DECODED_KEY")
+          if [[ "$COMMENT" != "untrusted comment:"* ]] \
+            || [[ "$COMMENT" != *"secret key"* ]] \
+            || [[ -z "$ENCODED_LINE" ]] \
+            || ! printf '%s' "$ENCODED_LINE" | base64 --decode >/dev/null 2>&1; then
+            echo "Updater signing key must be the exact contents of the Tauri-generated .key file" >&2
+            exit 1
+          fi
+
+          echo "::add-mask::$ENCODED_KEY"
+          printf 'TAURI_SIGNING_PRIVATE_KEY=%s\n' "$ENCODED_KEY" >> "$GITHUB_ENV"
 
           PASSWORD_DELIMITER="TAURI_PASSWORD_$(date +%s%N)"
           {
@@ -138,26 +230,13 @@ jobs:
             echo "$PASSWORD_DELIMITER"
           } >> "$GITHUB_ENV"
 
-      - name: Generate release notes
-        id: release-notes
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          BODY="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="${GITHUB_REF_NAME}" \
-            --jq '.body')"
-          if [ -z "$BODY" ]; then
-            BODY="MergePilot ${GITHUB_REF_NAME}"
-          fi
-          DELIM="RELEASE_NOTES_$(date +%s%N)"
-          {
-            echo "body<<$DELIM"
-            printf '%s\n' "$BODY"
-            echo "$DELIM"
-          } >> "$GITHUB_OUTPUT"
-
       - run: npm ci
+
+      - name: Verify updater signing key
+        shell: bash
+        run: |
+          printf 'MergePilot updater signing preflight' > "$RUNNER_TEMP/updater-signing-preflight"
+          npm run tauri -- signer sign "$RUNNER_TEMP/updater-signing-preflight"
 
       - name: Configure Apple signing env vars (macOS)
         if: startsWith(matrix.platform, 'macos')
@@ -180,16 +259,33 @@ jobs:
           fi
 
       - name: Build Tauri app
+        id: tauri-build
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'MergePilot ${{ github.ref_name }}'
-          releaseBody: ${{ steps.release-notes.outputs.body }}
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.prepare-release.outputs.release-id }}
+          uploadUpdaterJson: false
           args: ${{ matrix.args }}
+
+      - name: Create updater metadata fragment
+        shell: bash
+        env:
+          TAURI_ARTIFACT_PATHS: ${{ steps.tauri-build.outputs.artifactPaths }}
+        run: |
+          mkdir -p updater-fragment
+          node .github/checks/updater-metadata.mjs fragment \
+            --platform "${{ matrix.updater-platform }}" \
+            --config src-tauri/tauri.conf.json \
+            --output "updater-fragment/${{ matrix.updater-platform }}.json"
+
+      - name: Upload updater metadata fragment
+        uses: actions/upload-artifact@v7
+        with:
+          name: updater-fragment-${{ matrix.updater-platform }}
+          path: updater-fragment/*.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Create portable zip (Windows)
         if: matrix.platform == 'windows-latest'
@@ -214,48 +310,60 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$env:GITHUB_REF_NAME" "$env:PORTABLE_ZIP" --repo "$env:GITHUB_REPOSITORY"
+          gh release upload "$env:GITHUB_REF_NAME" "$env:PORTABLE_ZIP" --repo "$env:GITHUB_REPOSITORY" --clobber
 
-  validate-updater-metadata:
-    needs: build
-    # GitHub only exposes draft release assets to tokens with push-level contents access.
+  assemble-updater-metadata:
+    needs: [prepare-release, build]
     permissions:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - name: Download updater metadata
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Download updater metadata fragments
+        uses: actions/download-artifact@v8
+        with:
+          pattern: updater-fragment-*
+          path: updater-fragments
+          merge-multiple: true
+
+      - name: Fetch draft release data
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern latest.json --dir "${RUNNER_TEMP}"
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release-id }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            > "$RUNNER_TEMP/release.json"
+          jq -r '.body // ""' "$RUNNER_TEMP/release.json" \
+            > "$RUNNER_TEMP/release-notes.txt"
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100" \
+            | jq -s 'add' > "$RUNNER_TEMP/release-assets.json"
 
-      - name: Validate updater metadata coverage
+      - name: Assemble updater metadata
         shell: bash
         run: |
-          METADATA="${RUNNER_TEMP}/latest.json"
-          EXPECTED_VERSION="${GITHUB_REF_NAME#v}"
-          ASSET_URL_PREFIX="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/releases/assets/"
-          jq -e --arg version "$EXPECTED_VERSION" '
-            type == "object"
-              and .version == $version
-              and (.notes | type == "string")
-              and (.pub_date | type == "string" and length > 0)
-              and (.platforms | type == "object")
-          ' "$METADATA" >/dev/null
+          node .github/checks/updater-metadata.mjs assemble \
+            --fragments updater-fragments \
+            --assets "$RUNNER_TEMP/release-assets.json" \
+            --notes "$RUNNER_TEMP/release-notes.txt" \
+            --version "${GITHUB_REF_NAME#v}" \
+            --asset-download-url-prefix \
+              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+            --output "$RUNNER_TEMP/latest.json"
 
-          for TARGET in darwin-aarch64 darwin-x86_64 linux-x86_64 windows-x86_64; do
-            jq -e --arg target "$TARGET" --arg url_prefix "$ASSET_URL_PREFIX" '
-              .platforms[$target]
-              | type == "object"
-                and (.signature | type == "string" and length > 0)
-                and (.url | type == "string" and startswith($url_prefix))
-            ' "$METADATA" >/dev/null || {
-              echo "latest.json 缺少有效平台条目：${TARGET}" >&2
-              exit 1
-            }
-          done
+      - name: Upload updater metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" "${RUNNER_TEMP}/latest.json" --repo "${GITHUB_REPOSITORY}" --clobber
 
   cleanup-release-signatures:
-    needs: validate-updater-metadata
+    needs: assemble-updater-metadata
     permissions:
       contents: write
     runs-on: ubuntu-latest
