@@ -275,7 +275,7 @@ jobs:
           uploadUpdaterJson: false
           args: ${{ matrix.args }}
 
-      - name: Create portable executable (Windows)
+      - name: Create portable ZIP (Windows)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
@@ -285,15 +285,13 @@ jobs:
             exit 1
           }
           $version = $env:GITHUB_REF_NAME.Substring(1)
-          $portableName = "MergeBeacon_${version}_x64-portable.exe"
-          $tmpDir = $env:RUNNER_TEMP
-          Copy-Item $exe "$tmpDir/$portableName"
-          npm run tauri -- signer sign "$tmpDir/$portableName"
-          if (-not (Test-Path "$tmpDir/$portableName.sig")) {
-            Write-Error "Portable executable signature not found"
-            exit 1
-          }
-          "PORTABLE_EXE=$tmpDir/$portableName" >> $env:GITHUB_ENV
+          $portableName = "MergeBeacon_${version}_x64-portable.zip"
+          $portableDir = Join-Path $env:RUNNER_TEMP "mergebeacon-portable"
+          $portableZip = Join-Path $env:RUNNER_TEMP $portableName
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+          Copy-Item $exe (Join-Path $portableDir "MergeBeacon.exe")
+          Compress-Archive -Path (Join-Path $portableDir "MergeBeacon.exe") -DestinationPath $portableZip
+          "PORTABLE_ZIP=$portableZip" >> $env:GITHUB_ENV
           Write-Host "Created $portableName"
 
       - name: Create updater metadata fragment
@@ -315,7 +313,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Upload portable executable (Windows)
+      - name: Upload portable ZIP (Windows)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         env:
@@ -323,7 +321,7 @@ jobs:
           RELEASE_ID: ${{ needs.prepare-release.outputs.release-id }}
           RELEASE_UPLOAD_URL: ${{ needs.prepare-release.outputs.release-upload-url }}
         run: |
-          $assetName = [System.IO.Path]::GetFileName($env:PORTABLE_EXE)
+          $assetName = [System.IO.Path]::GetFileName($env:PORTABLE_ZIP)
           $assets = @(
             gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID/assets?per_page=100" |
               ConvertFrom-Json |
@@ -348,8 +346,8 @@ jobs:
             -Method Post `
             -Uri "${uploadBase}?name=$encodedName" `
             -Headers $headers `
-            -ContentType "application/octet-stream" `
-            -InFile $env:PORTABLE_EXE
+            -ContentType "application/zip" `
+            -InFile $env:PORTABLE_ZIP
 
   assemble-updater-metadata:
     needs: [prepare-release, build]
