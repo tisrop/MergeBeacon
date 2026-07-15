@@ -228,5 +228,9 @@ describe("updater 元数据汇总", () => {
     );
     expect(workflow).toContain('select(.name == "latest.json") | .id');
     expect(workflow).toContain('--data-binary @"$RUNNER_TEMP/latest.json"');
+    expect(workflow).toContain("needs: [cleanup-release-signatures, prepare-release]");
+    expect(workflow).not.toContain("gh release edit");
+    expect(workflow).toContain("gh api --method PATCH");
+    expect(workflow).toContain("-F draft=false");
   });
 });
