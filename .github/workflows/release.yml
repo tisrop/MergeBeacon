@@ -618,7 +618,7 @@ jobs:
           done
 
   publish:
-    needs: [cleanup-release-signatures]
+    needs: [cleanup-release-signatures, prepare-release]
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -626,4 +626,10 @@ jobs:
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit ${{ github.ref_name }} --repo ${{ github.repository }} --draft=false
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release-id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -F draft=false > "$RUNNER_TEMP/published-release.json"
