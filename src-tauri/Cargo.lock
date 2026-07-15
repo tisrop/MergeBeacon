@@ -2453,6 +2453,7 @@ dependencies = [
  "eventsource-stream",
  "futures",
  "keyring",
+ "minisign-verify",
  "rand",
  "reqwest 0.12.28",
  "rusqlite",
