@@ -480,6 +480,7 @@ onMounted(async () => {
             :repo="repo"
             :pr-number="number"
             :diff="pr.diff?.diff ?? ''"
+            :head-sha="pr.currentPr?.head_sha ?? ''"
             :context="
               pr.currentPr ? { title: pr.currentPr.summary.title, body: pr.currentPr.body } : null
             "

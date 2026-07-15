@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from "vue";
+import { computed, ref, onUnmounted } from "vue";
 import type {
   Platform,
   AiReviewFocus,
@@ -21,6 +21,7 @@ const props = defineProps<{
   prNumber: number;
   diff: string;
   context: PrContext | null;
+  headSha: string;
 }>();
 
 const focus = ref<AiReviewFocus>("all");
@@ -28,12 +29,21 @@ const useStreaming = ref(true);
 const loading = ref(false);
 const error = ref("");
 const result = ref<AiReviewResult | null>(null);
+const resultHeadSha = ref("");
+const resultFocus = ref<AiReviewFocus | null>(null);
+const isResultOutdated = computed(
+  () => !!result.value && !!resultHeadSha.value && resultHeadSha.value !== props.headSha,
+);
 
 const streamText = ref("");
 let unlistenChunk: UnlistenFn | null = null;
 let unlistenDone: UnlistenFn | null = null;
 let unlistenError: UnlistenFn | null = null;
 let activeRequestId: string | null = null;
+let activeReviewHeadSha = "";
+let activeReviewFocus: AiReviewFocus | null = null;
+let activeReviewDiff = "";
+let activeReviewContext: PrContext | null = null;
 
 const foci: { value: AiReviewFocus; label: string }[] = [
   { value: "all", label: "全部" },
@@ -48,13 +58,23 @@ async function startReview() {
     error.value = "没有 diff 数据";
     return;
   }
+  if (!props.headSha) {
+    error.value = "当前 PR 缺少提交版本，无法开始 AI 评审";
+    return;
+  }
 
   await cancelActiveReview();
   cleanupListeners();
   loading.value = true;
   error.value = "";
   result.value = null;
+  resultHeadSha.value = "";
+  resultFocus.value = null;
   streamText.value = "";
+  activeReviewHeadSha = props.headSha;
+  activeReviewFocus = focus.value;
+  activeReviewDiff = props.diff;
+  activeReviewContext = props.context;
 
   if (useStreaming.value) {
     await startStreamingReview();
@@ -65,12 +85,16 @@ async function startReview() {
 
 async function startNonStreamingReview() {
   try {
+    const reviewHeadSha = activeReviewHeadSha;
+    const reviewFocus = activeReviewFocus;
     result.value = await aiReview({
-      diff: props.diff,
-      context: props.context,
+      diff: activeReviewDiff,
+      context: activeReviewContext,
       file_filter: null,
-      focus: focus.value,
+      focus: reviewFocus,
     });
+    resultHeadSha.value = reviewHeadSha;
+    resultFocus.value = reviewFocus;
   } catch (e) {
     error.value = getErrorMessage(e, "AI 评审失败");
   } finally {
@@ -90,6 +114,8 @@ async function startStreamingReview() {
     unlistenDone = await listen<AiStreamEvent<AiReviewResult>>("ai-review-done", (event) => {
       if (event.payload.request_id !== activeRequestId) return;
       result.value = event.payload.payload;
+      resultHeadSha.value = activeReviewHeadSha;
+      resultFocus.value = activeReviewFocus;
       activeRequestId = null;
       loading.value = false;
       cleanupListeners();
@@ -104,10 +130,10 @@ async function startStreamingReview() {
     });
 
     await aiReviewStream(requestId, {
-      diff: props.diff,
-      context: props.context,
+      diff: activeReviewDiff,
+      context: activeReviewContext,
       file_filter: null,
-      focus: focus.value,
+      focus: activeReviewFocus,
     });
   } catch (e) {
     if (activeRequestId === requestId) {
@@ -144,7 +170,7 @@ onUnmounted(() => {
 });
 
 function onAction(index: number, action: AiSuggestionAction) {
-  if (!result.value) return;
+  if (!result.value || isResultOutdated.value) return;
   result.value.suggestions[index].action = action;
 }
 </script>
@@ -209,6 +235,17 @@ function onAction(index: number, action: AiSuggestionAction) {
     </div>
 
     <div v-if="result" class="ai-result">
+      <div v-if="isResultOutdated" class="outdated-warning" role="alert">
+        当前 PR 已有新提交，此 AI 评审基于旧版本，建议重新评审后再处理建议。
+      </div>
+      <div class="review-metadata">
+        <span
+          >评审版本：<code>{{ resultHeadSha.slice(0, 12) }}</code></span
+        >
+        <span v-if="resultFocus"
+          >聚焦范围：{{ foci.find((item) => item.value === resultFocus)?.label }}</span
+        >
+      </div>
       <div class="summary-card">
         <h4>
           <svg
@@ -235,6 +272,7 @@ function onAction(index: number, action: AiSuggestionAction) {
           v-for="(s, idx) in result.suggestions"
           :key="idx"
           :suggestion="s"
+          :disabled="isResultOutdated"
           @action="(a: AiSuggestionAction) => onAction(idx, a)"
         />
       </div>
@@ -380,6 +418,27 @@ function onAction(index: number, action: AiSuggestionAction) {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.outdated-warning {
+  padding: var(--space-3);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+  font-size: 13px;
+}
+
+.review-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.review-metadata code {
+  font-family: var(--font-mono);
 }
 
 .summary-card {

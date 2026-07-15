@@ -35,6 +35,7 @@ function mountPanel() {
       prNumber: 42,
       diff: "+changed",
       context: null,
+      headSha: "head-sha-1",
     },
     global: {
       stubs: {
@@ -146,5 +147,25 @@ describe("AiReviewPanel", () => {
 
     expect(aiReviewStream).toHaveBeenCalledTimes(2);
     expect(wrapper.find(".error-box").exists()).toBe(false);
+  });
+
+  it("PR 提交版本变化后标记 AI 结果过期", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+
+    latestListener("ai-review-done")?.({
+      payload: {
+        request_id: "request-1",
+        payload: { summary: "当前结果", suggestions: [] },
+      },
+    });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("评审版本：head-sha-1");
+    expect(wrapper.find(".outdated-warning").exists()).toBe(false);
+
+    await wrapper.setProps({ headSha: "head-sha-2" });
+
+    expect(wrapper.find(".outdated-warning").text()).toContain("基于旧版本");
   });
 });

@@ -3,6 +3,7 @@ import type { AiSuggestion, AiSuggestionAction, Severity } from "@/types";
 
 defineProps<{
   suggestion: AiSuggestion;
+  disabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -63,7 +64,7 @@ const severityLabel: Record<Severity, string> = {
     </div>
 
     <div class="card-actions" v-if="!suggestion.action">
-      <button class="btn btn-sm btn-accept" @click="emit('action', 'accept')">
+      <button class="btn btn-sm btn-accept" :disabled="disabled" @click="emit('action', 'accept')">
         <svg
           width="12"
           height="12"
@@ -78,7 +79,11 @@ const severityLabel: Record<Severity, string> = {
         </svg>
         采纳
       </button>
-      <button class="btn btn-sm btn-edit" @click="emit('action', { edit: '' })">
+      <button
+        class="btn btn-sm btn-edit"
+        :disabled="disabled"
+        @click="emit('action', { edit: '' })"
+      >
         <svg
           width="12"
           height="12"
@@ -94,7 +99,9 @@ const severityLabel: Record<Severity, string> = {
         </svg>
         编辑
       </button>
-      <button class="btn btn-sm btn-reject" @click="emit('action', 'reject')">忽略</button>
+      <button class="btn btn-sm btn-reject" :disabled="disabled" @click="emit('action', 'reject')">
+        忽略
+      </button>
     </div>
 
     <div v-else class="action-status">
