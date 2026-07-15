@@ -514,7 +514,7 @@ impl GitPlatform for GitHubAdapter {
             "clean" | "unstable" | "blocked" | "behind" => Some(false),
             _ => None,
         };
-        let branch_behind = Some(mergeable_state == "behind").filter(|_| !mergeable_state.is_empty());
+        let branch_behind = (!mergeable_state.is_empty()).then_some(mergeable_state == "behind");
         let mut reasons = Vec::new();
         if pull["state"].as_str() != Some("open") {
             reasons.push(MergeBlockingReason {
