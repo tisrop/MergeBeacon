@@ -253,7 +253,7 @@ export interface AiSuggestion {
   action?: AiSuggestionAction;
 }
 
-export type AiSuggestionAction = "accept" | "reject" | { edit: string };
+export type AiSuggestionAction = "accept" | "reject" | "submitted" | { edit: string };
 
 // ── AI 预设 ──
 export interface AiPreset {
