@@ -160,6 +160,52 @@ async fn test_gitlab_diff_wraps_bare_hunks_with_unified_diff_headers() {
 }
 
 #[tokio::test]
+async fn test_gitlab_diff_preserves_metadata_only_rename() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/5/changes"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "changes": [
+                {
+                    "old_path": "src/old-name.rs",
+                    "new_path": "src/new-name.rs",
+                    "diff": "",
+                    "new_file": false,
+                    "deleted_file": false,
+                    "renamed_file": true,
+                    "additions": 0,
+                    "deletions": 0
+                },
+                {
+                    "old_path": "src/large-old.rs",
+                    "new_path": "src/large-new.rs",
+                    "diff": "",
+                    "new_file": false,
+                    "deleted_file": false,
+                    "renamed_file": true,
+                    "additions": 0,
+                    "deletions": 0,
+                    "too_large": true
+                }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let (diff, files) = adapter.get_pr_diff("group", "repo", 5).await.expect("should load renamed file diff");
+    let patches = mergebeacon_lib::patch::standardize_patches(&diff, &files);
+
+    assert!(diff.contains("rename from src/old-name.rs\nrename to src/new-name.rs"));
+    assert!(matches!(files[0].status, mergebeacon_lib::models::FileStatus::Renamed));
+    assert!(matches!(patches[0].content_kind, mergebeacon_lib::models::PatchContentKind::MetadataOnly));
+    assert_eq!(patches[0].old_path.as_deref(), Some("src/old-name.rs"));
+    assert_eq!(patches[0].new_path.as_deref(), Some("src/new-name.rs"));
+    assert!(matches!(patches[1].content_kind, mergebeacon_lib::models::PatchContentKind::Unavailable));
+}
+
+#[tokio::test]
 async fn test_gitlab_rejects_unsupported_review_without_request() {
     let mock_server = MockServer::start().await;
     let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
@@ -492,7 +538,6 @@ async fn test_gitlab_merge_readiness_allows_merge_without_configured_pipeline() 
             "state": "opened",
             "draft": false,
             "detailed_merge_status": "mergeable",
-            "has_conflicts": false,
             "sha": "head-sha",
             "user": {"can_merge": true}
         })))
@@ -518,6 +563,7 @@ async fn test_gitlab_merge_readiness_allows_merge_without_configured_pipeline() 
 
     assert_eq!(readiness.status, mergebeacon_lib::models::ReadinessState::Ready);
     assert_eq!(readiness.checks_status, mergebeacon_lib::models::ReadinessState::Ready);
+    assert_eq!(readiness.has_conflicts, Some(false));
     assert_eq!(readiness.has_merge_permission, Some(true));
 }
 

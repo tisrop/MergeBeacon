@@ -86,15 +86,27 @@ impl GitLabAdapter {
 
     fn unified_diff(change: &Value) -> String {
         let patch = change["diff"].as_str().unwrap_or("");
-        if patch.is_empty() {
-            return String::new();
+        let old_path = change["old_path"].as_str().unwrap_or("");
+        let new_path = change["new_path"].as_str().unwrap_or("");
+        if patch.trim().is_empty() {
+            let is_metadata_only_rename = change["renamed_file"].as_bool() == Some(true)
+                && change["collapsed"].as_bool() != Some(true)
+                && change["too_large"].as_bool() != Some(true)
+                && change["additions"].as_u64().unwrap_or(0) == 0
+                && change["deletions"].as_u64().unwrap_or(0) == 0
+                && !old_path.is_empty()
+                && !new_path.is_empty()
+                && old_path != new_path;
+            return if is_metadata_only_rename {
+                crate::patch::metadata_only_rename_patch(old_path, new_path)
+            } else {
+                String::new()
+            };
         }
 
         let mut diff = if patch.starts_with("diff --git ") {
             patch.to_string()
         } else {
-            let old_path = change["old_path"].as_str().unwrap_or("");
-            let new_path = change["new_path"].as_str().unwrap_or("");
             let old_marker = if change["new_file"].as_bool() == Some(true) {
                 "/dev/null".to_string()
             } else {
@@ -357,6 +369,7 @@ impl GitPlatform for GitLabAdapter {
         let merge_status = mr["detailed_merge_status"].as_str().or_else(|| mr["merge_status"].as_str()).unwrap_or("");
         let has_conflicts = mr["has_conflicts"].as_bool().or(match merge_status {
             "conflict" | "cannot_be_merged" => Some(true),
+            "mergeable" | "can_be_merged" => Some(false),
             _ => None,
         });
         let branch_behind = matches!(merge_status, "need_rebase" | "behind").then_some(true);

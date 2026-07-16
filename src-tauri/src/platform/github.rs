@@ -109,7 +109,10 @@ impl GitHubAdapter {
         } else if states.contains(&Some(ReadinessState::Ready)) {
             ReadinessState::Ready
         } else {
-            ReadinessState::Unknown
+            // Both GitHub status APIs successfully returned no entries. This means the
+            // repository has no CI status configured for the commit, not that the lookup
+            // failed. Request failures are represented explicitly as `Some(Unknown)`.
+            ReadinessState::Ready
         }
     }
 
@@ -513,6 +516,7 @@ impl GitPlatform for GitHubAdapter {
         let has_conflicts = match mergeable_state {
             "dirty" => Some(true),
             "clean" | "unstable" | "blocked" | "behind" => Some(false),
+            _ if mergeable == Some(true) => Some(false),
             _ => None,
         };
         let branch_behind = (!mergeable_state.is_empty()).then_some(mergeable_state == "behind");

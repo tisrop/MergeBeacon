@@ -422,6 +422,62 @@ async fn test_github_actions_success_overrides_empty_legacy_pending_status() {
 }
 
 #[tokio::test]
+async fn test_github_merge_readiness_allows_merge_without_configured_checks() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/pulls/48"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "number": 48,
+            "state": "open",
+            "draft": false,
+            "mergeable": true,
+            "mergeable_state": "unknown",
+            "head": {"sha": "no-checks-sha"}
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/commits/no-checks-sha/status"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "state": "pending",
+            "total_count": 0,
+            "statuses": []
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/commits/no-checks-sha/check-runs"))
+        .and(query_param("filter", "latest"))
+        .and(query_param("per_page", "100"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "total_count": 0,
+            "check_runs": []
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/pulls/48/reviews"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "permissions": {"admin": false, "maintain": false, "push": true}
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let readiness = adapter.get_merge_readiness("octocat", "hello-world", 48).await.expect("readiness");
+
+    assert_eq!(readiness.status, mergebeacon_lib::models::ReadinessState::Ready);
+    assert_eq!(readiness.checks_status, mergebeacon_lib::models::ReadinessState::Ready);
+    assert_eq!(readiness.has_conflicts, Some(false));
+    assert!(readiness.blocking_reasons.is_empty());
+}
+
+#[tokio::test]
 async fn test_github_actions_in_progress_remains_pending_without_legacy_statuses() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))

@@ -3,6 +3,12 @@ use crate::models::{FileStatus, PatchContentKind, PatchHunk, PatchLine, PatchLin
 pub const PATCH_SCHEMA_VERSION: u32 = 1;
 const MAX_STANDARD_PATCH_BYTES: usize = 4 * 1024 * 1024;
 
+pub(crate) fn metadata_only_rename_patch(old_path: &str, new_path: &str) -> String {
+    format!(
+        "diff --git a/{old_path} b/{new_path}\nsimilarity index 100%\nrename from {old_path}\nrename to {new_path}\n"
+    )
+}
+
 #[derive(Debug, Clone, Copy)]
 struct HunkRange {
     start: u32,
@@ -184,6 +190,10 @@ fn patch_paths(patch: &str, file: &PrFile) -> (Option<String>, Option<String>) {
             old_path = marker_path(value);
         } else if let Some(value) = line.strip_prefix("+++ ") {
             new_path = marker_path(value);
+        } else if let Some(value) = line.strip_prefix("rename from ") {
+            old_path = Some(value.to_string());
+        } else if let Some(value) = line.strip_prefix("rename to ") {
+            new_path = Some(value.to_string());
         }
     }
 
@@ -402,6 +412,22 @@ mod tests {
         assert_eq!(result[1].new_path, None);
         assert_eq!(result[2].old_path.as_deref(), Some("old-name.rs"));
         assert_eq!(result[2].new_path.as_deref(), Some("new-name.rs"));
+    }
+
+    #[test]
+    fn standardizes_metadata_only_rename_with_distinct_paths() {
+        let renamed = file(
+            "src/new-name.rs",
+            FileStatus::Renamed,
+            &metadata_only_rename_patch("src/old-name.rs", "src/new-name.rs"),
+        );
+
+        let result = standardize_patches("", &[renamed]);
+
+        assert!(matches!(result[0].content_kind, PatchContentKind::MetadataOnly));
+        assert_eq!(result[0].old_path.as_deref(), Some("src/old-name.rs"));
+        assert_eq!(result[0].new_path.as_deref(), Some("src/new-name.rs"));
+        assert_eq!(result[0].message.as_deref(), Some("该文件仅包含重命名、权限或其他元数据变更"));
     }
 
     #[test]

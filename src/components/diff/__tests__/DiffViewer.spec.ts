@@ -290,6 +290,43 @@ describe("DiffViewer 受控标准 patch", () => {
     expect(wrapper.find(".diff-empty").exists()).toBe(false);
   });
 
+  it("纯重命名没有文本 hunk 时不显示上下文展开操作", async () => {
+    const metadataOnlyRename: DiffResult = {
+      diff: "",
+      files: [
+        {
+          filename: "src/new-name.ts",
+          status: "renamed",
+          patch: "",
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: "src/new-name.ts",
+          old_path: "src/old-name.ts",
+          new_path: "src/new-name.ts",
+          status: "renamed",
+          additions: 0,
+          deletions: 0,
+          content_kind: "metadata_only",
+          patch: "",
+          message: "该文件仅包含重命名、权限或其他元数据变更",
+          hunks: [],
+        },
+      ],
+    };
+
+    const wrapper = await mountViewer(metadataOnlyRename, contextProps);
+
+    expect(wrapper.get(".controlled-file-message").text()).toContain("仅包含重命名");
+    expect(wrapper.find(".context-toolbar-button").exists()).toBe(false);
+    expect(wrapper.find(".context-gap-button").exists()).toBe(false);
+    expect(prFileContentMock).not.toHaveBeenCalled();
+  });
+
   it("从行号槽按方向展开单个上下文，并按 base/head 路径请求文件内容", async () => {
     mockContextFiles();
     const wrapper = await mountViewer(contextDiff, contextProps);
@@ -380,6 +417,43 @@ describe("DiffViewer 受控标准 patch", () => {
     expect(wrapper.find(topLabel).exists()).toBe(false);
     expect(wrapper.get(".controlled-side-left").text()).toContain("line 1");
     expect(wrapper.get(".controlled-side-right").text()).toContain("line 50");
+  });
+
+  it("文件 patch 已覆盖全文时加载后移除无效的展开操作", async () => {
+    const fullFileDiff: DiffResult = {
+      ...contextDiff,
+      patches: [
+        {
+          ...contextDiff.patches[0],
+          hunks: [
+            {
+              header: "@@ -1,2 +1,2 @@",
+              old_start: 1,
+              old_count: 2,
+              new_start: 1,
+              new_count: 2,
+              section_header: null,
+              lines: [
+                { kind: "context", content: "line 1", old_line: 1, new_line: 1 },
+                { kind: "context", content: "line 2", old_line: 2, new_line: 2 },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    prFileContentMock.mockImplementation(
+      async (_platform: Platform, _owner: string, _repo: string, path: string, revision: string) =>
+        fileContent(path, revision, "line 1\nline 2"),
+    );
+    const wrapper = await mountViewer(fullFileDiff, contextProps);
+
+    await wrapper.get(".context-toolbar-button").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".context-toolbar-button").exists()).toBe(false);
+    expect(wrapper.findAll(".controlled-context-line")).toHaveLength(0);
+    expect(wrapper.findAll(".controlled-hunk")).toHaveLength(2);
   });
 
   it("工具栏可以展开和收起全部上下文，且不会移除原始 hunk", async () => {

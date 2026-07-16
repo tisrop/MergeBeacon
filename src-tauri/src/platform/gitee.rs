@@ -160,6 +160,55 @@ impl GiteeAdapter {
         }
     }
 
+    fn file_paths(value: &Value) -> (&str, &str) {
+        let old_path = value["previous_filename"]
+            .as_str()
+            .or_else(|| value["old_path"].as_str())
+            .or_else(|| value["patch"]["old_path"].as_str())
+            .or_else(|| value["filename"].as_str())
+            .unwrap_or("");
+        let new_path = value["filename"].as_str().or_else(|| value["new_path"].as_str()).unwrap_or("");
+        (old_path, new_path)
+    }
+
+    fn file_patch(value: &Value) -> String {
+        let patch = value["patch"]["diff"].as_str().or_else(|| value["patch"].as_str()).unwrap_or("");
+        if !patch.trim().is_empty() {
+            return patch.to_string();
+        }
+
+        let (old_path, new_path) = Self::file_paths(value);
+        let is_metadata_only_rename = value["status"].as_str() == Some("renamed")
+            && value["collapsed"].as_bool() != Some(true)
+            && value["too_large"].as_bool() != Some(true)
+            && value["truncated"].as_bool() != Some(true)
+            && value["additions"].as_u64().unwrap_or(0) == 0
+            && value["deletions"].as_u64().unwrap_or(0) == 0
+            && !old_path.is_empty()
+            && !new_path.is_empty()
+            && old_path != new_path;
+
+        if is_metadata_only_rename {
+            crate::patch::metadata_only_rename_patch(old_path, new_path)
+        } else {
+            String::new()
+        }
+    }
+
+    fn unified_diff(value: &Value) -> String {
+        let patch = Self::file_patch(value);
+        if patch.is_empty() || patch.starts_with("diff --git ") {
+            return patch;
+        }
+
+        let (old_path, new_path) = Self::file_paths(value);
+        let old_marker =
+            if value["status"].as_str() == Some("added") { "/dev/null".to_string() } else { format!("a/{old_path}") };
+        let new_marker =
+            if value["status"].as_str() == Some("removed") { "/dev/null".to_string() } else { format!("b/{new_path}") };
+        format!("diff --git a/{old_path} b/{new_path}\n--- {old_marker}\n+++ {new_marker}\n{patch}")
+    }
+
     fn repository_merge_permission(value: &Value) -> Option<bool> {
         let permissions = value.get("permission").or_else(|| value.get("permissions"))?;
         let admin = permissions["admin"].as_bool();
@@ -437,7 +486,10 @@ impl GitPlatform for GiteeAdapter {
             json["head"]["sha"].as_str().or_else(|| json["head"]["commit_id"].as_str()).unwrap_or("").to_string();
         let mergeable = json["mergeable"].as_bool();
         let draft = json["draft"].as_bool().or_else(|| json["work_in_progress"].as_bool());
-        let has_conflicts = json["has_conflicts"].as_bool().or_else(|| json["conflict"].as_bool());
+        let has_conflicts = json["has_conflicts"]
+            .as_bool()
+            .or_else(|| json["conflict"].as_bool())
+            .or_else(|| (mergeable == Some(true)).then_some(false));
         let mut reasons = Vec::new();
         if json["state"].as_str() != Some("open") {
             reasons.push(MergeBlockingReason {
@@ -543,7 +595,7 @@ impl GitPlatform for GiteeAdapter {
         let files: Vec<PrFile> = files_json
             .iter()
             .map(|f| {
-                let patch = f["patch"]["diff"].as_str().or_else(|| f["patch"].as_str()).unwrap_or("").to_string();
+                let patch = Self::file_patch(f);
                 PrFile {
                     filename: f["filename"].as_str().unwrap_or("").to_string(),
                     status: match f["status"].as_str().unwrap_or("") {
@@ -559,31 +611,7 @@ impl GitPlatform for GiteeAdapter {
             })
             .collect();
 
-        let diff = files
-            .iter()
-            .map(|f| {
-                let patch = &f.patch;
-                if patch.starts_with("diff --git") || patch.starts_with("@@") {
-                    if patch.starts_with("@@") {
-                        format!(
-                            "diff --git a/{} b/{}\n--- a/{}\n+++ b/{}\n{}",
-                            f.filename, f.filename, f.filename, f.filename, patch
-                        )
-                    } else {
-                        patch.clone()
-                    }
-                } else if !patch.is_empty() {
-                    format!(
-                        "diff --git a/{} b/{}\n--- a/{}\n+++ b/{}\n{}",
-                        f.filename, f.filename, f.filename, f.filename, patch
-                    )
-                } else {
-                    String::new()
-                }
-            })
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("");
+        let diff = files_json.iter().map(Self::unified_diff).filter(|patch| !patch.is_empty()).collect::<String>();
 
         Ok((diff, files))
     }

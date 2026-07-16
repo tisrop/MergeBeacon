@@ -323,6 +323,14 @@ const canLoadContext = computed(
       (selectedStandardPatch.value?.new_path && props.headSha),
     ),
 );
+const canExpandContext = computed(
+  () =>
+    selectedStandardPatch.value?.content_kind === "text" &&
+    controlledHunks.value.length > 0 &&
+    canLoadContext.value &&
+    (loadedFileContext.value === null ||
+      availableContextGaps.value.some((gap) => contextGapRowCount(gap) > 0)),
+);
 
 function contextGapActions(gap: ControlledContextGap): ContextGapAction[] {
   if (gap.direction === "up") return [{ edge: "end", arrow: "↑" }];
@@ -1225,7 +1233,7 @@ onUnmounted(() => {
             <span class="additions">+{{ selectedFile.additions }}</span>
             <span class="deletions">-{{ selectedFile.deletions }}</span>
           </div>
-          <div v-if="hasControlledPatch && canLoadContext" class="context-toolbar-actions">
+          <div v-if="hasControlledPatch && canExpandContext" class="context-toolbar-actions">
             <button
               v-if="hasExpandedContext"
               class="context-toolbar-button"
