@@ -70,7 +70,7 @@ impl AiConfigManager {
                 api_key_encrypted: None,
                 system_prompt: None,
                 temperature: Some(0.3),
-                max_tokens: Some(4096),
+                max_tokens: Some(8192),
             })
         }
     }

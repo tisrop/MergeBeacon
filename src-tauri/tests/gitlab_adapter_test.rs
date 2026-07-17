@@ -160,6 +160,79 @@ async fn test_gitlab_diff_wraps_bare_hunks_with_unified_diff_headers() {
 }
 
 #[tokio::test]
+async fn test_gitlab_compare_diff_uses_nested_project_and_normalizes_rename() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Fsubgroup%2Frepo/repository/compare"))
+        .and(query_param("from", "base-sha"))
+        .and(query_param("to", "head-sha"))
+        .and(query_param("straight", "true"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "compare_timeout": false,
+            "compare_same_ref": false,
+            "diffs": [
+                {
+                    "old_path": "src/main.rs",
+                    "new_path": "src/main.rs",
+                    "diff": "@@ -1 +1 @@\n-old\n+new",
+                    "new_file": false,
+                    "deleted_file": false,
+                    "renamed_file": false
+                },
+                {
+                    "old_path": "src/old-name.rs",
+                    "new_path": "src/new-name.rs",
+                    "diff": "",
+                    "new_file": false,
+                    "deleted_file": false,
+                    "renamed_file": true,
+                    "additions": 0,
+                    "deletions": 0
+                }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let (diff, files) = adapter
+        .get_compare_diff("group/subgroup", "repo", "base-sha", "head-sha")
+        .await
+        .expect("should compare commits");
+    let patches = mergebeacon_lib::patch::standardize_patches(&diff, &files);
+
+    assert_eq!(files.len(), 2);
+    assert!(diff.contains("diff --git a/src/main.rs b/src/main.rs"));
+    assert!(diff.contains("rename from src/old-name.rs\nrename to src/new-name.rs"));
+    assert!(matches!(files[1].status, mergebeacon_lib::models::FileStatus::Renamed));
+    assert_eq!(patches[1].old_path.as_deref(), Some("src/old-name.rs"));
+    assert_eq!(patches[1].new_path.as_deref(), Some("src/new-name.rs"));
+}
+
+#[tokio::test]
+async fn test_gitlab_compare_diff_rejects_timeout_and_missing_diffs() {
+    for (body, expected) in [
+        (serde_json::json!({ "compare_timeout": true, "diffs": [] }), "compare 超时"),
+        (serde_json::json!({ "compare_timeout": false }), "缺少 diffs 字段"),
+    ] {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/group%2Frepo/repository/compare"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&mock_server)
+            .await;
+
+        let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+        let error = adapter
+            .get_compare_diff("group", "repo", "base", "head")
+            .await
+            .expect_err("invalid compare response must fail");
+        assert!(error.to_string().contains(expected));
+    }
+}
+
+#[tokio::test]
 async fn test_gitlab_diff_preserves_metadata_only_rename() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))

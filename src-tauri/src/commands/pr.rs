@@ -5,6 +5,22 @@ use tauri::State;
 
 use super::auth::build_platform;
 
+fn validate_compare_request(owner: &str, repo: &str, base_sha: &str, head_sha: &str) -> Result<(), String> {
+    if owner.trim().is_empty() || repo.trim().is_empty() {
+        return Err("仓库 owner 和名称不能为空".into());
+    }
+    if base_sha.trim().is_empty() || head_sha.trim().is_empty() {
+        return Err("增量评审缺少 base/head 提交版本".into());
+    }
+    if base_sha == head_sha {
+        return Err("base 和 head 提交版本相同，没有可评审的新增改动".into());
+    }
+    if base_sha.contains(['\0', '\n', '\r']) || head_sha.contains(['\0', '\n', '\r']) {
+        return Err("提交版本包含非法字符".into());
+    }
+    Ok(())
+}
+
 fn extract_issue_refs(body: &str) -> Vec<u64> {
     let keywords = ["close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"];
     let mut issues = Vec::new();
@@ -80,6 +96,23 @@ pub async fn pr_diff(
 ) -> Result<DiffResult, String> {
     let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
     let (diff, files) = p.get_pr_diff(&owner, &repo, number).await.map_err(|e| e.to_string())?;
+    let patches = standardize_patches(&diff, &files);
+    Ok(DiffResult { diff, files, patch_schema_version: PATCH_SCHEMA_VERSION, patches })
+}
+
+#[tauri::command]
+pub async fn pr_compare_diff(
+    state: State<'_, AppState>,
+    platform: String,
+    owner: String,
+    repo: String,
+    base_sha: String,
+    head_sha: String,
+) -> Result<DiffResult, String> {
+    validate_compare_request(&owner, &repo, &base_sha, &head_sha)?;
+
+    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
+    let (diff, files) = p.get_compare_diff(&owner, &repo, &base_sha, &head_sha).await.map_err(|e| e.to_string())?;
     let patches = standardize_patches(&diff, &files);
     Ok(DiffResult { diff, files, patch_schema_version: PATCH_SCHEMA_VERSION, patches })
 }
@@ -164,4 +197,30 @@ pub async fn pr_reopen(
 ) -> Result<PrState, String> {
     let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
     p.reopen_pull_request(&owner, &repo, number).await.map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_compare_request;
+
+    #[test]
+    fn compare_request_accepts_distinct_commit_versions() {
+        assert!(validate_compare_request("owner", "repo", "abc123", "def456").is_ok());
+    }
+
+    #[test]
+    fn compare_request_rejects_missing_or_equal_versions() {
+        assert!(validate_compare_request("", "repo", "abc123", "def456").is_err());
+        assert!(validate_compare_request("owner", "repo", " ", "def456").is_err());
+        assert!(validate_compare_request("owner", "repo", "abc123", "abc123").is_err());
+    }
+
+    #[test]
+    fn compare_request_rejects_control_characters() {
+        for invalid in ["abc\0def", "abc\ndef", "abc\rdef"] {
+            let error = validate_compare_request("owner", "repo", invalid, "def456")
+                .expect_err("control characters must be rejected");
+            assert!(error.contains("非法字符"));
+        }
+    }
 }

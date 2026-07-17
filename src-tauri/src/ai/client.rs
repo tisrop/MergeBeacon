@@ -190,8 +190,19 @@ impl AiClient {
         };
 
         let trimmed = json_str.trim();
-        let result: AiReviewResult = serde_json::from_str(trimmed)
-            .map_err(|e| AppError::Ai(format!("Failed to parse AI response: {}\n\nRaw response: {}", e, response)))?;
+        let result: AiReviewResult = serde_json::from_str(trimmed).map_err(|error| {
+            if error.is_eof() {
+                AppError::Ai(
+                    "AI 返回的评审 JSON 不完整，可能已达到 Max Tokens 上限。请提高 AI 设置中的 Max Tokens，或缩小评审范围后重试"
+                        .to_string(),
+                )
+            } else {
+                AppError::Ai(format!(
+                    "AI 返回的评审结果不是有效 JSON（{}）。请确认当前模型支持按要求输出 JSON 后重试",
+                    error
+                ))
+            }
+        })?;
 
         Ok(result)
     }
@@ -252,7 +263,7 @@ impl AiClient {
 mod tests {
     use futures::stream;
 
-    use super::consume_sse_stream;
+    use super::{consume_sse_stream, AiClient};
 
     fn delta(content: &str) -> String {
         format!(r#"{{"choices":[{{"delta":{{"content":"{content}"}}}}]}}"#)
@@ -291,5 +302,14 @@ mod tests {
         let error =
             consume_sse_stream(stream::iter(vec![Ok(b"data: not-json\n\n".to_vec())]), |_| Ok(())).await.unwrap_err();
         assert!(error.to_string().contains("not-json"));
+    }
+
+    #[test]
+    fn reports_truncated_review_without_echoing_model_output() {
+        let client = AiClient::new("https://example.test/v1".to_string(), "test".to_string(), "secret".to_string());
+        let error = client.parse_review_response(r#"{"suggestions":[],"summary":"评审结果尚未完成"#).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("Max Tokens"));
+        assert!(!message.contains("评审结果尚未完成"));
     }
 }

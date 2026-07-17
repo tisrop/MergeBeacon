@@ -447,6 +447,71 @@ async fn test_gitee_diff_preserves_metadata_only_rename() {
 }
 
 #[tokio::test]
+async fn test_gitee_compare_diff_accepts_changes_and_normalizes_rename() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/compare/base-sha...head-sha"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "changes": [
+                {
+                    "filename": "src/main.rs",
+                    "status": "modified",
+                    "patch": "@@ -1 +1 @@\n-old\n+new",
+                    "additions": 1,
+                    "deletions": 1
+                },
+                {
+                    "old_path": "src/old-name.rs",
+                    "new_path": "src/new-name.rs",
+                    "status": "renamed",
+                    "patch": null,
+                    "additions": 0,
+                    "deletions": 0
+                }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let (diff, files) = adapter
+        .get_compare_diff("octocat", "hello-world", "base-sha", "head-sha")
+        .await
+        .expect("should compare commits");
+    let patches = mergebeacon_lib::patch::standardize_patches(&diff, &files);
+
+    assert_eq!(files.len(), 2);
+    assert!(diff.contains("diff --git a/src/main.rs b/src/main.rs"));
+    assert!(diff.contains("rename from src/old-name.rs\nrename to src/new-name.rs"));
+    assert!(matches!(files[1].status, mergebeacon_lib::models::FileStatus::Renamed));
+    assert_eq!(patches[1].old_path.as_deref(), Some("src/old-name.rs"));
+    assert_eq!(patches[1].new_path.as_deref(), Some("src/new-name.rs"));
+}
+
+#[tokio::test]
+async fn test_gitee_compare_diff_rejects_missing_files_and_changes() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/compare/base...head"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let error = adapter
+        .get_compare_diff("octocat", "hello-world", "base", "head")
+        .await
+        .expect_err("missing compare files must fail");
+
+    assert!(error.to_string().contains("缺少 files/changes 字段"));
+}
+
+#[tokio::test]
 async fn test_gitee_list_repos_paginated() {
     let mock_server = MockServer::start().await;
 

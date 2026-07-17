@@ -303,6 +303,74 @@ impl GitHubAdapter {
         Ok(resp.json().await?)
     }
 
+    fn map_compare_file(file: &Value) -> PrFile {
+        let status = match file["status"].as_str().unwrap_or("") {
+            "added" => FileStatus::Added,
+            "removed" => FileStatus::Removed,
+            "renamed" => FileStatus::Renamed,
+            _ => FileStatus::Modified,
+        };
+        PrFile {
+            filename: file["filename"].as_str().unwrap_or("").to_string(),
+            status,
+            patch: Self::compare_file_patch(file),
+            additions: file["additions"].as_u64().unwrap_or(0) as u32,
+            deletions: file["deletions"].as_u64().unwrap_or(0) as u32,
+        }
+    }
+
+    fn compare_file_paths(file: &Value) -> (&str, &str) {
+        let old_path = file["previous_filename"].as_str().unwrap_or_else(|| file["filename"].as_str().unwrap_or(""));
+        let new_path = file["filename"].as_str().unwrap_or("");
+        (old_path, new_path)
+    }
+
+    fn compare_file_patch(file: &Value) -> String {
+        let patch = file["patch"].as_str().unwrap_or("");
+        if !patch.trim().is_empty() {
+            return patch.to_string();
+        }
+        let (old_path, new_path) = Self::compare_file_paths(file);
+        let is_metadata_only_rename = file["status"].as_str() == Some("renamed")
+            && file["additions"].as_u64().unwrap_or(0) == 0
+            && file["deletions"].as_u64().unwrap_or(0) == 0
+            && !old_path.is_empty()
+            && !new_path.is_empty()
+            && old_path != new_path;
+        if is_metadata_only_rename {
+            crate::patch::metadata_only_rename_patch(old_path, new_path)
+        } else {
+            String::new()
+        }
+    }
+
+    fn compare_unified_diff(file: &Value) -> String {
+        let patch = Self::compare_file_patch(file);
+        if patch.is_empty() {
+            return patch;
+        }
+        let mut diff = if patch.starts_with("diff --git ") {
+            patch
+        } else {
+            let (old_path, new_path) = Self::compare_file_paths(file);
+            let old_marker = if file["status"].as_str() == Some("added") {
+                "/dev/null".to_string()
+            } else {
+                format!("a/{old_path}")
+            };
+            let new_marker = if file["status"].as_str() == Some("removed") {
+                "/dev/null".to_string()
+            } else {
+                format!("b/{new_path}")
+            };
+            format!("diff --git a/{old_path} b/{new_path}\n--- {old_marker}\n+++ {new_marker}\n{patch}")
+        };
+        if !diff.ends_with('\n') {
+            diff.push('\n');
+        }
+        diff
+    }
+
     fn map_user(json: &Value) -> User {
         User {
             id: json["id"].clone(),
@@ -682,6 +750,24 @@ impl GitPlatform for GitHubAdapter {
             })
             .collect();
 
+        Ok((diff, files))
+    }
+
+    async fn get_compare_diff(
+        &self,
+        owner: &str,
+        repo: &str,
+        base_sha: &str,
+        head_sha: &str,
+    ) -> Result<(String, Vec<PrFile>), AppError> {
+        let base = urlencoding::encode(base_sha);
+        let head = urlencoding::encode(head_sha);
+        let url = format!("{}/repos/{}/{}/compare/{}...{}?per_page=100", self.base_url, owner, repo, base, head);
+        let json = self.get_json::<Value>(&url).await?;
+        let files_json =
+            json["files"].as_array().ok_or_else(|| AppError::Api("GitHub compare 响应缺少 files 字段".into()))?;
+        let files: Vec<PrFile> = files_json.iter().map(Self::map_compare_file).collect();
+        let diff = files_json.iter().map(Self::compare_unified_diff).filter(|patch| !patch.is_empty()).collect();
         Ok((diff, files))
     }
 

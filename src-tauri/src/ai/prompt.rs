@@ -46,7 +46,10 @@ pub fn build_system_prompt(focus: Option<&AiReviewFocus>, custom_prompt: Option<
   - major: 可能导致 bug 或严重性能问题
   - minor: 代码风格或可读性改进
   - info: 优化建议
-- 对每一处建议，尽量给出具体的修改代码"#,
+- 最多返回 8 条最重要的建议，按严重程度优先
+- description 和 suggestion 各控制在 120 个汉字以内，不要粘贴完整代码或大段 diff
+- summary 控制在 200 个汉字以内
+- 对每一处建议，给出简洁、可执行的修改方向"#,
         focus_instruction
     )
 }

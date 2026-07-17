@@ -27,6 +27,7 @@ export interface PlatformCapabilities {
   merge_strategies: MergeStrategy[];
   supports_fork_context: boolean;
   supports_issue_auto_close: boolean;
+  supports_compare_diff: boolean;
 }
 
 export interface UpdateProgressEvent {

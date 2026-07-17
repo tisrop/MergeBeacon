@@ -589,6 +589,51 @@ impl GitPlatform for GitLabAdapter {
         Ok((diff, changes))
     }
 
+    async fn get_compare_diff(
+        &self,
+        owner: &str,
+        repo: &str,
+        base_sha: &str,
+        head_sha: &str,
+    ) -> Result<(String, Vec<PrFile>), AppError> {
+        let project_id = urlencoding(owner, repo);
+        let from = urlencoding::encode(base_sha);
+        let to = urlencoding::encode(head_sha);
+        let url = format!(
+            "{}/projects/{}/repository/compare?from={}&to={}&straight=true",
+            self.base_url, project_id, from, to
+        );
+        let json = self.get_json::<Value>(&url).await?;
+        if json["compare_timeout"].as_bool() == Some(true) {
+            return Err(AppError::Api("GitLab compare 超时，无法可靠生成增量评审 Diff".into()));
+        }
+        if json["compare_same_ref"].as_bool() == Some(true) {
+            return Err(AppError::Api("GitLab compare 返回相同提交版本，无法生成增量评审 Diff".into()));
+        }
+        let changes =
+            json["diffs"].as_array().ok_or_else(|| AppError::Api("GitLab compare 响应缺少 diffs 字段".into()))?;
+        let files: Vec<PrFile> = changes
+            .iter()
+            .map(|change| PrFile {
+                filename: change["new_path"].as_str().or_else(|| change["old_path"].as_str()).unwrap_or("").to_string(),
+                status: if change["new_file"].as_bool() == Some(true) {
+                    FileStatus::Added
+                } else if change["deleted_file"].as_bool() == Some(true) {
+                    FileStatus::Removed
+                } else if change["renamed_file"].as_bool() == Some(true) {
+                    FileStatus::Renamed
+                } else {
+                    FileStatus::Modified
+                },
+                patch: change["diff"].as_str().unwrap_or("").to_string(),
+                additions: change["additions"].as_u64().unwrap_or(0) as u32,
+                deletions: change["deletions"].as_u64().unwrap_or(0) as u32,
+            })
+            .collect();
+        let diff = changes.iter().map(Self::unified_diff).filter(|patch| !patch.is_empty()).collect();
+        Ok((diff, files))
+    }
+
     async fn get_pr_file_content(
         &self,
         owner: &str,

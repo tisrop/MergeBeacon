@@ -12,6 +12,7 @@ const github: PlatformCapabilities = {
   merge_strategies: ["merge", "squash", "rebase"],
   supports_fork_context: true,
   supports_issue_auto_close: true,
+  supports_compare_diff: true,
 };
 
 describe("useCapabilityStore", () => {

@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
         merge_strategies: ["merge", "squash", "rebase"],
         supports_fork_context: true,
         supports_issue_auto_close: true,
+        supports_compare_diff: true,
       },
     },
     errors: {},
@@ -96,7 +97,7 @@ const readiness: PrMergeReadiness = {
   blocking_reasons: [],
 };
 
-function mountPage() {
+function mountPage(stubs: Record<string, unknown> = {}) {
   return mount(PrDetailPage, {
     global: {
       stubs: {
@@ -111,6 +112,7 @@ function mountPage() {
         ReviewList: true,
         AiReviewPanel: true,
         MergeReadinessPanel: true,
+        ...stubs,
       },
     },
   });
@@ -206,6 +208,29 @@ describe("PrDetailPage 关闭权限", () => {
     const wrapper = mountPage();
 
     expect(wrapper.get(".merge-main").attributes("disabled")).toBeDefined();
+  });
+
+  it("切换 Diff 后保留 AI 评审面板状态", async () => {
+    const mounted = vi.fn();
+    const wrapper = mountPage({
+      AiReviewPanel: {
+        data: () => ({ result: "" }),
+        mounted,
+        template: `<input data-testid="ai-review-result" v-model="result" />`,
+      },
+    });
+    const tab = (label: string) =>
+      wrapper.findAll(".tabs button").find((button) => button.text() === label)!;
+
+    await tab("AI 评审").trigger("click");
+    await wrapper.get<HTMLInputElement>('[data-testid="ai-review-result"]').setValue("已完成评审");
+    await tab("Diff").trigger("click");
+    await tab("AI 评审").trigger("click");
+
+    expect(mounted).toHaveBeenCalledOnce();
+    expect(wrapper.get<HTMLInputElement>('[data-testid="ai-review-result"]').element.value).toBe(
+      "已完成评审",
+    );
   });
 
   it("仅在 Diff 标签启用侧栏专注模式", async () => {

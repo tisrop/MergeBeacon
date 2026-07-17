@@ -15,6 +15,8 @@ pub struct PlatformCapabilities {
     pub merge_strategies: Vec<MergeStrategy>,
     pub supports_fork_context: bool,
     pub supports_issue_auto_close: bool,
+    /// 平台是否提供可用于增量评审的可靠 base/head compare API。
+    pub supports_compare_diff: bool,
 }
 
 /// 平台协议能力的唯一静态定义入口。
@@ -29,6 +31,7 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             merge_strategies: vec![MergeStrategy::Merge, MergeStrategy::Squash, MergeStrategy::Rebase],
             supports_fork_context: true,
             supports_issue_auto_close: true,
+            supports_compare_diff: true,
         },
         "gitlab" => PlatformCapabilities {
             platform: "gitlab",
@@ -36,6 +39,7 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             merge_strategies: vec![MergeStrategy::Merge, MergeStrategy::Squash],
             supports_fork_context: true,
             supports_issue_auto_close: true,
+            supports_compare_diff: true,
         },
         "gitee" => PlatformCapabilities {
             platform: "gitee",
@@ -43,6 +47,7 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             merge_strategies: vec![MergeStrategy::Merge, MergeStrategy::Squash, MergeStrategy::Rebase],
             supports_fork_context: true,
             supports_issue_auto_close: true,
+            supports_compare_diff: true,
         },
         _ => return None,
     };
@@ -89,6 +94,14 @@ pub trait GitPlatform: Send + Sync {
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError>;
 
     async fn get_pr_diff(&self, owner: &str, repo: &str, pr_number: u64) -> Result<(String, Vec<PrFile>), AppError>;
+
+    async fn get_compare_diff(
+        &self,
+        owner: &str,
+        repo: &str,
+        base_sha: &str,
+        head_sha: &str,
+    ) -> Result<(String, Vec<PrFile>), AppError>;
 
     async fn get_pr_file_content(
         &self,

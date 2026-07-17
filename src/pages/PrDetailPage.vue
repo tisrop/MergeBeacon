@@ -64,7 +64,15 @@ const owner = route.params.owner as string;
 const repo = route.params.repo as string;
 const number = Number(route.params.number);
 
-const activeTab = ref<"diff" | "reviews" | "ai">("diff");
+type PrDetailTab = "diff" | "reviews" | "ai";
+
+const activeTab = ref<PrDetailTab>("diff");
+const aiPanelMounted = ref(false);
+
+function selectTab(tab: PrDetailTab) {
+  activeTab.value = tab;
+  if (tab === "ai") aiPanelMounted.value = true;
+}
 
 const reviewListRef = ref<InstanceType<typeof ReviewList> | null>(null);
 const commentError = ref("");
@@ -470,7 +478,7 @@ onMounted(async () => {
 
     <div v-else-if="pr.currentPr" class="pr-detail">
       <div class="tabs">
-        <button :class="{ active: activeTab === 'diff' }" @click="activeTab = 'diff'">
+        <button :class="{ active: activeTab === 'diff' }" @click="selectTab('diff')">
           <svg
             width="14"
             height="14"
@@ -485,7 +493,7 @@ onMounted(async () => {
           </svg>
           Diff
         </button>
-        <button :class="{ active: activeTab === 'reviews' }" @click="activeTab = 'reviews'">
+        <button :class="{ active: activeTab === 'reviews' }" @click="selectTab('reviews')">
           <svg
             width="14"
             height="14"
@@ -500,7 +508,7 @@ onMounted(async () => {
           </svg>
           评审意见
         </button>
-        <button :class="{ active: activeTab === 'ai' }" @click="activeTab = 'ai'">
+        <button :class="{ active: activeTab === 'ai' }" @click="selectTab('ai')">
           <svg
             width="14"
             height="14"
@@ -543,7 +551,7 @@ onMounted(async () => {
             :diff-files="pr.diff?.files"
           />
         </div>
-        <div v-else-if="activeTab === 'ai'">
+        <div v-if="aiPanelMounted" v-show="activeTab === 'ai'">
           <AiReviewPanel
             :platform="platform"
             :owner="owner"
@@ -554,6 +562,7 @@ onMounted(async () => {
             :context="
               pr.currentPr ? { title: pr.currentPr.summary.title, body: pr.currentPr.body } : null
             "
+            :supports-compare-diff="platformCapabilities?.supports_compare_diff ?? false"
           />
         </div>
       </div>

@@ -8,7 +8,14 @@ import type {
   AiSuggestionAction,
   AiStreamEvent,
 } from "@/types";
-import { aiReview, aiReviewCancel, aiReviewStream, reviewCommentAdd, reviewSubmit } from "@/api";
+import {
+  aiReview,
+  aiReviewCancel,
+  aiReviewStream,
+  prCompareDiff,
+  reviewCommentAdd,
+  reviewSubmit,
+} from "@/api";
 import { getErrorMessage } from "@/utils/error";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import AiSuggestionCard from "./AiSuggestionCard.vue";
@@ -22,18 +29,63 @@ const props = defineProps<{
   diff: string;
   context: PrContext | null;
   headSha: string;
+  supportsCompareDiff: boolean;
 }>();
 
+type AiReviewMode = "full" | "incremental";
+
 const focus = ref<AiReviewFocus>("all");
+const reviewMode = ref<AiReviewMode>("full");
 const useStreaming = ref(true);
 const loading = ref(false);
 const error = ref("");
 const result = ref<AiReviewResult | null>(null);
 const resultHeadSha = ref("");
 const resultFocus = ref<AiReviewFocus | null>(null);
+const resultMode = ref<AiReviewMode>("full");
+const resultBaseSha = ref("");
 const isResultOutdated = computed(
   () => !!result.value && !!resultHeadSha.value && resultHeadSha.value !== props.headSha,
 );
+
+const reviewStorageKey = computed(
+  () =>
+    `mergebeacon:ai-review-head:${props.platform}:${encodeURIComponent(props.owner)}:${encodeURIComponent(props.repo)}:${props.prNumber}`,
+);
+
+function loadLastSuccessfulHeadSha(): string {
+  try {
+    return localStorage.getItem(reviewStorageKey.value) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+const lastSuccessfulHeadSha = ref(loadLastSuccessfulHeadSha());
+const hasIncrementalBase = computed(
+  () =>
+    props.supportsCompareDiff &&
+    !!lastSuccessfulHeadSha.value &&
+    lastSuccessfulHeadSha.value !== props.headSha,
+);
+const incrementalDisabledReason = computed(() => {
+  if (!props.supportsCompareDiff) return "当前平台不提供可靠的提交比较接口";
+  if (!lastSuccessfulHeadSha.value) return "完成一次成功的完整评审后可用";
+  if (lastSuccessfulHeadSha.value === props.headSha) return "当前版本没有新增提交";
+  return "";
+});
+const canStartReview = computed(
+  () => !!props.diff && (reviewMode.value === "full" || hasIncrementalBase.value),
+);
+
+function saveLastSuccessfulHeadSha(headSha: string, storageKey = reviewStorageKey.value) {
+  if (storageKey === reviewStorageKey.value) lastSuccessfulHeadSha.value = headSha;
+  try {
+    localStorage.setItem(storageKey, headSha);
+  } catch {
+    // 本地存储不可用时保留内存状态，不影响当前评审。
+  }
+}
 
 interface ReviewDraft {
   id: string;
@@ -50,7 +102,10 @@ const submittingDrafts = ref(false);
 const draftStatus = ref("");
 const draftError = ref("");
 
-const streamText = ref("");
+const streamReceivedData = ref(false);
+const streamStatusText = computed(() =>
+  streamReceivedData.value ? "正在整理评审摘要和代码建议…" : "正在连接 AI 评审服务…",
+);
 let unlistenChunk: UnlistenFn | null = null;
 let unlistenDone: UnlistenFn | null = null;
 let unlistenError: UnlistenFn | null = null;
@@ -59,6 +114,11 @@ let activeReviewHeadSha = "";
 let activeReviewFocus: AiReviewFocus | null = null;
 let activeReviewDiff = "";
 let activeReviewContext: PrContext | null = null;
+let activeReviewMode: AiReviewMode = "full";
+let activeReviewBaseSha = "";
+let activeReviewStorageKey = "";
+let reviewSequence = 0;
+let disposed = false;
 
 const foci: { value: AiReviewFocus; label: string }[] = [
   { value: "all", label: "全部" },
@@ -67,6 +127,15 @@ const foci: { value: AiReviewFocus; label: string }[] = [
   { value: "logic", label: "逻辑" },
   { value: "code_style", label: "代码风格" },
 ];
+
+const reviewModes = computed(() => [
+  { value: "full", label: "完整变更" },
+  {
+    value: "incremental",
+    label: "仅新增改动",
+    disabled: !hasIncrementalBase.value,
+  },
+]);
 
 async function startReview() {
   if (drafts.value.length > 0) {
@@ -81,19 +150,63 @@ async function startReview() {
     error.value = "当前 PR 缺少提交版本，无法开始 AI 评审";
     return;
   }
+  if (reviewMode.value === "incremental" && !hasIncrementalBase.value) {
+    error.value = incrementalDisabledReason.value || "当前无法生成增量评审 Diff";
+    return;
+  }
+
+  const sequence = ++reviewSequence;
+  const reviewPlatform = props.platform;
+  const reviewOwner = props.owner;
+  const reviewRepo = props.repo;
+  const reviewStorageKeySnapshot = reviewStorageKey.value;
+  const reviewHeadSha = props.headSha;
+  const reviewDiff = props.diff;
+  const reviewContext = props.context;
 
   await cancelActiveReview();
+  if (disposed || sequence !== reviewSequence) return;
   cleanupListeners();
   loading.value = true;
   error.value = "";
+  draftError.value = "";
+  streamReceivedData.value = false;
+  activeReviewHeadSha = reviewHeadSha;
+  activeReviewStorageKey = reviewStorageKeySnapshot;
+  activeReviewFocus = focus.value;
+  activeReviewContext = reviewContext;
+  activeReviewMode = reviewMode.value;
+  activeReviewBaseSha = reviewMode.value === "incremental" ? lastSuccessfulHeadSha.value : "";
+
+  try {
+    if (activeReviewMode === "incremental") {
+      const compared = await prCompareDiff(
+        reviewPlatform,
+        reviewOwner,
+        reviewRepo,
+        activeReviewBaseSha,
+        activeReviewHeadSha,
+      );
+      if (!compared.diff.trim()) {
+        throw new Error("平台未返回可评审的新增文本 Diff，未自动改用完整评审");
+      }
+      activeReviewDiff = compared.diff;
+    } else {
+      activeReviewDiff = reviewDiff;
+    }
+  } catch (e) {
+    if (disposed || sequence !== reviewSequence) return;
+    loading.value = false;
+    error.value = getErrorMessage(e, "获取增量评审 Diff 失败");
+    return;
+  }
+  if (disposed || sequence !== reviewSequence) return;
+
   result.value = null;
   resultHeadSha.value = "";
   resultFocus.value = null;
-  streamText.value = "";
-  activeReviewHeadSha = props.headSha;
-  activeReviewFocus = focus.value;
-  activeReviewDiff = props.diff;
-  activeReviewContext = props.context;
+  resultMode.value = activeReviewMode;
+  resultBaseSha.value = activeReviewBaseSha;
 
   if (useStreaming.value) {
     await startStreamingReview();
@@ -114,6 +227,9 @@ async function startNonStreamingReview() {
     });
     resultHeadSha.value = reviewHeadSha;
     resultFocus.value = reviewFocus;
+    resultMode.value = activeReviewMode;
+    resultBaseSha.value = activeReviewBaseSha;
+    saveLastSuccessfulHeadSha(reviewHeadSha, activeReviewStorageKey);
   } catch (e) {
     error.value = getErrorMessage(e, "AI 评审失败");
   } finally {
@@ -127,7 +243,7 @@ async function startStreamingReview() {
   try {
     unlistenChunk = await listen<AiStreamEvent<string>>("ai-review-chunk", (event) => {
       if (event.payload.request_id !== activeRequestId) return;
-      streamText.value += event.payload.payload;
+      streamReceivedData.value = true;
     });
 
     unlistenDone = await listen<AiStreamEvent<AiReviewResult>>("ai-review-done", (event) => {
@@ -135,6 +251,9 @@ async function startStreamingReview() {
       result.value = event.payload.payload;
       resultHeadSha.value = activeReviewHeadSha;
       resultFocus.value = activeReviewFocus;
+      resultMode.value = activeReviewMode;
+      resultBaseSha.value = activeReviewBaseSha;
+      saveLastSuccessfulHeadSha(activeReviewHeadSha, activeReviewStorageKey);
       activeRequestId = null;
       loading.value = false;
       cleanupListeners();
@@ -185,6 +304,8 @@ function cleanupListeners() {
 }
 
 onUnmounted(() => {
+  disposed = true;
+  reviewSequence += 1;
   void cancelActiveReview().finally(cleanupListeners);
 });
 
@@ -297,19 +418,28 @@ async function submitDrafts() {
 <template>
   <div class="ai-panel">
     <div class="ai-toolbar">
+      <div class="review-mode-select">
+        <label for="ai-review-mode">范围:</label>
+        <div class="review-mode-control">
+          <AppSelect id="ai-review-mode" v-model="reviewMode" size="sm" :options="reviewModes" />
+        </div>
+      </div>
+      <div v-if="!hasIncrementalBase" class="incremental-hint" role="status">
+        增量评审：{{ incrementalDisabledReason }}
+      </div>
       <div class="focus-select">
         <label>聚焦:</label>
         <AppSelect v-model="focus" :options="foci" />
       </div>
 
-      <label class="stream-toggle">
+      <label class="stream-toggle" title="边生成边接收评审结果，不展示原始 JSON">
         <input type="checkbox" v-model="useStreaming" />
-        流式输出
+        实时生成
       </label>
 
       <button
         class="btn btn-primary"
-        :disabled="(loading && !useStreaming) || !diff"
+        :disabled="(loading && !useStreaming) || !canStartReview"
         @click="startReview"
       >
         <svg
@@ -328,25 +458,22 @@ async function submitDrafts() {
       </button>
     </div>
 
-    <!-- Streaming live preview -->
-    <div v-if="loading && useStreaming && streamText" class="stream-preview">
+    <!-- Streaming progress: keep the transport detail out of the user-facing review UI. -->
+    <div v-if="loading && useStreaming" class="stream-preview" role="status" aria-live="polite">
       <div class="stream-label">
         <span class="stream-dot" />
-        实时输出中...
+        {{ streamStatusText }}
       </div>
-      <pre class="stream-content">{{ streamText }}</pre>
+      <div class="stream-progress" aria-hidden="true">
+        <span :class="{ active: streamReceivedData }" />
+      </div>
+      <p class="stream-hint">评审完成后将显示结构化摘要和代码建议</p>
     </div>
 
     <!-- Non-streaming loading -->
-    <div v-if="loading && !useStreaming && !streamText" class="loading-state">
+    <div v-if="loading && !useStreaming" class="loading-state">
       <div class="spinner" />
       <p>AI 正在分析代码变更，请稍候...</p>
-    </div>
-
-    <!-- Streaming loading without content yet -->
-    <div v-if="loading && useStreaming && !streamText" class="loading-state">
-      <div class="spinner" />
-      <p>AI 正在连接，请稍候...</p>
     </div>
 
     <div v-if="error" class="error-box">
@@ -360,6 +487,14 @@ async function submitDrafts() {
       <div class="review-metadata">
         <span
           >评审版本：<code>{{ resultHeadSha.slice(0, 12) }}</code></span
+        >
+        <span
+          >评审范围：{{
+            resultMode === "incremental" ? "上次成功评审后的新增改动" : "完整变更"
+          }}</span
+        >
+        <span v-if="resultBaseSha"
+          >基线版本：<code>{{ resultBaseSha.slice(0, 12) }}</code></span
         >
         <span v-if="resultFocus"
           >聚焦范围：{{ foci.find((item) => item.value === resultFocus)?.label }}</span
@@ -463,10 +598,29 @@ async function submitDrafts() {
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
+  flex-wrap: wrap;
   padding: var(--space-3);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
+}
+
+.review-mode-select {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+
+.review-mode-control {
+  width: 124px;
+}
+
+.incremental-hint {
+  max-width: 260px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .focus-select {
@@ -546,18 +700,41 @@ async function submitDrafts() {
   }
 }
 
-.stream-content {
-  padding: var(--space-4);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 400px;
-  overflow-y: auto;
-  background: var(--color-surface-hover);
+.stream-progress {
+  height: 4px;
+  margin: 0 var(--space-3);
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-border-light);
+}
+
+.stream-progress span {
+  display: block;
+  width: 30%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  animation: stream-progress 1.6s ease-in-out infinite;
+}
+
+.stream-progress span.active {
+  width: 62%;
+}
+
+.stream-hint {
   margin: 0;
-  color: var(--color-text);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+@keyframes stream-progress {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(180%);
+  }
 }
 
 .error-box {
