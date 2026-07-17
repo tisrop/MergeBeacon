@@ -104,7 +104,7 @@ function mountPage(stubs: Record<string, unknown> = {}) {
         AppLayout: {
           props: { isDiffFocusMode: Boolean },
           template: `<main data-testid="app-layout" :data-focus-mode="isDiffFocusMode ? 'true' : 'false'">
-            <slot name="header" /><slot />
+            <slot name="header" /><div class="content-body"><slot /></div>
           </main>`,
         },
         DiffViewer: true,
@@ -266,8 +266,19 @@ describe("PrDetailPage 关闭权限", () => {
     const aiTab = wrapper.findAll(".tabs button").find((button) => button.text() === "AI 评审");
     expect(aiTab).toBeDefined();
     await aiTab!.trigger("click");
+    const contentBody = wrapper.get<HTMLElement>(".content-body");
+    const tabs = wrapper.get<HTMLElement>(".tabs");
+    contentBody.element.scrollTop = 480;
+    contentBody.element.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    tabs.element.getBoundingClientRect = () => ({ top: -480 }) as DOMRect;
+
     await wrapper.get('[data-testid="locate-ai-suggestion"]').trigger("click");
 
+    const returnToAiButton = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text() === "返回 AI 评审");
+    expect(returnToAiButton).toBeDefined();
+    expect(contentBody.element.scrollTop).toBe(0);
     expect(wrapper.get('[data-testid="diff-location-request"]').text()).toContain("src/main.ts:18");
     expect(
       wrapper
@@ -280,6 +291,16 @@ describe("PrDetailPage 关闭权限", () => {
     expect(wrapper.find(".diff-location-error").exists()).toBe(false);
     await wrapper.get('[data-testid="emit-location-failure"]').trigger("click");
     expect(wrapper.get(".diff-location-error").text()).toContain("目标行不存在");
+
+    await returnToAiButton!.trigger("click");
+    expect(contentBody.element.scrollTop).toBe(480);
+    expect(wrapper.get('[data-testid="locate-ai-suggestion"]').isVisible()).toBe(true);
+    expect(
+      wrapper
+        .findAll(".tabs button")
+        .find((button) => button.text() === "AI 评审")
+        ?.classes(),
+    ).toContain("active");
   });
 
   it("仅在 Diff 标签启用侧栏专注模式", async () => {

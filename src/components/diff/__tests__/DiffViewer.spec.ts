@@ -286,6 +286,38 @@ describe("DiffViewer 受控标准 patch", () => {
     ]);
   });
 
+  it("定位 AI 建议时只滚动 Diff 内部容器", async () => {
+    const wrapper = await mountViewer(standardizedDiff);
+    const scrollRegion = wrapper.get<HTMLElement>(".diff-scroll-region");
+    const targetLine = wrapper.get<HTMLElement>(
+      '.controlled-side-right .controlled-line[data-line="2"]',
+    );
+    const outerScroll = vi.fn();
+
+    Object.defineProperty(targetLine.element, "scrollIntoView", {
+      configurable: true,
+      value: outerScroll,
+    });
+    Object.defineProperty(scrollRegion.element, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    scrollRegion.element.scrollTop = 40;
+    scrollRegion.element.getBoundingClientRect = () => ({ top: 100, height: 400 }) as DOMRect;
+    targetLine.element.getBoundingClientRect = () => ({ top: 300, height: 20 }) as DOMRect;
+
+    await wrapper.setProps({
+      locationRequest: { id: 8, path: "src/components/App.ts", line: 2 },
+    });
+    await flushPromises();
+
+    expect(outerScroll).not.toHaveBeenCalled();
+    expect(scrollRegion.element.scrollTop).toBe(50);
+    expect(wrapper.emitted("locationResult")?.at(-1)).toEqual([
+      { id: 8, success: true, message: null },
+    ]);
+  });
+
   it("变更后行不存在时回退定位变更前的删除行", async () => {
     const wrapper = await mountViewer(standardizedDiff, {
       locationRequest: { id: 2, path: "src/components/App.ts", line: 2 },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, watch } from "vue";
+import { onMounted, ref, computed, watch, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
@@ -75,10 +75,41 @@ type PrDetailTab = "diff" | "reviews" | "ai";
 
 const activeTab = ref<PrDetailTab>("diff");
 const aiPanelMounted = ref(false);
+const locatingAiSuggestion = ref(false);
+const tabsRef = ref<HTMLElement | null>(null);
+let aiReviewScrollTop: number | null = null;
+
+function contentScrollContainer(): HTMLElement | null {
+  return tabsRef.value?.closest<HTMLElement>(".content-body") ?? null;
+}
+
+function scrollTabBarIntoView(): void {
+  const tabs = tabsRef.value;
+  const container = contentScrollContainer();
+  if (!tabs || !container) return;
+  const tabsRect = tabs.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  container.scrollTop = Math.max(0, container.scrollTop + tabsRect.top - containerRect.top);
+}
 
 function selectTab(tab: PrDetailTab) {
+  const returningToAiSuggestion = tab === "ai" && locatingAiSuggestion.value;
   activeTab.value = tab;
-  if (tab === "ai") aiPanelMounted.value = true;
+  if (tab === "ai") {
+    aiPanelMounted.value = true;
+    locatingAiSuggestion.value = false;
+    if (returningToAiSuggestion && aiReviewScrollTop != null) {
+      const savedScrollTop = aiReviewScrollTop;
+      aiReviewScrollTop = null;
+      void nextTick(() => {
+        const container = contentScrollContainer();
+        if (container) container.scrollTop = savedScrollTop;
+      });
+    }
+  } else if (tab !== "diff") {
+    locatingAiSuggestion.value = false;
+    aiReviewScrollTop = null;
+  }
 }
 
 const diffLocationRequest = ref<DiffLocationRequest | null>(null);
@@ -87,6 +118,7 @@ let diffLocationRequestId = 0;
 
 function handleAiSuggestionLocate(suggestion: AiSuggestion): void {
   const path = suggestion.file.trim();
+  aiReviewScrollTop = contentScrollContainer()?.scrollTop ?? null;
   diffLocationError.value = "";
   diffLocationRequest.value = {
     id: ++diffLocationRequestId,
@@ -94,6 +126,8 @@ function handleAiSuggestionLocate(suggestion: AiSuggestion): void {
     line: suggestion.line_start ?? suggestion.line_end ?? null,
   };
   selectTab("diff");
+  locatingAiSuggestion.value = true;
+  void nextTick(scrollTabBarIntoView);
 }
 
 function handleDiffLocationResult(result: DiffLocationResult): void {
@@ -504,7 +538,7 @@ onMounted(async () => {
     </div>
 
     <div v-else-if="pr.currentPr" class="pr-detail">
-      <div class="tabs">
+      <div ref="tabsRef" class="tabs">
         <button :class="{ active: activeTab === 'diff' }" @click="selectTab('diff')">
           <svg
             width="14"
@@ -549,7 +583,7 @@ onMounted(async () => {
             <path d="M12 2a4 4 0 0 1 4 4c0 2-2 4-4 4s-4-2-4-4a4 4 0 0 1 4-4z" />
             <path d="M12 14c-4.42 0-8 1.79-8 4v2h16v-2c0-2.21-3.58-4-8-4z" />
           </svg>
-          AI 评审
+          {{ locatingAiSuggestion && activeTab === "diff" ? "返回 AI 评审" : "AI 评审" }}
         </button>
       </div>
 

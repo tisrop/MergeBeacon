@@ -282,13 +282,38 @@ function findControlledLineElement(side: DiffSide, line: number): HTMLElement | 
   );
 }
 
+function scrollElementWithinContainer(
+  element: HTMLElement,
+  container: HTMLElement,
+  alignment: "center" | "nearest",
+): void {
+  const elementRect = element.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const elementTop = container.scrollTop + elementRect.top - containerRect.top;
+  const elementBottom = elementTop + elementRect.height;
+  const viewportTop = container.scrollTop;
+  const viewportBottom = viewportTop + container.clientHeight;
+
+  if (alignment === "nearest") {
+    if (elementTop < viewportTop) container.scrollTop = elementTop;
+    else if (elementBottom > viewportBottom) {
+      container.scrollTop = elementBottom - container.clientHeight;
+    }
+    return;
+  }
+
+  container.scrollTop = Math.max(
+    0,
+    elementTop - Math.max(0, (container.clientHeight - elementRect.height) / 2),
+  );
+}
+
 function scrollSelectedTreeRowIntoView(path: string): void {
   const row = Array.from(
     workspaceRef.value?.querySelectorAll<HTMLElement>(".tree-row[data-file-path]") ?? [],
   ).find((candidate) => candidate.dataset.filePath === path);
-  if (row && typeof row.scrollIntoView === "function") {
-    row.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }
+  const tree = row?.closest<HTMLElement>(".file-tree");
+  if (row && tree) scrollElementWithinContainer(row, tree, "nearest");
 }
 
 function emitLocationFailure(request: DiffLocationRequest, message: string): void {
@@ -352,9 +377,13 @@ async function locateDiffRequest(request: DiffLocationRequest): Promise<void> {
     emitLocationFailure(request, `文件 ${resolved.file.filename} 的目标行暂时无法显示`);
     return;
   }
-  if (typeof lineElement.scrollIntoView === "function") {
-    lineElement.scrollIntoView({ block: "center", inline: "nearest" });
+  const diffScroll = diffScrollRef.value;
+  if (!diffScroll) {
+    highlightedLocation.value = null;
+    emitLocationFailure(request, `文件 ${resolved.file.filename} 的滚动容器暂时不可用`);
+    return;
   }
+  scrollElementWithinContainer(lineElement, diffScroll, "center");
   emit("locationResult", { id: request.id, success: true, message: null });
 }
 
