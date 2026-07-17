@@ -10,7 +10,7 @@ const config = ref<AiConfig>({
   api_key_configured: false,
   system_prompt: null,
   temperature: 0.3,
-  max_tokens: 4096,
+  max_tokens: 8192,
 });
 
 const newApiKey = ref("");
@@ -285,6 +285,7 @@ async function handleTest() {
     <div class="field">
       <label>Max Tokens</label>
       <input v-model.number="config.max_tokens" class="input" type="number" min="256" max="32768" />
+      <p class="hint">评审结果需要完整 JSON；若提示输出不完整，可适当提高此值。</p>
     </div>
 
     <div class="actions">

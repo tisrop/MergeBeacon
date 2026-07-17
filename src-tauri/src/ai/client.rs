@@ -44,6 +44,29 @@ where
     Ok(accumulated)
 }
 
+fn map_review_json_error(error: serde_json::Error) -> AppError {
+    if error.is_eof() {
+        AppError::Ai(
+            "AI 返回的评审 JSON 不完整，可能已达到 Max Tokens 上限。请提高 AI 设置中的 Max Tokens，或缩小评审范围后重试"
+                .to_string(),
+        )
+    } else {
+        AppError::Ai(format!("AI 返回的评审结果不是有效 JSON（{error}）。请确认当前模型支持按要求输出 JSON 后重试"))
+    }
+}
+
+fn contains_complete_review_json(trailing: &str) -> bool {
+    trailing.char_indices().any(|(index, character)| {
+        if character != '{' {
+            return false;
+        }
+        serde_json::Deserializer::from_str(&trailing[index..])
+            .into_iter::<AiReviewResult>()
+            .next()
+            .is_some_and(|result| result.is_ok())
+    })
+}
+
 impl AiClient {
     pub fn new(endpoint: String, model: String, api_key: String) -> Self {
         Self { endpoint: endpoint.trim_end_matches('/').to_string(), model, api_key, client: reqwest::Client::new() }
@@ -174,24 +197,24 @@ impl AiClient {
         self.parse_review_response(&response)
     }
 
-    /// Parse the AI model's JSON response into AiReviewResult
+    /// Parse the first complete review JSON object from the model response.
+    /// Providers sometimes wrap JSON in Markdown or append a short explanation. A second complete
+    /// JSON object is rejected because choosing one silently could apply conflicting suggestions.
     fn parse_review_response(&self, response: &str) -> Result<AiReviewResult, AppError> {
-        let json_str = if let Some(start) = response.find("```json") {
-            let after_start = &response[start + 7..];
-            if let Some(end) = after_start.find("```") {
-                &after_start[..end]
-            } else {
-                after_start
-            }
-        } else if let Some(start) = response.find('{') {
-            &response[start..]
-        } else {
-            response
-        };
+        let candidate = response.find('{').map_or(response.trim(), |start| &response[start..]);
+        if candidate.trim().is_empty() {
+            return Err(AppError::Ai("AI 未返回评审 JSON。请确认当前模型支持按要求输出 JSON 后重试".to_string()));
+        }
 
-        let trimmed = json_str.trim();
-        let result: AiReviewResult = serde_json::from_str(trimmed)
-            .map_err(|e| AppError::Ai(format!("Failed to parse AI response: {}\n\nRaw response: {}", e, response)))?;
+        let mut values = serde_json::Deserializer::from_str(candidate).into_iter::<AiReviewResult>();
+        let result = values
+            .next()
+            .ok_or_else(|| AppError::Ai("AI 未返回评审 JSON。请确认当前模型支持按要求输出 JSON 后重试".to_string()))?
+            .map_err(map_review_json_error)?;
+        let trailing = &candidate[values.byte_offset()..];
+        if contains_complete_review_json(trailing) {
+            return Err(AppError::Ai("AI 返回了多个评审 JSON，无法确定应使用哪一份结果。请重试本次评审".to_string()));
+        }
 
         Ok(result)
     }
@@ -252,7 +275,7 @@ impl AiClient {
 mod tests {
     use futures::stream;
 
-    use super::consume_sse_stream;
+    use super::{consume_sse_stream, AiClient};
 
     fn delta(content: &str) -> String {
         format!(r#"{{"choices":[{{"delta":{{"content":"{content}"}}}}]}}"#)
@@ -291,5 +314,51 @@ mod tests {
         let error =
             consume_sse_stream(stream::iter(vec![Ok(b"data: not-json\n\n".to_vec())]), |_| Ok(())).await.unwrap_err();
         assert!(error.to_string().contains("not-json"));
+    }
+
+    #[test]
+    fn parses_review_wrapped_in_generic_markdown_fence() {
+        let client = AiClient::new("https://example.test/v1".to_string(), "test".to_string(), "secret".to_string());
+        let result = client
+            .parse_review_response("以下是评审结果：\n```\n{\"suggestions\":[],\"summary\":\"完成\"}\n```\n请查收。")
+            .unwrap();
+        assert_eq!(result.summary, "完成");
+        assert!(result.suggestions.is_empty());
+    }
+
+    #[test]
+    fn parses_complete_review_with_trailing_explanation() {
+        let client = AiClient::new("https://example.test/v1".to_string(), "test".to_string(), "secret".to_string());
+        let result = client
+            .parse_review_response(
+                r#"{"suggestions":[],"summary":"完成"}
+以上为本次评审结果。"#,
+            )
+            .unwrap();
+        assert_eq!(result.summary, "完成");
+    }
+
+    #[test]
+    fn rejects_multiple_complete_review_objects() {
+        let client = AiClient::new("https://example.test/v1".to_string(), "test".to_string(), "secret".to_string());
+        let error = client
+            .parse_review_response(
+                r#"{"suggestions":[],"summary":"第一份"}
+{"suggestions":[],"summary":"第二份"}"#,
+            )
+            .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("多个评审 JSON"));
+        assert!(!message.contains("第一份"));
+        assert!(!message.contains("第二份"));
+    }
+
+    #[test]
+    fn reports_truncated_review_without_echoing_model_output() {
+        let client = AiClient::new("https://example.test/v1".to_string(), "test".to_string(), "secret".to_string());
+        let error = client.parse_review_response(r#"{"suggestions":[],"summary":"评审结果尚未完成"#).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("Max Tokens"));
+        assert!(!message.contains("评审结果尚未完成"));
     }
 }

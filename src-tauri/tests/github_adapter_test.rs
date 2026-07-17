@@ -188,6 +188,67 @@ async fn test_github_get_pr_diff() {
 }
 
 #[tokio::test]
+async fn test_github_compare_diff_normalizes_text_and_rename_files() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/compare/base-sha...head-sha"))
+        .and(query_param("per_page", "100"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "files": [
+                {
+                    "filename": "src/main.rs",
+                    "status": "modified",
+                    "patch": "@@ -1 +1 @@\n-old\n+new",
+                    "additions": 1,
+                    "deletions": 1
+                },
+                {
+                    "filename": "src/new-name.rs",
+                    "previous_filename": "src/old-name.rs",
+                    "status": "renamed",
+                    "patch": null,
+                    "additions": 0,
+                    "deletions": 0
+                }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let (diff, files) = adapter
+        .get_compare_diff("octocat", "hello-world", "base-sha", "head-sha")
+        .await
+        .expect("should compare commits");
+    let patches = mergebeacon_lib::patch::standardize_patches(&diff, &files);
+
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0].filename, "src/main.rs");
+    assert!(diff.contains("diff --git a/src/main.rs b/src/main.rs"));
+    assert!(diff.contains("rename from src/old-name.rs\nrename to src/new-name.rs"));
+    assert!(matches!(files[1].status, mergebeacon_lib::models::FileStatus::Renamed));
+    assert_eq!(patches[1].old_path.as_deref(), Some("src/old-name.rs"));
+    assert_eq!(patches[1].new_path.as_deref(), Some("src/new-name.rs"));
+}
+
+#[tokio::test]
+async fn test_github_compare_diff_rejects_missing_files() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/compare/base...head"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let error =
+        adapter.get_compare_diff("octocat", "hello-world", "base", "head").await.expect_err("missing files must fail");
+
+    assert!(error.to_string().contains("缺少 files 字段"));
+}
+
+#[tokio::test]
 async fn test_github_auth_error() {
     let mock_server = MockServer::start().await;
 

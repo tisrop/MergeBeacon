@@ -27,6 +27,7 @@ export interface PlatformCapabilities {
   merge_strategies: MergeStrategy[];
   supports_fork_context: boolean;
   supports_issue_auto_close: boolean;
+  supports_compare_diff: boolean;
 }
 
 export interface UpdateProgressEvent {
@@ -193,6 +194,18 @@ export interface DiffResult {
   files: PrFile[];
   patch_schema_version: number;
   patches: StandardPatchFile[];
+}
+
+export interface DiffLocationRequest {
+  id: number;
+  path: string;
+  line: number | null;
+}
+
+export interface DiffLocationResult {
+  id: number;
+  success: boolean;
+  message: string | null;
 }
 
 // ── Review ──

@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
         merge_strategies: ["merge", "squash", "rebase"],
         supports_fork_context: true,
         supports_issue_auto_close: true,
+        supports_compare_diff: true,
       },
     },
     errors: {},
@@ -96,14 +97,14 @@ const readiness: PrMergeReadiness = {
   blocking_reasons: [],
 };
 
-function mountPage() {
+function mountPage(stubs: Record<string, unknown> = {}) {
   return mount(PrDetailPage, {
     global: {
       stubs: {
         AppLayout: {
           props: { isDiffFocusMode: Boolean },
           template: `<main data-testid="app-layout" :data-focus-mode="isDiffFocusMode ? 'true' : 'false'">
-            <slot name="header" /><slot />
+            <slot name="header" /><div class="content-body"><slot /></div>
           </main>`,
         },
         DiffViewer: true,
@@ -111,6 +112,7 @@ function mountPage() {
         ReviewList: true,
         AiReviewPanel: true,
         MergeReadinessPanel: true,
+        ...stubs,
       },
     },
   });
@@ -206,6 +208,99 @@ describe("PrDetailPage 关闭权限", () => {
     const wrapper = mountPage();
 
     expect(wrapper.get(".merge-main").attributes("disabled")).toBeDefined();
+  });
+
+  it("切换 Diff 后保留 AI 评审面板状态", async () => {
+    const mounted = vi.fn();
+    const wrapper = mountPage({
+      AiReviewPanel: {
+        data: () => ({ result: "" }),
+        mounted,
+        template: `<input data-testid="ai-review-result" v-model="result" />`,
+      },
+    });
+    const tab = (label: string) =>
+      wrapper.findAll(".tabs button").find((button) => button.text() === label)!;
+
+    await tab("AI 评审").trigger("click");
+    await wrapper.get<HTMLInputElement>('[data-testid="ai-review-result"]').setValue("已完成评审");
+    await tab("Diff").trigger("click");
+    await tab("AI 评审").trigger("click");
+
+    expect(mounted).toHaveBeenCalledOnce();
+    expect(wrapper.get<HTMLInputElement>('[data-testid="ai-review-result"]').element.value).toBe(
+      "已完成评审",
+    );
+  });
+
+  it("从 AI 建议切换到 Diff 并传递受控定位请求", async () => {
+    const wrapper = mountPage({
+      AiReviewPanel: {
+        emits: ["locateSuggestion"],
+        template: `<button data-testid="locate-ai-suggestion" @click="$emit('locateSuggestion', {
+          file: 'src/main.ts',
+          line_start: 18,
+          line_end: 18,
+          severity: 'major',
+          category: '逻辑',
+          description: '测试建议',
+          suggestion: null
+        })">定位建议</button>`,
+      },
+      DiffViewer: {
+        props: ["locationRequest"],
+        emits: ["locationResult"],
+        template: `<section data-testid="diff-location-request">
+          <span>{{ locationRequest?.path }}:{{ locationRequest?.line }}</span>
+          <button
+            data-testid="emit-stale-location-result"
+            @click="$emit('locationResult', { id: 0, success: false, message: '旧请求错误' })"
+          >旧结果</button>
+          <button
+            data-testid="emit-location-failure"
+            @click="$emit('locationResult', { id: locationRequest.id, success: false, message: '目标行不存在' })"
+          >失败</button>
+        </section>`,
+      },
+    });
+    const aiTab = wrapper.findAll(".tabs button").find((button) => button.text() === "AI 评审");
+    expect(aiTab).toBeDefined();
+    await aiTab!.trigger("click");
+    const contentBody = wrapper.get<HTMLElement>(".content-body");
+    const tabs = wrapper.get<HTMLElement>(".tabs");
+    contentBody.element.scrollTop = 480;
+    contentBody.element.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+    tabs.element.getBoundingClientRect = () => ({ top: -480 }) as DOMRect;
+
+    await wrapper.get('[data-testid="locate-ai-suggestion"]').trigger("click");
+
+    const returnToAiButton = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text() === "返回 AI 评审");
+    expect(returnToAiButton).toBeDefined();
+    expect(contentBody.element.scrollTop).toBe(0);
+    expect(wrapper.get('[data-testid="diff-location-request"]').text()).toContain("src/main.ts:18");
+    expect(
+      wrapper
+        .findAll(".tabs button")
+        .find((button) => button.text() === "Diff")
+        ?.classes(),
+    ).toContain("active");
+
+    await wrapper.get('[data-testid="emit-stale-location-result"]').trigger("click");
+    expect(wrapper.find(".diff-location-error").exists()).toBe(false);
+    await wrapper.get('[data-testid="emit-location-failure"]').trigger("click");
+    expect(wrapper.get(".diff-location-error").text()).toContain("目标行不存在");
+
+    await returnToAiButton!.trigger("click");
+    expect(contentBody.element.scrollTop).toBe(480);
+    expect(wrapper.get('[data-testid="locate-ai-suggestion"]').isVisible()).toBe(true);
+    expect(
+      wrapper
+        .findAll(".tabs button")
+        .find((button) => button.text() === "AI 评审")
+        ?.classes(),
+    ).toContain("active");
   });
 
   it("仅在 Diff 标签启用侧栏专注模式", async () => {

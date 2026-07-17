@@ -3,11 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiSuggestion } from "@/types";
 import AiReviewPanel from "../AiReviewPanel.vue";
 import AiSuggestionCard from "../AiSuggestionCard.vue";
-import { aiReviewCancel, aiReviewStream, reviewCommentAdd, reviewSubmit } from "@/api";
+import {
+  aiReviewCancel,
+  aiReviewStream,
+  prCompareDiff,
+  reviewCommentAdd,
+  reviewSubmit,
+} from "@/api";
 
 type EventCallback = (event: { payload: unknown }) => void;
 const listeners = new Map<string, EventCallback[]>();
 const unlisteners: ReturnType<typeof vi.fn>[] = [];
+const storedReviews = new Map<string, string>();
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (event: string, callback: EventCallback) => {
@@ -21,6 +28,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@/api", () => ({
   aiReview: vi.fn(),
   aiReviewStream: vi.fn().mockResolvedValue(undefined),
+  prCompareDiff: vi.fn(),
   aiReviewCancel: vi.fn().mockResolvedValue(undefined),
   reviewCommentAdd: vi.fn().mockResolvedValue(undefined),
   reviewSubmit: vi.fn().mockResolvedValue(undefined),
@@ -51,7 +59,9 @@ function finishReview(
   });
 }
 
-function mountPanel() {
+type AiReviewPanelProps = InstanceType<typeof AiReviewPanel>["$props"];
+
+function mountPanel(overrides: Partial<AiReviewPanelProps> = {}) {
   return mount(AiReviewPanel, {
     props: {
       platform: "github",
@@ -61,11 +71,8 @@ function mountPanel() {
       diff: "+changed",
       context: null,
       headSha: "head-sha-1",
-    },
-    global: {
-      stubs: {
-        AppSelect: true,
-      },
+      supportsCompareDiff: true,
+      ...overrides,
     },
   });
 }
@@ -75,6 +82,13 @@ describe("AiReviewPanel", () => {
     vi.clearAllMocks();
     listeners.clear();
     unlisteners.length = 0;
+    storedReviews.clear();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn((key: string) => storedReviews.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => storedReviews.set(key, value)),
+      removeItem: vi.fn((key: string) => storedReviews.delete(key)),
+      clear: vi.fn(() => storedReviews.clear()),
+    });
     vi.mocked(aiReviewStream).mockResolvedValue(undefined);
     vi.mocked(aiReviewCancel).mockResolvedValue(undefined);
     vi.mocked(reviewCommentAdd).mockResolvedValue(
@@ -84,6 +98,179 @@ describe("AiReviewPanel", () => {
     vi.stubGlobal("crypto", {
       randomUUID: vi.fn().mockReturnValueOnce("request-1").mockReturnValueOnce("request-2"),
     });
+  });
+
+  it("完整评审成功后保存当前提交版本", async () => {
+    const wrapper = mountPanel();
+
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+    finishReview([]);
+    await wrapper.vm.$nextTick();
+
+    expect(localStorage.getItem("mergebeacon:ai-review-head:github:octocat:hello-world:42")).toBe(
+      "head-sha-1",
+    );
+    expect(wrapper.text()).toContain("评审版本：head-sha-1");
+  });
+
+  it("点击建议位置时向页面发出定位请求，并禁用旧版本建议", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+    finishReview();
+    await wrapper.vm.$nextTick();
+
+    const locationButton = wrapper.get(".file-loc");
+    await locationButton.trigger("click");
+    expect(wrapper.emitted("locateSuggestion")?.at(-1)).toEqual([
+      expect.objectContaining({ file: "src/main.ts", line_start: 10 }),
+    ]);
+
+    await wrapper.setProps({ headSha: "head-sha-2" });
+    expect(wrapper.get(".file-loc").attributes("disabled")).toBeDefined();
+  });
+
+  it("流式评审只展示进度，不暴露原始 JSON", async () => {
+    const wrapper = mountPanel();
+
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+    latestListener("ai-review-chunk")?.({
+      payload: {
+        request_id: "request-1",
+        payload: '{"summary":"内部结构化结果"}',
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find(".stream-content").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('"summary"');
+    expect(wrapper.text()).toContain("正在整理评审摘要和代码建议");
+  });
+
+  it("使用上次成功版本与当前版本生成增量 Diff", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+    finishReview([]);
+    await wrapper.vm.$nextTick();
+
+    await wrapper.setProps({ headSha: "head-sha-2", diff: "+complete-change" });
+    vi.mocked(prCompareDiff).mockResolvedValueOnce({
+      diff: "+incremental-change",
+      files: [],
+      patch_schema_version: 1,
+      patches: [],
+    });
+    await wrapper.get("#ai-review-mode").trigger("click");
+    await wrapper.get(".dropdown-option[data-value='incremental']").trigger("click");
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(prCompareDiff).toHaveBeenCalledWith(
+      "github",
+      "octocat",
+      "hello-world",
+      "head-sha-1",
+      "head-sha-2",
+    );
+    expect(aiReviewStream).toHaveBeenLastCalledWith(
+      "request-2",
+      expect.objectContaining({ diff: "+incremental-change" }),
+    );
+    expect(aiReviewStream).not.toHaveBeenLastCalledWith(
+      "request-2",
+      expect.objectContaining({ diff: "+complete-change" }),
+    );
+  });
+
+  it("增量 Diff 获取失败时不启动 AI 且不回退完整评审", async () => {
+    localStorage.setItem(
+      "mergebeacon:ai-review-head:github:octocat:hello-world:42",
+      "head-sha-old",
+    );
+    vi.mocked(prCompareDiff).mockRejectedValueOnce(new Error("compare unavailable"));
+    const wrapper = mountPanel();
+
+    await wrapper.get("#ai-review-mode").trigger("click");
+    await wrapper.get(".dropdown-option[data-value='incremental']").trigger("click");
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get(".error-box").text()).toContain("compare unavailable");
+    expect(aiReviewStream).not.toHaveBeenCalled();
+    expect(prCompareDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("增量 Diff 没有可评审文本时不启动 AI", async () => {
+    localStorage.setItem(
+      "mergebeacon:ai-review-head:github:octocat:hello-world:42",
+      "head-sha-old",
+    );
+    vi.mocked(prCompareDiff).mockResolvedValueOnce({
+      diff: "   ",
+      files: [],
+      patch_schema_version: 1,
+      patches: [],
+    });
+    const wrapper = mountPanel();
+
+    await wrapper.get("#ai-review-mode").trigger("click");
+    await wrapper.get(".dropdown-option[data-value='incremental']").trigger("click");
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get(".error-box").text()).toContain("未自动改用完整评审");
+    expect(aiReviewStream).not.toHaveBeenCalled();
+  });
+
+  it("增量 Diff 请求未完成时卸载组件不会继续启动 AI", async () => {
+    localStorage.setItem(
+      "mergebeacon:ai-review-head:github:octocat:hello-world:42",
+      "head-sha-old",
+    );
+    let resolveCompare!: (value: Awaited<ReturnType<typeof prCompareDiff>>) => void;
+    vi.mocked(prCompareDiff).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCompare = resolve;
+        }),
+    );
+    const wrapper = mountPanel();
+
+    await wrapper.get("#ai-review-mode").trigger("click");
+    await wrapper.get(".dropdown-option[data-value='incremental']").trigger("click");
+    await wrapper.get("button.btn-primary").trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(prCompareDiff).toHaveBeenCalledTimes(1);
+
+    wrapper.unmount();
+    resolveCompare({ diff: "+late-change", files: [], patch_schema_version: 1, patches: [] });
+    await flushPromises();
+
+    expect(aiReviewStream).not.toHaveBeenCalled();
+  });
+
+  it("缺少历史版本或平台不支持 compare 时禁用增量评审", async () => {
+    const withoutHistory = mountPanel();
+    await withoutHistory.get("#ai-review-mode").trigger("click");
+    expect(
+      withoutHistory.get(".dropdown-option[data-value='incremental']").attributes("disabled"),
+    ).toBeDefined();
+    expect(withoutHistory.text()).toContain("完成一次成功的完整评审后可用");
+    withoutHistory.unmount();
+
+    localStorage.setItem(
+      "mergebeacon:ai-review-head:github:octocat:hello-world:42",
+      "head-sha-old",
+    );
+    const unsupported = mountPanel({ supportsCompareDiff: false });
+    await unsupported.get("#ai-review-mode").trigger("click");
+    expect(
+      unsupported.get(".dropdown-option[data-value='incremental']").attributes("disabled"),
+    ).toBeDefined();
+    expect(unsupported.text()).toContain("当前平台不提供可靠的提交比较接口");
   });
 
   it("只消费当前请求事件，并在重新评审和卸载时取消请求", async () => {
@@ -107,7 +294,7 @@ describe("AiReviewPanel", () => {
       payload: { request_id: "request-1", payload: "当前响应" },
     });
     await wrapper.vm.$nextTick();
-    expect(wrapper.text()).toContain("当前响应");
+    expect(wrapper.text()).toContain("正在整理评审摘要和代码建议");
 
     await button.trigger("click");
     await flushPromises();

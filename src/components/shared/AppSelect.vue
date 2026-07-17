@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 
+type SelectOption = { value: string; label: string; disabled?: boolean };
+
 const props = withDefaults(
   defineProps<{
+    id?: string;
     modelValue: string;
-    options: { value: string; label: string }[];
+    options: SelectOption[];
     placeholder?: string;
     size?: "sm" | "md";
   }>(),
@@ -28,15 +31,33 @@ const selectedLabel = computed(() => {
   return match ? match.label : "";
 });
 
+function firstEnabledIndex() {
+  return props.options.findIndex((option) => !option.disabled);
+}
+
+function findEnabledIndex(start: number, direction: 1 | -1) {
+  let index = start;
+  while (index >= 0 && index < props.options.length) {
+    if (!props.options[index].disabled) return index;
+    index += direction;
+  }
+  return -1;
+}
+
 function toggle() {
   open.value = !open.value;
   if (open.value) {
-    highlightIndex.value = props.options.findIndex((o) => o.value === props.modelValue);
+    const selectedIndex = props.options.findIndex((o) => o.value === props.modelValue);
+    highlightIndex.value =
+      selectedIndex >= 0 && !props.options[selectedIndex].disabled
+        ? selectedIndex
+        : firstEnabledIndex();
   }
 }
 
-function select(value: string) {
-  emit("update:modelValue", value);
+function select(option: SelectOption) {
+  if (option.disabled) return;
+  emit("update:modelValue", option.value);
   open.value = false;
 }
 
@@ -45,7 +66,11 @@ function onKeydown(e: KeyboardEvent) {
     if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
       e.preventDefault();
       open.value = true;
-      highlightIndex.value = props.options.findIndex((o) => o.value === props.modelValue);
+      const selectedIndex = props.options.findIndex((o) => o.value === props.modelValue);
+      highlightIndex.value =
+        selectedIndex >= 0 && !props.options[selectedIndex].disabled
+          ? selectedIndex
+          : firstEnabledIndex();
     }
     return;
   }
@@ -56,21 +81,17 @@ function onKeydown(e: KeyboardEvent) {
       break;
     case "ArrowDown":
       e.preventDefault();
-      if (highlightIndex.value < props.options.length - 1) {
-        highlightIndex.value++;
-      }
+      highlightIndex.value = findEnabledIndex(highlightIndex.value + 1, 1);
       break;
     case "ArrowUp":
       e.preventDefault();
-      if (highlightIndex.value > 0) {
-        highlightIndex.value--;
-      }
+      highlightIndex.value = findEnabledIndex(highlightIndex.value - 1, -1);
       break;
     case "Enter":
     case " ":
       e.preventDefault();
       if (highlightIndex.value >= 0 && highlightIndex.value < props.options.length) {
-        select(props.options[highlightIndex.value].value);
+        select(props.options[highlightIndex.value]);
       }
       break;
   }
@@ -87,7 +108,9 @@ function onClickOutside(e: MouseEvent) {
 watch(highlightIndex, async () => {
   await nextTick();
   const el = listRef.value?.children[highlightIndex.value] as HTMLElement | undefined;
-  el?.scrollIntoView({ block: "nearest" });
+  if (el && typeof el.scrollIntoView === "function") {
+    el.scrollIntoView({ block: "nearest" });
+  }
 });
 
 onMounted(() => {
@@ -103,9 +126,11 @@ onUnmounted(() => {
   <div class="app-select-wrap" :class="[size === 'sm' ? 'app-select-wrap-sm' : '']">
     <div
       ref="triggerRef"
+      :id="id"
       class="app-select"
       tabindex="0"
       role="combobox"
+      aria-haspopup="listbox"
       :aria-expanded="open"
       @click="toggle"
       @keydown="onKeydown"
@@ -129,14 +154,18 @@ onUnmounted(() => {
       </svg>
     </div>
 
-    <div v-if="open" ref="listRef" class="dropdown-panel">
+    <div v-if="open" ref="listRef" class="dropdown-panel" role="listbox">
       <button
         v-for="(opt, i) in options"
         :key="opt.value"
+        :data-value="opt.value"
         class="dropdown-option"
         :class="{ selected: opt.value === modelValue }"
-        @click.stop="select(opt.value)"
-        @mouseenter="highlightIndex = i"
+        :disabled="opt.disabled"
+        role="option"
+        :aria-selected="opt.value === modelValue"
+        @click.stop="select(opt)"
+        @mouseenter="!opt.disabled && (highlightIndex = i)"
         type="button"
       >
         {{ opt.label }}
@@ -246,6 +275,16 @@ onUnmounted(() => {
   background: var(--color-primary-light);
   color: var(--color-primary);
   font-weight: 600;
+}
+
+.dropdown-option:disabled {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.dropdown-option:disabled:hover {
+  background: none;
 }
 
 .dropdown-empty {

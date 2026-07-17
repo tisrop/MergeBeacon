@@ -8,6 +8,7 @@ defineProps<{
 
 const emit = defineEmits<{
   action: [action: AiSuggestionAction];
+  locate: [];
 }>();
 
 const severityIcon: Record<Severity, string> = {
@@ -33,7 +34,14 @@ const severityLabel: Record<Severity, string> = {
         {{ severityLabel[suggestion.severity] }}
       </span>
       <span class="category">{{ suggestion.category }}</span>
-      <span class="file-loc">
+      <button
+        class="file-loc"
+        type="button"
+        :disabled="disabled || !suggestion.file.trim()"
+        :title="disabled ? '该建议基于旧版本，无法定位' : '在 Diff 中定位'"
+        :aria-label="`在 Diff 中定位 ${suggestion.file}${suggestion.line_start ? ` 第 ${suggestion.line_start} 行` : ''}`"
+        @click="emit('locate')"
+      >
         <svg
           width="12"
           height="12"
@@ -54,7 +62,7 @@ const severityLabel: Record<Severity, string> = {
             -{{ suggestion.line_end }}
           </template>
         </template>
-      </span>
+      </button>
     </div>
 
     <p class="description">{{ suggestion.description }}</p>
@@ -242,10 +250,30 @@ const severityLabel: Record<Severity, string> = {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
+  min-width: 0;
   margin-left: auto;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
   font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+}
+
+.file-loc:not(:disabled) {
+  cursor: pointer;
+}
+
+.file-loc:not(:disabled):hover {
+  background: var(--color-surface-hover);
+  color: var(--color-primary);
+}
+
+.file-loc:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .description {

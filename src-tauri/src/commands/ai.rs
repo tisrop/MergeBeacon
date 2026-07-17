@@ -45,7 +45,7 @@ pub async fn ai_review(state: State<'_, AppState>, request: AiReviewRequest) -> 
             request.focus.as_ref(),
             config.system_prompt.as_deref(),
             config.temperature.unwrap_or(0.3),
-            config.max_tokens.unwrap_or(4096),
+            config.max_tokens.unwrap_or(8192),
         )
         .await
         .map_err(|e| e.to_string())
@@ -63,7 +63,7 @@ pub async fn ai_review_stream(
     let api_key = state.ai_config.get_api_key().map_err(|e| e.to_string())?;
     let system_prompt = config.system_prompt.clone();
     let temperature = config.temperature.unwrap_or(0.3);
-    let max_tokens = config.max_tokens.unwrap_or(4096);
+    let max_tokens = config.max_tokens.unwrap_or(8192);
     let operation = state.operations.begin_ai().await?;
     let registry = state.ai_tasks.clone();
     let generation = registry.next_generation();

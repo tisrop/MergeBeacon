@@ -148,6 +148,16 @@ export async function prDiff(
   return invoke("pr_diff", { platform, owner, repo, number });
 }
 
+export async function prCompareDiff(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  baseSha: string,
+  headSha: string,
+): Promise<DiffResult> {
+  return invoke("pr_compare_diff", { platform, owner, repo, baseSha, headSha });
+}
+
 export async function prFileContent(
   platform: Platform,
   owner: string,

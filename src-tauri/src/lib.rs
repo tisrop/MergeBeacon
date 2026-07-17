@@ -126,6 +126,7 @@ pub fn run() {
             pr::pr_detail,
             pr::pr_merge_readiness,
             pr::pr_diff,
+            pr::pr_compare_diff,
             pr::pr_file_content,
             pr::pr_merge,
             pr::pr_close,

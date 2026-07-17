@@ -197,16 +197,30 @@ impl GiteeAdapter {
 
     fn unified_diff(value: &Value) -> String {
         let patch = Self::file_patch(value);
-        if patch.is_empty() || patch.starts_with("diff --git ") {
+        if patch.is_empty() {
             return patch;
         }
 
-        let (old_path, new_path) = Self::file_paths(value);
-        let old_marker =
-            if value["status"].as_str() == Some("added") { "/dev/null".to_string() } else { format!("a/{old_path}") };
-        let new_marker =
-            if value["status"].as_str() == Some("removed") { "/dev/null".to_string() } else { format!("b/{new_path}") };
-        format!("diff --git a/{old_path} b/{new_path}\n--- {old_marker}\n+++ {new_marker}\n{patch}")
+        let mut diff = if patch.starts_with("diff --git ") {
+            patch
+        } else {
+            let (old_path, new_path) = Self::file_paths(value);
+            let old_marker = if value["status"].as_str() == Some("added") {
+                "/dev/null".to_string()
+            } else {
+                format!("a/{old_path}")
+            };
+            let new_marker = if value["status"].as_str() == Some("removed") {
+                "/dev/null".to_string()
+            } else {
+                format!("b/{new_path}")
+            };
+            format!("diff --git a/{old_path} b/{new_path}\n--- {old_marker}\n+++ {new_marker}\n{patch}")
+        };
+        if !diff.ends_with('\n') {
+            diff.push('\n');
+        }
+        diff
     }
 
     fn repository_merge_permission(value: &Value) -> Option<bool> {
@@ -613,6 +627,51 @@ impl GitPlatform for GiteeAdapter {
 
         let diff = files_json.iter().map(Self::unified_diff).filter(|patch| !patch.is_empty()).collect::<String>();
 
+        Ok((diff, files))
+    }
+
+    async fn get_compare_diff(
+        &self,
+        owner: &str,
+        repo: &str,
+        base_sha: &str,
+        head_sha: &str,
+    ) -> Result<(String, Vec<PrFile>), AppError> {
+        let base = urlencoding::encode(base_sha);
+        let head = urlencoding::encode(head_sha);
+        let url = format!("{}/repos/{}/{}/compare/{}...{}", self.base_url, owner, repo, base, head);
+        let json = self.get_json::<Value>(&url).await?;
+        let files_json = json["files"]
+            .as_array()
+            .or_else(|| json["changes"].as_array())
+            .ok_or_else(|| AppError::Api("Gitee compare 响应缺少 files/changes 字段".into()))?;
+        let files: Vec<PrFile> = files_json
+            .iter()
+            .map(|file| {
+                let status = match file["status"].as_str().unwrap_or("") {
+                    "added" => FileStatus::Added,
+                    "removed" => FileStatus::Removed,
+                    "renamed" => FileStatus::Renamed,
+                    _ if file["new_file"].as_bool() == Some(true) => FileStatus::Added,
+                    _ if file["deleted_file"].as_bool() == Some(true) => FileStatus::Removed,
+                    _ if file["renamed_file"].as_bool() == Some(true) => FileStatus::Renamed,
+                    _ => FileStatus::Modified,
+                };
+                PrFile {
+                    filename: file["filename"]
+                        .as_str()
+                        .or_else(|| file["new_path"].as_str())
+                        .or_else(|| file["old_path"].as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    status,
+                    patch: Self::file_patch(file),
+                    additions: file["additions"].as_u64().unwrap_or(0) as u32,
+                    deletions: file["deletions"].as_u64().unwrap_or(0) as u32,
+                }
+            })
+            .collect();
+        let diff = files_json.iter().map(Self::unified_diff).filter(|patch| !patch.is_empty()).collect();
         Ok((diff, files))
     }
 
