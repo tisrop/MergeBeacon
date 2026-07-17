@@ -4,6 +4,7 @@ import type {
   Platform,
   AiReviewFocus,
   AiReviewResult,
+  AiSuggestion,
   PrContext,
   AiSuggestionAction,
   AiStreamEvent,
@@ -30,6 +31,10 @@ const props = defineProps<{
   context: PrContext | null;
   headSha: string;
   supportsCompareDiff: boolean;
+}>();
+
+const emit = defineEmits<{
+  locateSuggestion: [suggestion: AiSuggestion];
 }>();
 
 type AiReviewMode = "full" | "incremental";
@@ -528,6 +533,7 @@ async function submitDrafts() {
           :suggestion="s"
           :disabled="isResultOutdated"
           @action="(a: AiSuggestionAction) => onAction(idx, a)"
+          @locate="emit('locateSuggestion', s)"
         />
       </div>
 

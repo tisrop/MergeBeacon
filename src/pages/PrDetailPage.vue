@@ -12,7 +12,14 @@ import ReviewForm from "@/components/review/ReviewForm.vue";
 import ReviewList from "@/components/review/ReviewList.vue";
 import AiReviewPanel from "@/components/ai/AiReviewPanel.vue";
 import MergeReadinessPanel from "@/components/pr/MergeReadinessPanel.vue";
-import type { Platform, MergeStrategy, PrFile } from "@/types";
+import type {
+  AiSuggestion,
+  DiffLocationRequest,
+  DiffLocationResult,
+  MergeStrategy,
+  Platform,
+  PrFile,
+} from "@/types";
 
 function extractDiffHunk(files: PrFile[], path: string, line: number): string | undefined {
   const file = files.find((f) => f.filename === path);
@@ -72,6 +79,26 @@ const aiPanelMounted = ref(false);
 function selectTab(tab: PrDetailTab) {
   activeTab.value = tab;
   if (tab === "ai") aiPanelMounted.value = true;
+}
+
+const diffLocationRequest = ref<DiffLocationRequest | null>(null);
+const diffLocationError = ref("");
+let diffLocationRequestId = 0;
+
+function handleAiSuggestionLocate(suggestion: AiSuggestion): void {
+  const path = suggestion.file.trim();
+  diffLocationError.value = "";
+  diffLocationRequest.value = {
+    id: ++diffLocationRequestId,
+    path,
+    line: suggestion.line_start ?? suggestion.line_end ?? null,
+  };
+  selectTab("diff");
+}
+
+function handleDiffLocationResult(result: DiffLocationResult): void {
+  if (result.id !== diffLocationRequest.value?.id) return;
+  diffLocationError.value = result.success ? "" : (result.message ?? "无法定位该 AI 建议");
 }
 
 const reviewListRef = ref<InstanceType<typeof ReviewList> | null>(null);
@@ -528,6 +555,9 @@ onMounted(async () => {
 
       <div class="tab-content">
         <div v-if="activeTab === 'diff'">
+          <p v-if="diffLocationError" class="error-msg diff-location-error" role="alert">
+            {{ diffLocationError }}
+          </p>
           <DiffViewer
             :diff="pr.diff"
             :platform="platform"
@@ -535,7 +565,9 @@ onMounted(async () => {
             :repo="repo"
             :base-sha="pr.currentPr?.base_sha ?? ''"
             :head-sha="pr.currentPr?.head_sha ?? ''"
+            :location-request="diffLocationRequest"
             @add-comment="handleAddComment"
+            @location-result="handleDiffLocationResult"
           />
           <p v-if="commentError" class="error-msg">{{ commentError }}</p>
           <p v-if="commentSuccess" class="success-msg">✓ 行内评论已提交</p>
@@ -563,6 +595,7 @@ onMounted(async () => {
               pr.currentPr ? { title: pr.currentPr.summary.title, body: pr.currentPr.body } : null
             "
             :supports-compare-diff="platformCapabilities?.supports_compare_diff ?? false"
+            @locate-suggestion="handleAiSuggestionLocate"
           />
         </div>
       </div>
@@ -850,6 +883,15 @@ onMounted(async () => {
   font-size: 12px;
   word-break: break-all;
   opacity: 0.8;
+}
+
+.diff-location-error {
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-light);
+  opacity: 1;
 }
 
 .success-msg {

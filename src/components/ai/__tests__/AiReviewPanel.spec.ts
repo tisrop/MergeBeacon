@@ -114,6 +114,23 @@ describe("AiReviewPanel", () => {
     expect(wrapper.text()).toContain("评审版本：head-sha-1");
   });
 
+  it("点击建议位置时向页面发出定位请求，并禁用旧版本建议", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+    finishReview();
+    await wrapper.vm.$nextTick();
+
+    const locationButton = wrapper.get(".file-loc");
+    await locationButton.trigger("click");
+    expect(wrapper.emitted("locateSuggestion")?.at(-1)).toEqual([
+      expect.objectContaining({ file: "src/main.ts", line_start: 10 }),
+    ]);
+
+    await wrapper.setProps({ headSha: "head-sha-2" });
+    expect(wrapper.get(".file-loc").attributes("disabled")).toBeDefined();
+  });
+
   it("流式评审只展示进度，不暴露原始 JSON", async () => {
     const wrapper = mountPanel();
 

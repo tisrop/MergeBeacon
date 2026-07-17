@@ -196,6 +196,18 @@ export interface DiffResult {
   patches: StandardPatchFile[];
 }
 
+export interface DiffLocationRequest {
+  id: number;
+  path: string;
+  line: number | null;
+}
+
+export interface DiffLocationResult {
+  id: number;
+  success: boolean;
+  message: string | null;
+}
+
 // ── Review ──
 export type ReviewEvent = "approve" | "comment" | "request_changes";
 

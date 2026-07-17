@@ -233,6 +233,55 @@ describe("PrDetailPage 关闭权限", () => {
     );
   });
 
+  it("从 AI 建议切换到 Diff 并传递受控定位请求", async () => {
+    const wrapper = mountPage({
+      AiReviewPanel: {
+        emits: ["locateSuggestion"],
+        template: `<button data-testid="locate-ai-suggestion" @click="$emit('locateSuggestion', {
+          file: 'src/main.ts',
+          line_start: 18,
+          line_end: 18,
+          severity: 'major',
+          category: '逻辑',
+          description: '测试建议',
+          suggestion: null
+        })">定位建议</button>`,
+      },
+      DiffViewer: {
+        props: ["locationRequest"],
+        emits: ["locationResult"],
+        template: `<section data-testid="diff-location-request">
+          <span>{{ locationRequest?.path }}:{{ locationRequest?.line }}</span>
+          <button
+            data-testid="emit-stale-location-result"
+            @click="$emit('locationResult', { id: 0, success: false, message: '旧请求错误' })"
+          >旧结果</button>
+          <button
+            data-testid="emit-location-failure"
+            @click="$emit('locationResult', { id: locationRequest.id, success: false, message: '目标行不存在' })"
+          >失败</button>
+        </section>`,
+      },
+    });
+    const aiTab = wrapper.findAll(".tabs button").find((button) => button.text() === "AI 评审");
+    expect(aiTab).toBeDefined();
+    await aiTab!.trigger("click");
+    await wrapper.get('[data-testid="locate-ai-suggestion"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="diff-location-request"]').text()).toContain("src/main.ts:18");
+    expect(
+      wrapper
+        .findAll(".tabs button")
+        .find((button) => button.text() === "Diff")
+        ?.classes(),
+    ).toContain("active");
+
+    await wrapper.get('[data-testid="emit-stale-location-result"]').trigger("click");
+    expect(wrapper.find(".diff-location-error").exists()).toBe(false);
+    await wrapper.get('[data-testid="emit-location-failure"]').trigger("click");
+    expect(wrapper.get(".diff-location-error").text()).toContain("目标行不存在");
+  });
+
   it("仅在 Diff 标签启用侧栏专注模式", async () => {
     const wrapper = mountPage();
 

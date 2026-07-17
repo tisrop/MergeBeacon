@@ -3,7 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DiffViewer from "@/components/diff/DiffViewer.vue";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
-import type { DiffResult, Platform, PrFileContent } from "@/types";
+import type { DiffLocationRequest, DiffResult, Platform, PrFileContent } from "@/types";
 
 const { prFileContentMock } = vi.hoisted(() => ({
   prFileContentMock: vi.fn(),
@@ -63,6 +63,7 @@ interface ContextProps {
   repo?: string;
   baseSha?: string;
   headSha?: string;
+  locationRequest?: DiffLocationRequest | null;
 }
 
 async function mountViewer(value = diff, extraProps: ContextProps = {}) {
@@ -195,6 +196,7 @@ const contextProps: Required<ContextProps> = {
   repo: "demo",
   baseSha: "base-sha",
   headSha: "head-sha",
+  locationRequest: null,
 };
 
 function fileContent(path: string, revision: string, content: string): PrFileContent {
@@ -268,6 +270,120 @@ describe("DiffViewer 受控标准 patch", () => {
     );
     expect(wrapper.get(".controlled-side-right").text()).toContain('it("works");');
     expect(wrapper.findAll(".controlled-line-addition")).toHaveLength(1);
+  });
+
+  it("按 AI 建议选中文件并优先定位变更后的行", async () => {
+    const wrapper = await mountViewer(standardizedDiff, {
+      locationRequest: { id: 1, path: "tests/App.spec.ts", line: 1 },
+    });
+
+    expect(wrapper.get(".selected-file-name").text()).toBe("tests/App.spec.ts");
+    const highlighted = wrapper.get(".controlled-side-right .diff-location-highlight");
+    expect(highlighted.attributes("data-line")).toBe("1");
+    expect(wrapper.find(".controlled-side-left .diff-location-highlight").exists()).toBe(false);
+    expect(wrapper.emitted("locationResult")?.at(-1)).toEqual([
+      { id: 1, success: true, message: null },
+    ]);
+  });
+
+  it("变更后行不存在时回退定位变更前的删除行", async () => {
+    const wrapper = await mountViewer(standardizedDiff, {
+      locationRequest: { id: 2, path: "src/components/App.ts", line: 2 },
+    });
+
+    expect(
+      wrapper.get(".controlled-side-right .diff-location-highlight").attributes("data-line"),
+    ).toBe("2");
+
+    const deletionOnly: DiffResult = {
+      ...standardizedDiff,
+      patches: [
+        {
+          ...standardizedDiff.patches[0],
+          hunks: [
+            {
+              ...standardizedDiff.patches[0].hunks[0],
+              lines: [{ kind: "deletion", content: "removed", old_line: 7, new_line: null }],
+            },
+          ],
+        },
+      ],
+      files: [standardizedDiff.files[0]],
+    };
+    const deletionWrapper = await mountViewer(deletionOnly, {
+      locationRequest: { id: 3, path: "src/components/App.ts", line: 7 },
+    });
+
+    expect(
+      deletionWrapper.get(".controlled-side-left .diff-location-highlight").attributes("data-line"),
+    ).toBe("7");
+    expect(deletionWrapper.emitted("locationResult")?.at(-1)).toEqual([
+      { id: 3, success: true, message: null },
+    ]);
+  });
+
+  it("重命名文件可通过旧路径定位到新文件", async () => {
+    const renamedDiff: DiffResult = {
+      ...standardizedDiff,
+      files: [{ ...standardizedDiff.files[0], filename: "src/new-name.ts", status: "renamed" }],
+      patches: [
+        {
+          ...standardizedDiff.patches[0],
+          filename: "src/new-name.ts",
+          old_path: "src/old-name.ts",
+          new_path: "src/new-name.ts",
+          status: "renamed",
+        },
+      ],
+    };
+    const wrapper = await mountViewer(renamedDiff, {
+      locationRequest: { id: 4, path: "src/old-name.ts", line: 2 },
+    });
+
+    expect(wrapper.get(".selected-file-name").text()).toBe("src/new-name.ts");
+    expect(
+      wrapper.get(".controlled-side-right .diff-location-highlight").attributes("data-line"),
+    ).toBe("2");
+  });
+
+  it("文件或行号失效时返回明确失败且不残留高亮", async () => {
+    const wrapper = await mountViewer(standardizedDiff, {
+      locationRequest: { id: 5, path: "src/missing.ts", line: 9 },
+    });
+
+    expect(wrapper.emitted("locationResult")?.at(-1)).toEqual([
+      expect.objectContaining({
+        id: 5,
+        success: false,
+        message: expect.stringContaining("找不到文件"),
+      }),
+    ]);
+
+    await wrapper.setProps({
+      locationRequest: { id: 6, path: "src/components/App.ts", line: 999 },
+    });
+    await flushPromises();
+
+    expect(wrapper.emitted("locationResult")?.at(-1)).toEqual([
+      expect.objectContaining({
+        id: 6,
+        success: false,
+        message: expect.stringContaining("找不到变更行"),
+      }),
+    ]);
+    expect(wrapper.find(".diff-location-highlight").exists()).toBe(false);
+  });
+
+  it("没有行号时只选中文件并返回成功", async () => {
+    const wrapper = await mountViewer(standardizedDiff, {
+      locationRequest: { id: 7, path: "tests/App.spec.ts", line: null },
+    });
+
+    expect(wrapper.get(".selected-file-name").text()).toBe("tests/App.spec.ts");
+    expect(wrapper.find(".diff-location-highlight").exists()).toBe(false);
+    expect(wrapper.emitted("locationResult")?.at(-1)).toEqual([
+      { id: 7, success: true, message: null },
+    ]);
   });
 
   it("对二进制或不可用 patch 显示稳定提示而不是空白", async () => {

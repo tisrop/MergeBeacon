@@ -3,7 +3,17 @@ import { computed, ref, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { storeToRefs } from "pinia";
 import { html } from "diff2html";
 import "diff2html/bundles/css/diff2html.min.css";
-import type { DiffResult, FileStatus, PatchHunk, PatchLine, Platform, PrFile } from "@/types";
+import type {
+  DiffLocationRequest,
+  DiffLocationResult,
+  DiffResult,
+  FileStatus,
+  PatchHunk,
+  PatchLine,
+  Platform,
+  PrFile,
+  StandardPatchFile,
+} from "@/types";
 import { prFileContent } from "@/api";
 import AppSelect from "@/components/shared/AppSelect.vue";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
@@ -15,6 +25,7 @@ const props = defineProps<{
   repo?: string;
   baseSha?: string;
   headSha?: string;
+  locationRequest?: DiffLocationRequest | null;
 }>();
 
 const uiSettings = useUiSettingsStore();
@@ -28,6 +39,7 @@ const emit = defineEmits<{
     side: "left" | "right",
     body: string,
   ];
+  locationResult: [result: DiffLocationResult];
 }>();
 
 interface FileTreeNode {
@@ -80,6 +92,14 @@ interface ContextGapAction {
   arrow: "↑" | "↓";
 }
 
+type DiffSide = "left" | "right";
+
+interface HighlightedLocation {
+  path: string;
+  line: number;
+  side: DiffSide;
+}
+
 const CONTEXT_EXPANSION_STEP = 20;
 
 const containerRef = ref<HTMLElement | null>(null);
@@ -95,6 +115,8 @@ const navigatorWidth = ref(270);
 const resizingNavigator = ref(false);
 const selectedFilePath = ref("");
 const expandedDirectories = ref<Set<string>>(new Set());
+const highlightedLocation = ref<HighlightedLocation | null>(null);
+let locationRequestSequence = 0;
 
 const controlledSides = ["left", "right"] as const;
 
@@ -171,6 +193,17 @@ function collectDirectoryKeys(nodes: FileTreeNode[], keys = new Set<string>()): 
   return keys;
 }
 
+function expandDirectoriesForFile(path: string): void {
+  const segments = path.split("/").filter(Boolean);
+  const next = new Set(expandedDirectories.value);
+  let directoryPath = "";
+  for (const segment of segments.slice(0, -1)) {
+    directoryPath = directoryPath ? `${directoryPath}/${segment}` : segment;
+    next.add(`directory:${directoryPath}`);
+  }
+  expandedDirectories.value = next;
+}
+
 const fileTree = computed(() => buildFileTree(props.diff?.files ?? []));
 const visibleTreeRows = computed(() => {
   const rows: FileTreeRow[] = [];
@@ -197,6 +230,133 @@ const selectedStandardPatch = computed(
       (patch) => patch.filename === selectedFilePath.value,
     ) ?? null,
 );
+
+function resolveLocationFile(
+  path: string,
+): { file: PrFile; patch: StandardPatchFile | null } | null {
+  const patches = hasStandardPatchPayload.value ? (props.diff?.patches ?? []) : [];
+  const patch =
+    patches.find(
+      (candidate) =>
+        candidate.filename === path || candidate.old_path === path || candidate.new_path === path,
+    ) ?? null;
+  const filename = patch?.filename ?? path;
+  const file = props.diff?.files.find((candidate) => candidate.filename === filename) ?? null;
+  return file ? { file, patch } : null;
+}
+
+function findPatchLocation(
+  patch: StandardPatchFile,
+  line: number,
+): { side: DiffSide; line: number } | null {
+  for (const hunk of patch.hunks) {
+    if (hunk.lines.some((candidate) => candidate.new_line === line)) {
+      return { side: "right", line };
+    }
+  }
+  for (const hunk of patch.hunks) {
+    if (hunk.lines.some((candidate) => candidate.old_line === line)) {
+      return { side: "left", line };
+    }
+  }
+  return null;
+}
+
+function isHighlightedLine(side: DiffSide, line: number | null | undefined): boolean {
+  const location = highlightedLocation.value;
+  return (
+    line != null &&
+    location?.path === selectedFilePath.value &&
+    location.side === side &&
+    location.line === line
+  );
+}
+
+function findControlledLineElement(side: DiffSide, line: number): HTMLElement | null {
+  return (
+    Array.from(
+      containerRef.value?.querySelectorAll<HTMLElement>(".controlled-line[data-side][data-line]") ??
+        [],
+    ).find((element) => element.dataset.side === side && Number(element.dataset.line) === line) ??
+    null
+  );
+}
+
+function scrollSelectedTreeRowIntoView(path: string): void {
+  const row = Array.from(
+    workspaceRef.value?.querySelectorAll<HTMLElement>(".tree-row[data-file-path]") ?? [],
+  ).find((candidate) => candidate.dataset.filePath === path);
+  if (row && typeof row.scrollIntoView === "function") {
+    row.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+}
+
+function emitLocationFailure(request: DiffLocationRequest, message: string): void {
+  emit("locationResult", { id: request.id, success: false, message });
+}
+
+async function locateDiffRequest(request: DiffLocationRequest): Promise<void> {
+  const sequence = ++locationRequestSequence;
+  highlightedLocation.value = null;
+  const path = request.path.trim();
+  if (!path) {
+    emitLocationFailure(request, "AI 建议未提供文件路径，无法在 Diff 中定位");
+    return;
+  }
+
+  const resolved = resolveLocationFile(path);
+  if (!resolved) {
+    emitLocationFailure(request, `当前变更中找不到文件 ${path}，该建议可能已过期`);
+    return;
+  }
+
+  expandDirectoriesForFile(resolved.file.filename);
+  await selectFile(resolved.file.filename);
+  await nextTick();
+  if (sequence !== locationRequestSequence) return;
+  scrollSelectedTreeRowIntoView(resolved.file.filename);
+
+  if (request.line == null) {
+    if (diffScrollRef.value) diffScrollRef.value.scrollTop = 0;
+    emit("locationResult", { id: request.id, success: true, message: null });
+    return;
+  }
+  if (!Number.isInteger(request.line) || request.line <= 0) {
+    emitLocationFailure(request, `AI 建议提供的行号 ${request.line} 无效`);
+    return;
+  }
+  if (!resolved.patch || resolved.patch.content_kind !== "text") {
+    emitLocationFailure(request, `文件 ${resolved.file.filename} 没有可定位的标准文本 Patch`);
+    return;
+  }
+
+  const target = findPatchLocation(resolved.patch, request.line);
+  if (!target) {
+    emitLocationFailure(
+      request,
+      `文件 ${resolved.file.filename} 中找不到变更行 ${request.line}，该建议可能已过期或行号不在当前 Patch 中`,
+    );
+    return;
+  }
+
+  highlightedLocation.value = {
+    path: resolved.file.filename,
+    line: target.line,
+    side: target.side,
+  };
+  await nextTick();
+  if (sequence !== locationRequestSequence) return;
+  const lineElement = findControlledLineElement(target.side, target.line);
+  if (!lineElement) {
+    highlightedLocation.value = null;
+    emitLocationFailure(request, `文件 ${resolved.file.filename} 的目标行暂时无法显示`);
+    return;
+  }
+  if (typeof lineElement.scrollIntoView === "function") {
+    lineElement.scrollIntoView({ block: "center", inline: "nearest" });
+  }
+  emit("locationResult", { id: request.id, success: true, message: null });
+}
 
 function pairHunkLines(lines: PatchLine[], hunkKey: string): ControlledDiffRow[] {
   const rows: ControlledDiffRow[] = [];
@@ -820,6 +980,14 @@ watch(
   { immediate: true, flush: "post" },
 );
 
+watch(
+  () => props.locationRequest,
+  (request) => {
+    if (request) void locateDiffRequest(request);
+  },
+  { immediate: true, flush: "post" },
+);
+
 const popupRef = ref<HTMLElement | null>(null);
 
 const quickComment = ref<{
@@ -1345,6 +1513,12 @@ onUnmounted(() => {
                           v-for="row in contextRowsFromStart(controlledHunk.gapBefore)"
                           :key="`${row.key}:${side}`"
                           class="controlled-line controlled-context-line"
+                          :class="{
+                            'diff-location-highlight': isHighlightedLine(
+                              side,
+                              side === 'left' ? row.left?.old_line : row.right?.new_line,
+                            ),
+                          }"
                           :data-side="side"
                           :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
                         >
@@ -1409,6 +1583,12 @@ onUnmounted(() => {
                             v-for="row in contextRowsFromEnd(controlledHunk.gapBefore)"
                             :key="`${row.key}:${side}`"
                             class="controlled-line controlled-context-line"
+                            :class="{
+                              'diff-location-highlight': isHighlightedLine(
+                                side,
+                                side === 'left' ? row.left?.old_line : row.right?.new_line,
+                              ),
+                            }"
                             :data-side="side"
                             :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
                           >
@@ -1425,7 +1605,15 @@ onUnmounted(() => {
                           v-for="row in controlledHunk.rows"
                           :key="`${row.key}:${side}`"
                           class="controlled-line"
-                          :class="`controlled-line-${(side === 'left' ? row.left : row.right)?.kind ?? 'empty'}`"
+                          :class="[
+                            `controlled-line-${(side === 'left' ? row.left : row.right)?.kind ?? 'empty'}`,
+                            {
+                              'diff-location-highlight': isHighlightedLine(
+                                side,
+                                side === 'left' ? row.left?.old_line : row.right?.new_line,
+                              ),
+                            },
+                          ]"
                           :data-side="
                             (side === 'left' ? row.left?.old_line : row.right?.new_line)
                               ? side
@@ -1456,6 +1644,12 @@ onUnmounted(() => {
                         v-for="row in contextRowsFromStart(trailingContextGap)"
                         :key="`${row.key}:${side}`"
                         class="controlled-line controlled-context-line"
+                        :class="{
+                          'diff-location-highlight': isHighlightedLine(
+                            side,
+                            side === 'left' ? row.left?.old_line : row.right?.new_line,
+                          ),
+                        }"
                         :data-side="side"
                         :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
                       >
@@ -1490,6 +1684,12 @@ onUnmounted(() => {
                         v-for="row in contextRowsFromEnd(trailingContextGap)"
                         :key="`${row.key}:${side}`"
                         class="controlled-line controlled-context-line"
+                        :class="{
+                          'diff-location-highlight': isHighlightedLine(
+                            side,
+                            side === 'left' ? row.left?.old_line : row.right?.new_line,
+                          ),
+                        }"
                         :data-side="side"
                         :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
                       >
@@ -2256,6 +2456,16 @@ onUnmounted(() => {
 
 .controlled-line-empty {
   background: color-mix(in srgb, var(--color-surface-hover) 65%, var(--color-surface));
+}
+
+.controlled-line.diff-location-highlight {
+  background: var(--color-warning-light);
+  box-shadow: inset 3px 0 0 var(--color-warning);
+}
+
+.controlled-line.diff-location-highlight .controlled-line-number {
+  background: color-mix(in srgb, var(--color-warning-border) 72%, var(--color-surface));
+  color: var(--color-text);
 }
 
 .controlled-file-message {
