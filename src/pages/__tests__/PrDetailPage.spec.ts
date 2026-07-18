@@ -1,4 +1,4 @@
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
 import type { PrDetail, PrMergeReadiness, User } from "@/types";
@@ -27,6 +27,10 @@ const mocks = vi.hoisted(() => ({
     mergePr: vi.fn(),
     closePr: vi.fn().mockResolvedValue(undefined),
     reopenPr: vi.fn(),
+    updateMetadata: vi.fn(),
+  },
+  reviewInboxStore: {
+    applyPrSummary: vi.fn(),
   },
   capabilityStore: {
     values: {
@@ -37,6 +41,14 @@ const mocks = vi.hoisted(() => ({
         supports_fork_context: true,
         supports_issue_auto_close: true,
         supports_compare_diff: true,
+        supports_review_thread_resolution: false,
+        supports_remote_file_viewed_state: false,
+        supports_pr_title_body_edit: true,
+        supports_pr_draft_toggle: true,
+        supports_pr_reviewer_management: true,
+        supports_pr_assignee_management: true,
+        supports_pr_label_management: true,
+        supports_pr_milestone_management: true,
       },
     },
     errors: {},
@@ -52,6 +64,9 @@ vi.mock("vue-router", () => ({
 }));
 vi.mock("@/stores/useAuthStore", () => ({ useAuthStore: () => mocks.authStore }));
 vi.mock("@/stores/usePrStore", () => ({ usePrStore: () => mocks.prStore }));
+vi.mock("@/stores/useReviewInboxStore", () => ({
+  useReviewInboxStore: () => mocks.reviewInboxStore,
+}));
 vi.mock("@/stores/useCapabilityStore", () => ({
   useCapabilityStore: () => mocks.capabilityStore,
 }));
@@ -80,6 +95,18 @@ const detail: PrDetail = {
   mergeable: true,
   head_sha: "abc123",
   base_sha: "base-sha",
+  draft: false,
+  reviewers: [],
+  assignees: [],
+  milestone: null,
+  metadata_permissions: {
+    can_edit_title_body: true,
+    can_toggle_draft: true,
+    can_manage_reviewers: true,
+    can_manage_assignees: true,
+    can_manage_labels: true,
+    can_manage_milestone: true,
+  },
 };
 
 const readiness: PrMergeReadiness = {
@@ -132,6 +159,11 @@ describe("PrDetailPage 关闭权限", () => {
     mocks.prStore.readinessLoading = false;
     mocks.prStore.readinessError = null;
     mocks.prStore.error = null;
+    mocks.prStore.updateMetadata.mockResolvedValue({
+      detail,
+      updated_fields: ["title_body"],
+      failures: [],
+    });
   });
 
   it("点击返回按钮稳定跳转到 PR 列表", async () => {
@@ -314,5 +346,69 @@ describe("PrDetailPage 关闭权限", () => {
     await reviewsTab!.trigger("click");
 
     expect(wrapper.get('[data-testid="app-layout"]').attributes("data-focus-mode")).toBe("false");
+  });
+  it("保存元数据后同步详情列表和已加载收件箱摘要", async () => {
+    const updatedDetail: PrDetail = {
+      ...detail,
+      summary: { ...detail.summary, title: "更新后的标题" },
+    };
+    mocks.prStore.updateMetadata.mockResolvedValue({
+      detail: updatedDetail,
+      updated_fields: ["title_body"],
+      failures: [],
+    });
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
+    await wrapper.get('[data-testid="metadata-title"]').setValue("更新后的标题");
+    await wrapper.get(".metadata-form").trigger("submit");
+    await flushPromises();
+
+    expect(mocks.prStore.updateMetadata).toHaveBeenCalledWith(
+      "github",
+      "owner",
+      "repo",
+      42,
+      expect.objectContaining({
+        title: "更新后的标题",
+        expected_updated_at: detail.summary.updated_at,
+      }),
+    );
+    expect(mocks.reviewInboxStore.applyPrSummary).toHaveBeenCalledWith(
+      "github",
+      "owner",
+      "repo",
+      updatedDetail.summary,
+    );
+    expect(wrapper.text()).toContain("元数据已更新");
+  });
+
+  it("忽略 store 判定为过期的元数据响应", async () => {
+    mocks.prStore.updateMetadata.mockResolvedValue(null);
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
+    await wrapper.get(".metadata-form").trigger("submit");
+    await flushPromises();
+
+    expect(mocks.reviewInboxStore.applyPrSummary).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain("元数据已更新");
+    expect(wrapper.text()).not.toContain("保存 PR / MR 元数据失败");
+  });
+
+  it("元数据部分成功时保留成功提示并展示失败项", async () => {
+    mocks.prStore.updateMetadata.mockResolvedValue({
+      detail,
+      updated_fields: ["labels"],
+      failures: [{ field: "reviewers", message: "部分评审者不存在" }],
+    });
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
+    await wrapper.get(".metadata-form").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("部分元数据已更新，请检查失败项。");
+    expect(wrapper.text()).toContain("部分评审者不存在");
   });
 });

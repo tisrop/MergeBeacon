@@ -67,6 +67,55 @@ impl GitLabAdapter {
         Ok(resp.json().await?)
     }
 
+    async fn list_all_inbox_merge_requests(&self, filter_name: &str, user_id: u64) -> Result<Vec<Value>, AppError> {
+        const REMOTE_PAGE_SIZE: u64 = 100;
+        let url = format!("{}/merge_requests", self.base_url);
+        let mut page = 1_u64;
+        let mut items = Vec::new();
+
+        loop {
+            let response = self
+                .client
+                .raw_client()
+                .get(&url)
+                .header("PRIVATE-TOKEN", &self.token)
+                .header("User-Agent", "mergebeacon")
+                .query(&[("scope", "all"), ("state", "opened"), ("order_by", "updated_at"), ("sort", "desc")])
+                .query(&[(filter_name, user_id), ("page", page), ("per_page", REMOTE_PAGE_SIZE)])
+                .send()
+                .await?
+                .error_for_status()?;
+            let total_pages = response
+                .headers()
+                .get("x-total-pages")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
+            let page_items: Vec<Value> = response.json().await?;
+            let fetched = page_items.len() as u64;
+            items.extend(page_items);
+
+            let has_more = total_pages.map_or(fetched == REMOTE_PAGE_SIZE, |total| page < total);
+            if !has_more {
+                break;
+            }
+            page = page.saturating_add(1);
+        }
+
+        Ok(items)
+    }
+
+    fn repository_from_merge_request(json: &Value) -> Result<(String, String), AppError> {
+        let full_reference = json["references"]["full"]
+            .as_str()
+            .ok_or_else(|| AppError::Api("GitLab 收件箱响应缺少 references.full".into()))?;
+        let full_name = full_reference.rsplit_once('!').map(|(path, _)| path).unwrap_or(full_reference);
+        let (owner, repo) = full_name
+            .rsplit_once('/')
+            .filter(|(owner, repo)| !owner.is_empty() && !repo.is_empty())
+            .ok_or_else(|| AppError::Api("GitLab 收件箱响应中的项目路径无效".into()))?;
+        Ok((owner.to_string(), repo.to_string()))
+    }
+
     fn map_user(json: &Value) -> User {
         User {
             id: json["id"].clone(),
@@ -76,12 +125,220 @@ impl GitLabAdapter {
         }
     }
 
+    fn metadata_milestone(json: &Value) -> Option<PrMilestone> {
+        (!json.is_null()).then(|| PrMilestone {
+            id: json["id"].clone(),
+            number: json["iid"].as_u64().or_else(|| json["id"].as_u64()),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+        })
+    }
+
+    fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+        match (left, right) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        }
+    }
+
+    fn access_level(project: &Value) -> Option<u64> {
+        [
+            project["permissions"]["project_access"]["access_level"].as_u64(),
+            project["permissions"]["group_access"]["access_level"].as_u64(),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+    }
+
+    async fn metadata_permissions(&self, owner: &str, repo: &str, author_login: &str) -> PrMetadataPermissions {
+        let project_id = urlencoding(owner, repo);
+        let user_url = format!("{}/user", self.base_url);
+        let project_url = format!("{}/projects/{}", self.base_url, project_id);
+        let (user, project) = tokio::join!(self.get_json::<Value>(&user_url), self.get_json::<Value>(&project_url));
+        let is_author =
+            user.ok().and_then(|user| user["username"].as_str().map(|login| login.eq_ignore_ascii_case(author_login)));
+        let can_write = project.ok().and_then(|project| Self::access_level(&project).map(|level| level >= 30));
+        let can_edit = Self::known_or(is_author, can_write);
+        PrMetadataPermissions {
+            can_edit_title_body: can_edit,
+            can_toggle_draft: can_edit,
+            can_manage_reviewers: can_write,
+            can_manage_assignees: can_write,
+            can_manage_labels: can_write,
+            can_manage_milestone: can_write,
+        }
+    }
+
+    fn title_for_draft(title: &str, draft: Option<bool>) -> String {
+        let trimmed = title.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let without_prefix = ["draft:", "wip:"]
+            .into_iter()
+            .find(|prefix| lower.starts_with(prefix))
+            .map(|prefix| trimmed[prefix.len()..].trim_start())
+            .unwrap_or(trimmed);
+        if draft == Some(true) {
+            format!("Draft: {without_prefix}")
+        } else {
+            without_prefix.to_string()
+        }
+    }
+
+    async fn resolve_user_ids(&self, logins: &[String]) -> Result<Vec<u64>, AppError> {
+        let mut ids = Vec::with_capacity(logins.len());
+        for login in logins {
+            let encoded = urlencoding::encode(login);
+            let url = format!("{}/users?username={}", self.base_url, encoded);
+            let users = self.get_json::<Value>(&url).await?;
+            let id = users
+                .as_array()
+                .and_then(|users| {
+                    users
+                        .iter()
+                        .find(|user| user["username"].as_str() == Some(login))
+                        .and_then(|user| user["id"].as_u64())
+                })
+                .ok_or_else(|| AppError::Api(format!("GitLab 中不存在用户：{login}")))?;
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
+    async fn resolve_milestone_id(&self, owner: &str, repo: &str, title: &str) -> Result<u64, AppError> {
+        let project_id = urlencoding(owner, repo);
+        let encoded = urlencoding::encode(title);
+        let url = format!("{}/projects/{}/milestones?state=all&title={}", self.base_url, project_id, encoded);
+        let milestones = self.get_json::<Value>(&url).await?;
+        milestones
+            .as_array()
+            .and_then(|items| {
+                items.iter().find(|item| item["title"].as_str() == Some(title)).and_then(|item| item["id"].as_u64())
+            })
+            .ok_or_else(|| AppError::Api(format!("GitLab 项目中不存在 Milestone：{title}")))
+    }
+
     fn required_string(json: &Value, field: &str, label: &str) -> Result<String, AppError> {
         json[field]
             .as_str()
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .ok_or_else(|| AppError::Api(format!("GitLab {label} 缺少 {field}")))
+    }
+
+    fn inbox_status(mr: &Value) -> ReviewInboxStatusSummary {
+        let draft = mr["draft"].as_bool().or_else(|| mr["work_in_progress"].as_bool());
+        let merge_status = mr["detailed_merge_status"].as_str().or_else(|| mr["merge_status"].as_str()).unwrap_or("");
+        let has_conflicts = mr["has_conflicts"].as_bool().or(match merge_status {
+            "conflict" | "conflicts" | "cannot_be_merged" => Some(true),
+            "mergeable" | "can_be_merged" => Some(false),
+            _ => None,
+        });
+        let mut blocking_reasons = Vec::new();
+        if draft == Some(true) {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::Draft,
+                message: "MR 仍处于 Draft 状态".into(),
+            });
+        }
+        if has_conflicts == Some(true) {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::Conflicts,
+                message: "源分支存在合并冲突".into(),
+            });
+        }
+
+        let checks_status = match mr["head_pipeline"]["status"].as_str() {
+            Some("success") | Some("skipped") => ReadinessState::Ready,
+            Some("failed") | Some("canceled") => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ChecksFailed,
+                    message: "CI 检查未通过".into(),
+                });
+                ReadinessState::Blocked
+            }
+            Some("created")
+            | Some("waiting_for_resource")
+            | Some("preparing")
+            | Some("pending")
+            | Some("running")
+            | Some("scheduled")
+            | Some("manual") => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ChecksPending,
+                    message: "CI 检查仍在进行中".into(),
+                });
+                ReadinessState::Pending
+            }
+            Some(_) => ReadinessState::Unknown,
+            None if matches!(merge_status, "mergeable" | "can_be_merged") => ReadinessState::Ready,
+            None if matches!(merge_status, "ci_still_running" | "checking" | "unchecked") => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ChecksPending,
+                    message: "CI 或合并状态仍在检查中".into(),
+                });
+                ReadinessState::Pending
+            }
+            None => ReadinessState::Unknown,
+        };
+
+        let approvals_status = match merge_status {
+            "requested_changes" => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ChangesRequested,
+                    message: "已有评审请求修改".into(),
+                });
+                ReadinessState::Blocked
+            }
+            "not_approved" | "approvals_syncing" => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ApprovalsRequired,
+                    message: "审批尚未满足合并要求".into(),
+                });
+                ReadinessState::Blocked
+            }
+            "mergeable" | "can_be_merged" => ReadinessState::Ready,
+            _ => ReadinessState::Unknown,
+        };
+
+        if matches!(merge_status, "need_rebase" | "behind") {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::BranchBehind,
+                message: "源分支落后于目标分支".into(),
+            });
+        }
+        if merge_status == "discussions_not_resolved" || mr["blocking_discussions_resolved"].as_bool() == Some(false) {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::DiscussionsUnresolved,
+                message: "仍有未解决的讨论线程".into(),
+            });
+        }
+        if matches!(merge_status, "blocked_status" | "broken_status") {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::PlatformBlocked,
+                message: "GitLab 报告当前 MR 被平台规则阻塞".into(),
+            });
+        }
+
+        let has_hard_blocker =
+            blocking_reasons.iter().any(|reason| reason.code != MergeBlockingReasonCode::ChecksPending);
+        let status = if has_hard_blocker
+            || checks_status == ReadinessState::Blocked
+            || approvals_status == ReadinessState::Blocked
+        {
+            ReadinessState::Blocked
+        } else if checks_status == ReadinessState::Pending {
+            ReadinessState::Pending
+        } else if matches!(merge_status, "mergeable" | "can_be_merged")
+            && draft != Some(true)
+            && has_conflicts != Some(true)
+        {
+            ReadinessState::Ready
+        } else {
+            ReadinessState::Unknown
+        };
+
+        ReviewInboxStatusSummary { status, draft, has_conflicts, checks_status, approvals_status, blocking_reasons }
     }
 
     fn unified_diff(change: &Value) -> String {
@@ -139,8 +396,20 @@ impl GitLabAdapter {
         }
     }
 
-    fn map_pr_comment(note: &Value) -> Option<PrComment> {
-        let position = note.get("position")?.as_object()?;
+    fn value_id(value: &Value) -> String {
+        value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string())
+    }
+
+    fn map_pr_comment(
+        note: &Value,
+        thread_id: &str,
+        fallback_position: &Value,
+        reply_to_id: Option<String>,
+        resolved: Option<bool>,
+        resolvable: bool,
+    ) -> Option<PrComment> {
+        let position =
+            note.get("position").filter(|position| position.is_object()).unwrap_or(fallback_position).as_object()?;
         let position = Value::Object(position.clone());
         let path = position["new_path"].as_str().or_else(|| position["old_path"].as_str())?.to_string();
         let line = position["new_line"].as_u64().or_else(|| position["old_line"].as_u64()).map(|line| line as u32);
@@ -170,6 +439,10 @@ impl GitLabAdapter {
                 .or_else(|| original["line_range"]["start"]["old_line"].as_u64())
                 .map(|line| line as u32),
             diff_hunk: None,
+            thread_id: thread_id.to_string(),
+            reply_to_id,
+            resolved,
+            resolvable,
         })
     }
 }
@@ -306,25 +579,95 @@ impl GitPlatform for GitLabAdapter {
 
         let mrs: Vec<PrSummary> = items
             .iter()
-            .map(|mr| PrSummary {
-                number: mr["iid"].as_u64().unwrap_or(0),
-                title: mr["title"].as_str().unwrap_or("").to_string(),
-                author: Self::map_user(&mr["author"]),
-                state: match (mr["state"].as_str().unwrap_or(""), mr["merged_at"].is_null()) {
-                    (_, false) => PrState::Merged,
+            .map(|mr| {
+                let state = mr["state"].as_str().unwrap_or("");
+                let mr_state = match (state, mr["merged_at"].is_null()) {
+                    ("merged", _) | (_, false) => PrState::Merged,
                     ("closed", _) => PrState::Closed,
                     _ => PrState::Open,
-                },
-                created_at: mr["created_at"].as_str().unwrap_or("").to_string(),
-                updated_at: mr["updated_at"].as_str().unwrap_or("").to_string(),
-                labels: mr["labels"]
-                    .as_array()
-                    .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
-                    .unwrap_or_default(),
+                };
+                PrSummary {
+                    number: mr["iid"].as_u64().unwrap_or(0),
+                    title: mr["title"].as_str().unwrap_or("").to_string(),
+                    author: Self::map_user(&mr["author"]),
+                    status: matches!(mr_state, PrState::Open).then(|| Self::inbox_status(mr)),
+                    state: mr_state,
+                    created_at: mr["created_at"].as_str().unwrap_or("").to_string(),
+                    updated_at: mr["updated_at"].as_str().unwrap_or("").to_string(),
+                    labels: mr["labels"]
+                        .as_array()
+                        .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
+                        .unwrap_or_default(),
+                }
             })
             .collect();
 
         Ok(Paginated { items: mrs, page, total_pages, total_count })
+    }
+
+    async fn list_review_inbox(
+        &self,
+        category: &ReviewInboxCategory,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Paginated<ReviewInboxItem>, AppError> {
+        let user = self.current_user().await?;
+        let user_id = user.id.as_u64().ok_or_else(|| AppError::Api("GitLab 当前用户响应缺少数字 id".into()))?;
+        let raw_items = match category {
+            ReviewInboxCategory::ReviewRequested => {
+                let (review_requests, assignments) = tokio::try_join!(
+                    self.list_all_inbox_merge_requests("reviewer_id", user_id),
+                    self.list_all_inbox_merge_requests("assignee_id", user_id),
+                )?;
+                review_requests
+                    .into_iter()
+                    .map(|item| (item, ReviewInboxRelationship::Reviewer))
+                    .chain(assignments.into_iter().map(|item| (item, ReviewInboxRelationship::Assignee)))
+                    .collect::<Vec<_>>()
+            }
+            ReviewInboxCategory::Authored => self
+                .list_all_inbox_merge_requests("author_id", user_id)
+                .await?
+                .into_iter()
+                .map(|item| (item, ReviewInboxRelationship::Author))
+                .collect(),
+        };
+
+        let mut items = Vec::with_capacity(raw_items.len());
+        for (mr, relationship) in raw_items {
+            let (owner, repo) = Self::repository_from_merge_request(&mr)?;
+            items.push(ReviewInboxItem {
+                platform: self.name().to_string(),
+                repository_full_name: format!("{owner}/{repo}"),
+                owner,
+                repo,
+                categories: vec![*category],
+                relationships: vec![relationship],
+                status: Self::inbox_status(&mr),
+                summary: PrSummary {
+                    number: mr["iid"].as_u64().unwrap_or(0),
+                    title: mr["title"].as_str().unwrap_or("").to_string(),
+                    author: Self::map_user(&mr["author"]),
+                    state: PrState::Open,
+                    created_at: mr["created_at"].as_str().unwrap_or("").to_string(),
+                    updated_at: mr["updated_at"].as_str().unwrap_or("").to_string(),
+                    labels: mr["labels"]
+                        .as_array()
+                        .map(|labels| labels.iter().filter_map(|label| label.as_str().map(str::to_string)).collect())
+                        .unwrap_or_default(),
+                    status: None,
+                },
+            });
+        }
+        let mut items = super::merge_review_inbox_items(items);
+        items.sort_by(|left, right| right.summary.updated_at.cmp(&left.summary.updated_at));
+
+        let total_count = items.len() as u32;
+        let total_pages = if total_count == 0 { 1 } else { total_count.div_ceil(per_page) };
+        let start = page.saturating_sub(1).saturating_mul(per_page) as usize;
+        let page_items = items.into_iter().skip(start).take(per_page as usize).collect();
+
+        Ok(Paginated { items: page_items, page, total_pages, total_count })
     }
 
     async fn get_pull_request(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrDetail, AppError> {
@@ -347,8 +690,10 @@ impl GitPlatform for GitLabAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            status: None,
         };
 
+        let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
             body: json["description"].as_str().unwrap_or("").to_string(),
@@ -357,7 +702,153 @@ impl GitPlatform for GitLabAdapter {
             mergeable: None,
             head_sha: json["sha"].as_str().or_else(|| json["diff_refs"]["head_sha"].as_str()).unwrap_or("").to_string(),
             base_sha: json["diff_refs"]["base_sha"].as_str().unwrap_or("").to_string(),
+            draft: json["draft"].as_bool().or_else(|| json["work_in_progress"].as_bool()),
+            reviewers: json["reviewers"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            assignees: json["assignees"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            milestone: Self::metadata_milestone(&json["milestone"]),
+            metadata_permissions,
         })
+    }
+
+    async fn update_pull_request_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        current: &PrDetail,
+        update: &PrMetadataUpdate,
+    ) -> Result<PrMetadataMutationResult, AppError> {
+        let mut result = PrMetadataMutationResult::default();
+        let mut payload = serde_json::Map::new();
+        let title_body_changed = current.summary.title != update.title || current.body != update.body;
+        let draft_changed = update.draft.is_some() && current.draft != update.draft;
+        if title_body_changed || draft_changed {
+            payload.insert(
+                "title".into(),
+                Value::String(Self::title_for_draft(&update.title, update.draft.or(current.draft))),
+            );
+            payload.insert("description".into(), Value::String(update.body.clone()));
+        }
+
+        let current_reviewers =
+            current.reviewers.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_reviewers =
+            update.reviewers.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let reviewers_changed = current_reviewers != target_reviewers;
+        if reviewers_changed {
+            match self.resolve_user_ids(&update.reviewers).await {
+                Ok(ids) => {
+                    payload.insert("reviewer_ids".into(), serde_json::json!(ids));
+                }
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Reviewers, message: error.to_string() }),
+            }
+        }
+
+        let current_assignees =
+            current.assignees.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_assignees =
+            update.assignees.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let assignees_changed = current_assignees != target_assignees;
+        if assignees_changed {
+            match self.resolve_user_ids(&update.assignees).await {
+                Ok(ids) => {
+                    payload.insert("assignee_ids".into(), serde_json::json!(ids));
+                }
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Assignees, message: error.to_string() }),
+            }
+        }
+
+        let labels_changed =
+            current.summary.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>()
+                != update.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        if labels_changed {
+            payload.insert("labels".into(), Value::String(update.labels.join(",")));
+        }
+
+        let milestone_changed =
+            current.milestone.as_ref().map(|milestone| milestone.title.as_str()) != update.milestone.as_deref();
+        if milestone_changed {
+            match update.milestone.as_deref() {
+                Some(title) => match self.resolve_milestone_id(owner, repo, title).await {
+                    Ok(id) => {
+                        payload.insert("milestone_id".into(), serde_json::json!(id));
+                    }
+                    Err(error) => result.failures.push(PrMetadataUpdateFailure {
+                        field: PrMetadataField::Milestone,
+                        message: error.to_string(),
+                    }),
+                },
+                None => {
+                    payload.insert("milestone_id".into(), serde_json::json!(0));
+                }
+            }
+        }
+
+        if payload.is_empty() {
+            return Ok(result);
+        }
+        let project_id = urlencoding(owner, repo);
+        let url = format!("{}/projects/{}/merge_requests/{}", self.base_url, project_id, pr_number);
+        match self.put_json(&url, &Value::Object(payload)).await {
+            Ok(_) => {
+                if title_body_changed {
+                    result.updated_fields.push(PrMetadataField::TitleBody);
+                }
+                if draft_changed {
+                    result.updated_fields.push(PrMetadataField::Draft);
+                }
+                if reviewers_changed
+                    && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Reviewers)
+                {
+                    result.updated_fields.push(PrMetadataField::Reviewers);
+                }
+                if assignees_changed
+                    && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Assignees)
+                {
+                    result.updated_fields.push(PrMetadataField::Assignees);
+                }
+                if labels_changed {
+                    result.updated_fields.push(PrMetadataField::Labels);
+                }
+                if milestone_changed
+                    && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Milestone)
+                {
+                    result.updated_fields.push(PrMetadataField::Milestone);
+                }
+            }
+            Err(error) => {
+                for field in [
+                    title_body_changed.then_some(PrMetadataField::TitleBody),
+                    draft_changed.then_some(PrMetadataField::Draft),
+                    (reviewers_changed
+                        && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Reviewers))
+                    .then_some(PrMetadataField::Reviewers),
+                    (assignees_changed
+                        && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Assignees))
+                    .then_some(PrMetadataField::Assignees),
+                    labels_changed.then_some(PrMetadataField::Labels),
+                    (milestone_changed
+                        && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Milestone))
+                    .then_some(PrMetadataField::Milestone),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    result.failures.push(PrMetadataUpdateFailure { field, message: error.to_string() });
+                }
+            }
+        }
+        Ok(result)
     }
 
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError> {
@@ -749,11 +1240,20 @@ impl GitPlatform for GitLabAdapter {
 
         let url = format!("{merge_request_url}/discussions");
         let discussion = self.post_json(&url, &serde_json::json!({ "body": body, "position": position })).await?;
+        let thread_id = Self::value_id(&discussion["id"]);
         let note = discussion["notes"]
             .as_array()
             .and_then(|notes| notes.iter().find(|note| note["position"].is_object()))
             .ok_or_else(|| AppError::Api("GitLab 创建行级评论后未返回有效 Note".into()))?;
-        Self::map_pr_comment(note).ok_or_else(|| AppError::Api("GitLab 行级评论响应缺少位置信息".into()))
+        Self::map_pr_comment(
+            note,
+            &thread_id,
+            &note["position"],
+            None,
+            note["resolved"].as_bool(),
+            note["resolvable"].as_bool().unwrap_or(false),
+        )
+        .ok_or_else(|| AppError::Api("GitLab 行级评论响应缺少位置信息".into()))
     }
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError> {
@@ -761,12 +1261,48 @@ impl GitPlatform for GitLabAdapter {
         let url =
             format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions?per_page=100", self.base_url);
         let discussions: Vec<Value> = self.get_json(&url).await?;
-        Ok(discussions
-            .iter()
-            .flat_map(|discussion| discussion["notes"].as_array().into_iter().flatten())
-            .filter(|note| !note["system"].as_bool().unwrap_or(false))
-            .filter_map(Self::map_pr_comment)
-            .collect())
+        let mut comments = Vec::new();
+        for discussion in &discussions {
+            let Some(notes) = discussion["notes"].as_array() else {
+                continue;
+            };
+            let Some(root_note) =
+                notes.iter().find(|note| !note["system"].as_bool().unwrap_or(false) && note["position"].is_object())
+            else {
+                continue;
+            };
+            let thread_id = Self::value_id(&discussion["id"]);
+            let root_id = Self::value_id(&root_note["id"]);
+            let resolved = notes.iter().find_map(|note| note["resolved"].as_bool());
+            let resolvable = notes.iter().any(|note| note["resolvable"].as_bool().unwrap_or(false));
+            for note in notes.iter().filter(|note| !note["system"].as_bool().unwrap_or(false)) {
+                let note_id = Self::value_id(&note["id"]);
+                let reply_to_id = (note_id != root_id).then(|| root_id.clone());
+                if let Some(comment) =
+                    Self::map_pr_comment(note, &thread_id, &root_note["position"], reply_to_id, resolved, resolvable)
+                {
+                    comments.push(comment);
+                }
+            }
+        }
+        Ok(comments)
+    }
+
+    async fn set_review_thread_resolved(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        thread_id: &str,
+        resolved: bool,
+    ) -> Result<(), AppError> {
+        if thread_id.trim().is_empty() {
+            return Err(AppError::Api("GitLab Discussion ID 不能为空".into()));
+        }
+        let project_id = urlencoding(owner, repo);
+        let url = format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}", self.base_url);
+        self.put_json(&url, &serde_json::json!({ "resolved": resolved })).await?;
+        Ok(())
     }
 
     async fn list_reviews(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<Review>, AppError> {

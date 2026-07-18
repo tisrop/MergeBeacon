@@ -8,8 +8,19 @@ import type {
   PrState,
   MergeStrategy,
   PrMergeReadiness,
+  PrMetadataUpdate,
+  PrMetadataUpdateOutcome,
 } from "@/types";
-import { prList, prDetail, prDiff, prMerge, prMergeReadiness, prClose, prReopen } from "@/api";
+import {
+  prList,
+  prDetail,
+  prDiff,
+  prMerge,
+  prMergeReadiness,
+  prClose,
+  prReopen,
+  prMetadataUpdate,
+} from "@/api";
 
 const PAGE_SIZES = [10, 20, 50, 100] as const;
 
@@ -39,6 +50,9 @@ export const usePrStore = defineStore("pr", () => {
   let diffRequestSequence = 0;
   let countsRequestSequence = 0;
   let readinessRequestSequence = 0;
+  let metadataRequestSequence = 0;
+  let listContextKey = "";
+  let detailContextKey = "";
 
   function clearContext() {
     listRequestSequence++;
@@ -46,6 +60,9 @@ export const usePrStore = defineStore("pr", () => {
     diffRequestSequence++;
     countsRequestSequence++;
     readinessRequestSequence++;
+    metadataRequestSequence++;
+    listContextKey = "";
+    detailContextKey = "";
     list.value = [];
     currentPr.value = null;
     diff.value = null;
@@ -75,6 +92,7 @@ export const usePrStore = defineStore("pr", () => {
 
   async function fetchPrList(platform: Platform, owner: string, repo: string) {
     const sequence = ++listRequestSequence;
+    listContextKey = `${platform}:${owner}/${repo}`;
     loading.value = true;
     error.value = null;
     try {
@@ -101,6 +119,7 @@ export const usePrStore = defineStore("pr", () => {
 
   async function fetchPrDetail(platform: Platform, owner: string, repo: string, number: number) {
     const sequence = ++detailRequestSequence;
+    detailContextKey = `${platform}:${owner}/${repo}:${number}`;
     loading.value = true;
     try {
       const result = await prDetail(platform, owner, repo, number);
@@ -159,6 +178,36 @@ export const usePrStore = defineStore("pr", () => {
         stateCounts.value[states[index]] = result.value.total_count;
       }
     });
+  }
+
+  async function updateMetadata(
+    platform: Platform,
+    owner: string,
+    repo: string,
+    number: number,
+    update: PrMetadataUpdate,
+  ): Promise<PrMetadataUpdateOutcome | null> {
+    const sequence = ++metadataRequestSequence;
+    const contextKey = `${platform}:${owner}/${repo}:${number}`;
+    error.value = null;
+    try {
+      const outcome = await prMetadataUpdate(platform, owner, repo, number, update);
+      if (sequence !== metadataRequestSequence || detailContextKey !== contextKey) return null;
+      if (outcome.detail) {
+        currentPr.value = outcome.detail;
+        if (listContextKey === `${platform}:${owner}/${repo}`) {
+          const index = list.value.findIndex((item) => item.number === number);
+          if (index >= 0) list.value[index] = outcome.detail.summary;
+        }
+      }
+      if (outcome.failures.length > 0) {
+        error.value = outcome.failures.map((failure) => failure.message).join("；");
+      }
+      return outcome;
+    } catch (requestError) {
+      if (sequence !== metadataRequestSequence || detailContextKey !== contextKey) return null;
+      throw requestError;
+    }
   }
 
   async function mergePr(
@@ -238,6 +287,7 @@ export const usePrStore = defineStore("pr", () => {
     fetchPrDetail,
     fetchPrDiff,
     fetchMergeReadiness,
+    updateMetadata,
     fetchStateCounts,
     setFilter,
     mergePr,

@@ -303,6 +303,29 @@ impl GitHubAdapter {
         Ok(resp.json().await?)
     }
 
+    async fn delete_json(&self, url: &str, body: &Value) -> Result<Value, AppError> {
+        let resp = self
+            .client
+            .raw_client()
+            .delete(url)
+            .header("Authorization", &self.auth_header())
+            .header("User-Agent", "mergebeacon")
+            .header("Accept", "application/vnd.github.v3+json")
+            .json(body)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let error_body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Api(format!("GitHub API {} ({}): {}", status, url, error_body)));
+        }
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(Value::Null)
+        } else {
+            Ok(resp.json().await?)
+        }
+    }
+
     fn map_compare_file(file: &Value) -> PrFile {
         let status = match file["status"].as_str().unwrap_or("") {
             "added" => FileStatus::Added,
@@ -371,6 +394,348 @@ impl GitHubAdapter {
         diff
     }
 
+    async fn list_all_inbox_search(&self, qualifier: &str) -> Result<Vec<Value>, AppError> {
+        const REMOTE_PAGE_SIZE: u32 = 100;
+        const SEARCH_RESULT_LIMIT: u32 = 1_000;
+
+        let url = format!("{}/search/issues", self.base_url);
+        let query = format!("is:pr is:open {qualifier}");
+        let mut page = 1_u32;
+        let mut items = Vec::new();
+
+        loop {
+            let response = self
+                .client
+                .raw_client()
+                .get(&url)
+                .header("Authorization", self.auth_header())
+                .header("User-Agent", "mergebeacon")
+                .header("Accept", "application/vnd.github.v3+json")
+                .query(&[("q", query.as_str()), ("sort", "updated"), ("order", "desc")])
+                .query(&[("page", page), ("per_page", REMOTE_PAGE_SIZE)])
+                .send()
+                .await?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(AppError::Api(format!("GitHub API {} ({}): {}", status, url, body)));
+            }
+
+            let mut json: Value = response.json().await?;
+            let total_count = json["total_count"].as_u64().unwrap_or(0).min(u64::from(SEARCH_RESULT_LIMIT)) as u32;
+            let page_items =
+                json["items"].as_array_mut().ok_or_else(|| AppError::Api("GitHub 收件箱响应缺少 items".into()))?;
+            let fetched = page_items.len();
+            items.append(page_items);
+
+            let total_pages = total_count.div_ceil(REMOTE_PAGE_SIZE);
+            if fetched == 0 || page >= total_pages || items.len() >= SEARCH_RESULT_LIMIT as usize {
+                break;
+            }
+            page = page.saturating_add(1);
+        }
+
+        items.truncate(SEARCH_RESULT_LIMIT as usize);
+        Ok(items)
+    }
+
+    fn inbox_status(node: &Value) -> ReviewInboxStatusSummary {
+        let draft = node["isDraft"].as_bool();
+        let mergeable = node["mergeable"].as_str();
+        let merge_state = node["mergeStateStatus"].as_str();
+        let review_decision = node["reviewDecision"].as_str();
+        let check_rollup = node["commits"]["nodes"]
+            .as_array()
+            .and_then(|nodes| nodes.last())
+            .and_then(|commit| commit["commit"]["statusCheckRollup"]["state"].as_str());
+        let has_conflicts = match mergeable {
+            Some("CONFLICTING") => Some(true),
+            Some("MERGEABLE") => Some(false),
+            _ => None,
+        };
+        let mut blocking_reasons = Vec::new();
+
+        if draft == Some(true) || merge_state == Some("DRAFT") {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::Draft,
+                message: "PR 仍处于 Draft 状态".into(),
+            });
+        }
+        if has_conflicts == Some(true) || merge_state == Some("DIRTY") {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::Conflicts,
+                message: "源分支存在合并冲突".into(),
+            });
+        }
+        if merge_state == Some("BEHIND") {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::BranchBehind,
+                message: "源分支落后于目标分支".into(),
+            });
+        }
+        if merge_state == Some("BLOCKED") {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::PlatformBlocked,
+                message: "GitHub 分支保护或仓库规则阻止合并".into(),
+            });
+        }
+
+        let checks_status = match check_rollup {
+            Some("SUCCESS") => ReadinessState::Ready,
+            Some("FAILURE") | Some("ERROR") => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ChecksFailed,
+                    message: "CI 检查未通过".into(),
+                });
+                ReadinessState::Blocked
+            }
+            Some("PENDING") | Some("EXPECTED") => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ChecksPending,
+                    message: "CI 检查仍在进行中".into(),
+                });
+                ReadinessState::Pending
+            }
+            Some(_) | None => ReadinessState::Unknown,
+        };
+        let approvals_status = match review_decision {
+            Some("APPROVED") => ReadinessState::Ready,
+            Some("CHANGES_REQUESTED") => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ChangesRequested,
+                    message: "已有评审请求修改".into(),
+                });
+                ReadinessState::Blocked
+            }
+            Some("REVIEW_REQUIRED") => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ApprovalsRequired,
+                    message: "审批尚未满足合并要求".into(),
+                });
+                ReadinessState::Blocked
+            }
+            Some(_) | None => ReadinessState::Unknown,
+        };
+
+        let has_hard_blocker =
+            blocking_reasons.iter().any(|reason| reason.code != MergeBlockingReasonCode::ChecksPending);
+        let status = if has_hard_blocker
+            || checks_status == ReadinessState::Blocked
+            || approvals_status == ReadinessState::Blocked
+        {
+            ReadinessState::Blocked
+        } else if checks_status == ReadinessState::Pending || mergeable == Some("UNKNOWN") {
+            ReadinessState::Pending
+        } else if matches!(merge_state, Some("CLEAN") | Some("HAS_HOOKS") | Some("UNSTABLE"))
+            && mergeable == Some("MERGEABLE")
+            && draft != Some(true)
+        {
+            ReadinessState::Ready
+        } else {
+            ReadinessState::Unknown
+        };
+
+        ReviewInboxStatusSummary { status, draft, has_conflicts, checks_status, approvals_status, blocking_reasons }
+    }
+
+    async fn inbox_statuses(
+        &self,
+        node_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, ReviewInboxStatusSummary>, AppError> {
+        if node_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let url = format!("{}/graphql", self.base_url);
+        let payload = serde_json::json!({
+            "query": r#"query ReviewInboxStatuses($ids: [ID!]!) {
+                nodes(ids: $ids) {
+                    ... on PullRequest {
+                        id
+                        isDraft
+                        mergeable
+                        mergeStateStatus
+                        reviewDecision
+                        commits(last: 1) {
+                            nodes {
+                                commit {
+                                    statusCheckRollup { state }
+                                }
+                            }
+                        }
+                    }
+                }
+            }"#,
+            "variables": { "ids": node_ids },
+        });
+        let response = self.post_json(&url, &payload).await?;
+        if let Some(errors) = response["errors"].as_array().filter(|errors| !errors.is_empty()) {
+            return Err(AppError::Api(format!("GitHub GraphQL 收件箱状态查询失败: {errors:?}")));
+        }
+        let nodes = response["data"]["nodes"]
+            .as_array()
+            .ok_or_else(|| AppError::Api("GitHub GraphQL 收件箱状态响应缺少 data.nodes".into()))?;
+        let mut statuses = std::collections::HashMap::new();
+        for node in nodes {
+            if let Some(id) = node["id"].as_str() {
+                statuses.insert(id.to_string(), Self::inbox_status(node));
+            }
+        }
+        Ok(statuses)
+    }
+
+    async fn graphql(&self, operation: &str, query: &str, variables: Value) -> Result<Value, AppError> {
+        let url = format!("{}/graphql", self.base_url);
+        let response = self
+            .post_json(
+                &url,
+                &serde_json::json!({
+                    "query": query,
+                    "variables": variables,
+                }),
+            )
+            .await?;
+        if let Some(errors) = response["errors"].as_array().filter(|errors| !errors.is_empty()) {
+            return Err(AppError::Api(format!("GitHub GraphQL {operation}失败: {errors:?}")));
+        }
+        let data = response
+            .get("data")
+            .filter(|data| !data.is_null())
+            .ok_or_else(|| AppError::Api(format!("GitHub GraphQL {operation}响应缺少 data")))?;
+        Ok(data.clone())
+    }
+
+    fn graphql_database_id(value: &Value) -> Option<(Value, String)> {
+        if let Some(id) = value["fullDatabaseId"].as_u64() {
+            return Some((serde_json::json!(id), id.to_string()));
+        }
+        if let Some(id) = value["fullDatabaseId"].as_str() {
+            let json_id = id.parse::<u64>().map_or_else(|_| Value::String(id.to_string()), |id| serde_json::json!(id));
+            return Some((json_id, id.to_string()));
+        }
+        value["id"].as_str().map(|id| (Value::String(id.to_string()), id.to_string()))
+    }
+
+    fn map_graphql_user(json: &Value) -> User {
+        User {
+            id: json["id"].clone(),
+            login: json["login"].as_str().unwrap_or("").to_string(),
+            name: json["name"].as_str().unwrap_or("").to_string(),
+            avatar_url: json["avatarUrl"].as_str().unwrap_or("").to_string(),
+        }
+    }
+
+    fn map_graphql_review_comment(thread: &Value, comment: &Value) -> Result<PrComment, AppError> {
+        let thread_id =
+            thread["id"].as_str().ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少线程 ID".into()))?.to_string();
+        let resolved =
+            thread["isResolved"].as_bool().ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少解决状态".into()))?;
+        let resolvable = if resolved {
+            thread["viewerCanUnresolve"].as_bool().unwrap_or(false)
+        } else {
+            thread["viewerCanResolve"].as_bool().unwrap_or(false)
+        };
+        let (id, _) =
+            Self::graphql_database_id(comment).ok_or_else(|| AppError::Api("GitHub 评审评论响应缺少评论 ID".into()))?;
+        let reply_to_id = Self::graphql_database_id(&comment["replyTo"]).map(|(_, id)| id);
+
+        Ok(PrComment {
+            id,
+            body: comment["body"].as_str().unwrap_or("").to_string(),
+            path: comment["path"].as_str().unwrap_or("").to_string(),
+            line: comment["line"].as_u64().map(|line| line as u32),
+            start_line: comment["startLine"].as_u64().map(|line| line as u32),
+            author: Self::map_graphql_user(&comment["author"]),
+            created_at: comment["createdAt"].as_str().unwrap_or("").to_string(),
+            commit_id: comment["commit"]["oid"].as_str().map(str::to_string),
+            original_commit_id: comment["originalCommit"]["oid"].as_str().map(str::to_string),
+            original_line: comment["originalLine"].as_u64().map(|line| line as u32),
+            original_start_line: comment["originalStartLine"].as_u64().map(|line| line as u32),
+            diff_hunk: comment["diffHunk"].as_str().map(str::to_string),
+            thread_id,
+            reply_to_id,
+            resolved: Some(resolved),
+            resolvable,
+        })
+    }
+
+    async fn review_thread_comments_page(&self, thread_id: &str, after: &str) -> Result<Value, AppError> {
+        let data = self
+            .graphql(
+                "评审线程评论分页查询",
+                r#"query ReviewThreadComments($threadId: ID!, $after: String) {
+                    node(id: $threadId) {
+                        ... on PullRequestReviewThread {
+                            comments(first: 100, after: $after) {
+                                nodes {
+                                    id
+                                    fullDatabaseId
+                                    body
+                                    path
+                                    line
+                                    startLine
+                                    author {
+                                        login
+                                        avatarUrl
+                                        ... on User { id name }
+                                    }
+                                    createdAt
+                                    commit { oid }
+                                    originalCommit { oid }
+                                    originalLine
+                                    originalStartLine
+                                    diffHunk
+                                    replyTo { id fullDatabaseId }
+                                }
+                                pageInfo { hasNextPage endCursor }
+                            }
+                        }
+                    }
+                }"#,
+                serde_json::json!({ "threadId": thread_id, "after": after }),
+            )
+            .await?;
+        data["node"]["comments"]
+            .as_object()
+            .map(|comments| Value::Object(comments.clone()))
+            .ok_or_else(|| AppError::Api("GitHub 评审线程评论分页响应缺少 comments".into()))
+    }
+
+    async fn pull_request_node_id(&self, owner: &str, repo: &str, pr_number: u64) -> Result<String, AppError> {
+        let number =
+            i32::try_from(pr_number).map_err(|_| AppError::Api("GitHub PR 编号超出 GraphQL Int 范围".into()))?;
+        let data = self
+            .graphql(
+                "PR Node ID 查询",
+                r#"query PullRequestNodeId($owner: String!, $repo: String!, $number: Int!) {
+                    repository(owner: $owner, name: $repo) {
+                        pullRequest(number: $number) { id }
+                    }
+                }"#,
+                serde_json::json!({ "owner": owner, "repo": repo, "number": number }),
+            )
+            .await?;
+        data["repository"]["pullRequest"]["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| AppError::Api("GitHub PR Node ID 响应缺少 ID".into()))
+    }
+
+    fn repository_from_api_url(url: &str) -> Result<(String, String), AppError> {
+        let path = url
+            .split_once("/repos/")
+            .map(|(_, path)| path)
+            .ok_or_else(|| AppError::Api("GitHub 收件箱响应缺少仓库路径".into()))?;
+        let mut parts = path.split('/');
+        let owner = parts.next().unwrap_or_default();
+        let repo = parts.next().unwrap_or_default();
+        if owner.is_empty() || repo.is_empty() {
+            return Err(AppError::Api("GitHub 收件箱响应中的仓库路径无效".into()));
+        }
+        Ok((owner.to_string(), repo.to_string()))
+    }
+
     fn map_user(json: &Value) -> User {
         User {
             id: json["id"].clone(),
@@ -389,6 +754,64 @@ impl GitHubAdapter {
                 _ => PrState::Open,
             }
         }
+    }
+
+    fn metadata_milestone(json: &Value) -> Option<PrMilestone> {
+        (!json.is_null()).then(|| PrMilestone {
+            id: json["id"].clone(),
+            number: json["number"].as_u64(),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+        })
+    }
+
+    fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+        match (left, right) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        }
+    }
+
+    async fn metadata_permissions(&self, owner: &str, repo: &str, author_login: &str) -> PrMetadataPermissions {
+        let user_url = format!("{}/user", self.base_url);
+        let repo_url = format!("{}/repos/{}/{}", self.base_url, owner, repo);
+        let (user, repository) = tokio::join!(self.get_json::<Value>(&user_url), self.get_json::<Value>(&repo_url));
+        let is_author =
+            user.ok().and_then(|user| user["login"].as_str().map(|login| login.eq_ignore_ascii_case(author_login)));
+        let can_write = repository.ok().and_then(|repository| {
+            let permissions = &repository["permissions"];
+            let values = [
+                permissions["admin"].as_bool(),
+                permissions["maintain"].as_bool(),
+                permissions["push"].as_bool(),
+                permissions["triage"].as_bool(),
+            ];
+            values.iter().any(Option::is_some).then(|| values.contains(&Some(true)))
+        });
+        let can_edit = Self::known_or(is_author, can_write);
+        PrMetadataPermissions {
+            can_edit_title_body: can_edit,
+            can_toggle_draft: can_edit,
+            can_manage_reviewers: can_write,
+            can_manage_assignees: can_write,
+            can_manage_labels: can_write,
+            can_manage_milestone: can_write,
+        }
+    }
+
+    async fn resolve_milestone_number(&self, owner: &str, repo: &str, title: &str) -> Result<u64, AppError> {
+        let encoded_title = urlencoding::encode(title);
+        let url = format!(
+            "{}/repos/{}/{}/milestones?state=all&per_page=100&title={}",
+            self.base_url, owner, repo, encoded_title
+        );
+        let milestones = self.get_json::<Value>(&url).await?;
+        milestones
+            .as_array()
+            .and_then(|items| {
+                items.iter().find(|item| item["title"].as_str() == Some(title)).and_then(|item| item["number"].as_u64())
+            })
+            .ok_or_else(|| AppError::Api(format!("GitHub 仓库中不存在 Milestone：{title}")))
     }
 }
 #[async_trait]
@@ -511,29 +934,50 @@ impl GitPlatform for GitHubAdapter {
         }
 
         let items: Vec<Value> = resp.json().await?;
+        let node_ids = items
+            .iter()
+            .filter_map(|pr| Some((pr["number"].as_u64()?, pr["node_id"].as_str()?.to_string())))
+            .collect::<std::collections::HashMap<_, _>>();
 
         let all_prs: Vec<PrSummary> = items
             .iter()
-            .map(|pr| PrSummary {
-                number: pr["number"].as_u64().unwrap_or(0),
-                title: pr["title"].as_str().unwrap_or("").to_string(),
-                author: Self::map_user(&pr["user"]),
-                state: Self::map_pr_state(pr["state"].as_str().unwrap_or(""), !pr["merged_at"].is_null()),
-                created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
-                updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
-                labels: pr["labels"]
-                    .as_array()
-                    .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
-                    .unwrap_or_default(),
+            .map(|pr| {
+                let pr_state = Self::map_pr_state(pr["state"].as_str().unwrap_or(""), !pr["merged_at"].is_null());
+                PrSummary {
+                    number: pr["number"].as_u64().unwrap_or(0),
+                    title: pr["title"].as_str().unwrap_or("").to_string(),
+                    author: Self::map_user(&pr["user"]),
+                    status: matches!(pr_state, PrState::Open).then(PrStatusSummary::default),
+                    state: pr_state,
+                    created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
+                    updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
+                    labels: pr["labels"]
+                        .as_array()
+                        .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
+                        .unwrap_or_default(),
+                }
             })
             .collect();
 
         // Filter by requested state (needed because GitHub groups merged into closed)
-        let prs: Vec<PrSummary> = match state {
+        let mut prs: Vec<PrSummary> = match state {
             PrState::Merged => all_prs.into_iter().filter(|p| matches!(p.state, PrState::Merged)).collect(),
             PrState::Closed => all_prs.into_iter().filter(|p| matches!(p.state, PrState::Closed)).collect(),
             _ => all_prs,
         };
+
+        let requested_ids = prs
+            .iter()
+            .filter(|pr| matches!(pr.state, PrState::Open))
+            .filter_map(|pr| node_ids.get(&pr.number).cloned())
+            .collect::<Vec<_>>();
+        if let Ok(statuses) = self.inbox_statuses(&requested_ids).await {
+            for pr in &mut prs {
+                if let Some(status) = node_ids.get(&pr.number).and_then(|node_id| statuses.get(node_id)) {
+                    pr.status = Some(status.clone());
+                }
+            }
+        }
 
         let total_count = if prs.is_empty() {
             0
@@ -544,6 +988,89 @@ impl GitPlatform for GitHubAdapter {
         };
 
         Ok(Paginated { items: prs, page, total_pages: last_page, total_count })
+    }
+
+    async fn list_review_inbox(
+        &self,
+        category: &ReviewInboxCategory,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Paginated<ReviewInboxItem>, AppError> {
+        let raw_items = match category {
+            ReviewInboxCategory::ReviewRequested => {
+                let (review_requests, assignments) = tokio::try_join!(
+                    self.list_all_inbox_search("review-requested:@me"),
+                    self.list_all_inbox_search("assignee:@me"),
+                )?;
+                review_requests
+                    .into_iter()
+                    .map(|item| (item, ReviewInboxRelationship::Reviewer))
+                    .chain(assignments.into_iter().map(|item| (item, ReviewInboxRelationship::Assignee)))
+                    .collect::<Vec<_>>()
+            }
+            ReviewInboxCategory::Authored => self
+                .list_all_inbox_search("author:@me")
+                .await?
+                .into_iter()
+                .map(|item| (item, ReviewInboxRelationship::Author))
+                .collect(),
+        };
+
+        let mut node_ids = std::collections::HashMap::<(String, u64), String>::new();
+        let mut items = Vec::with_capacity(raw_items.len());
+        for (pr, relationship) in raw_items {
+            let (owner, repo) = Self::repository_from_api_url(pr["repository_url"].as_str().unwrap_or(""))?;
+            let repository_full_name = format!("{owner}/{repo}");
+            let number = pr["number"].as_u64().unwrap_or(0);
+            if let Some(node_id) = pr["node_id"].as_str() {
+                node_ids.insert((repository_full_name.clone(), number), node_id.to_string());
+            }
+            items.push(ReviewInboxItem {
+                platform: self.name().to_string(),
+                repository_full_name,
+                owner,
+                repo,
+                categories: vec![*category],
+                relationships: vec![relationship],
+                status: ReviewInboxStatusSummary::default(),
+                summary: PrSummary {
+                    number,
+                    title: pr["title"].as_str().unwrap_or("").to_string(),
+                    author: Self::map_user(&pr["user"]),
+                    state: PrState::Open,
+                    created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
+                    updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
+                    labels: pr["labels"]
+                        .as_array()
+                        .map(|labels| {
+                            labels.iter().filter_map(|label| label["name"].as_str().map(str::to_string)).collect()
+                        })
+                        .unwrap_or_default(),
+                    status: None,
+                },
+            });
+        }
+        let mut items = super::merge_review_inbox_items(items);
+        items.sort_by(|left, right| right.summary.updated_at.cmp(&left.summary.updated_at));
+
+        let total_count = items.len() as u32;
+        let total_pages = if total_count == 0 { 1 } else { total_count.div_ceil(per_page) };
+        let start = page.saturating_sub(1).saturating_mul(per_page) as usize;
+        let mut page_items = items.into_iter().skip(start).take(per_page as usize).collect::<Vec<_>>();
+        let requested_ids = page_items
+            .iter()
+            .filter_map(|item| node_ids.get(&(item.repository_full_name.clone(), item.summary.number)).cloned())
+            .collect::<Vec<_>>();
+        if let Ok(statuses) = self.inbox_statuses(&requested_ids).await {
+            for item in &mut page_items {
+                let key = (item.repository_full_name.clone(), item.summary.number);
+                if let Some(status) = node_ids.get(&key).and_then(|node_id| statuses.get(node_id)) {
+                    item.status = status.clone();
+                }
+            }
+        }
+
+        Ok(Paginated { items: page_items, page, total_pages, total_count })
     }
 
     async fn get_pull_request(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrDetail, AppError> {
@@ -561,8 +1088,10 @@ impl GitPlatform for GitHubAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            status: None,
         };
 
+        let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
             body: json["body"].as_str().unwrap_or("").to_string(),
@@ -571,7 +1100,196 @@ impl GitPlatform for GitHubAdapter {
             mergeable: json["mergeable"].as_bool(),
             head_sha: json["head"]["sha"].as_str().unwrap_or("").to_string(),
             base_sha: json["base"]["sha"].as_str().unwrap_or("").to_string(),
+            draft: json["draft"].as_bool(),
+            reviewers: json["requested_reviewers"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            assignees: json["assignees"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            milestone: Self::metadata_milestone(&json["milestone"]),
+            metadata_permissions,
         })
+    }
+
+    async fn update_pull_request_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        current: &PrDetail,
+        update: &PrMetadataUpdate,
+    ) -> Result<PrMetadataMutationResult, AppError> {
+        let mut result = PrMetadataMutationResult::default();
+        let pull_url = format!("{}/repos/{}/{}/pulls/{}", self.base_url, owner, repo, pr_number);
+        if current.summary.title != update.title || current.body != update.body {
+            match self.patch_json(&pull_url, &serde_json::json!({ "title": update.title, "body": update.body })).await {
+                Ok(_) => result.updated_fields.push(PrMetadataField::TitleBody),
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::TitleBody, message: error.to_string() }),
+            }
+        }
+
+        if update.draft.is_some() && current.draft != update.draft {
+            let pull_request_id = self.pull_request_node_id(owner, repo, pr_number).await;
+            let draft_result = match (pull_request_id, update.draft) {
+                (Ok(pull_request_id), Some(true)) => self
+                    .graphql(
+                        "转换为 Draft",
+                        r#"mutation ConvertPullRequestToDraft($pullRequestId: ID!) {
+                            convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
+                                pullRequest { id isDraft }
+                            }
+                        }"#,
+                        serde_json::json!({ "pullRequestId": pull_request_id }),
+                    )
+                    .await
+                    .map(|_| ()),
+                (Ok(pull_request_id), Some(false)) => self
+                    .graphql(
+                        "标记为 Ready",
+                        r#"mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+                            markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+                                pullRequest { id isDraft }
+                            }
+                        }"#,
+                        serde_json::json!({ "pullRequestId": pull_request_id }),
+                    )
+                    .await
+                    .map(|_| ()),
+                (Err(error), _) => Err(error),
+                (_, None) => Ok(()),
+            };
+            match draft_result {
+                Ok(()) => result.updated_fields.push(PrMetadataField::Draft),
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Draft, message: error.to_string() }),
+            }
+        }
+
+        let current_reviewers =
+            current.reviewers.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_reviewers =
+            update.reviewers.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        if current_reviewers != target_reviewers {
+            let reviewers_url = format!("{pull_url}/requested_reviewers");
+            let removed = current
+                .reviewers
+                .iter()
+                .filter(|user| !target_reviewers.contains(&user.login.to_lowercase()))
+                .map(|user| user.login.clone())
+                .collect::<Vec<_>>();
+            let added = update
+                .reviewers
+                .iter()
+                .filter(|login| !current_reviewers.contains(&login.to_lowercase()))
+                .cloned()
+                .collect::<Vec<_>>();
+            let remove_result = if removed.is_empty() {
+                Ok(Value::Null)
+            } else {
+                self.delete_json(&reviewers_url, &serde_json::json!({ "reviewers": removed })).await
+            };
+            let add_result = if added.is_empty() {
+                Ok(Value::Null)
+            } else {
+                self.post_json(&reviewers_url, &serde_json::json!({ "reviewers": added })).await
+            };
+            match remove_result.and(add_result) {
+                Ok(_) => result.updated_fields.push(PrMetadataField::Reviewers),
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Reviewers, message: error.to_string() }),
+            }
+        }
+
+        let assignees_changed =
+            current.assignees.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>()
+                != update.assignees.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let labels_changed =
+            current.summary.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>()
+                != update.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let milestone_changed =
+            current.milestone.as_ref().map(|milestone| milestone.title.as_str()) != update.milestone.as_deref();
+        if assignees_changed || labels_changed || milestone_changed {
+            let mut payload = serde_json::Map::new();
+            if assignees_changed {
+                payload.insert("assignees".into(), serde_json::json!(update.assignees));
+            }
+            if labels_changed {
+                payload.insert("labels".into(), serde_json::json!(update.labels));
+            }
+
+            let milestone_update_available = if milestone_changed {
+                match update.milestone.as_deref() {
+                    Some(title) if current.milestone.as_ref().is_some_and(|milestone| milestone.title == title) => {
+                        if let Some(number) = current.milestone.as_ref().and_then(|milestone| milestone.number) {
+                            payload.insert("milestone".into(), serde_json::json!(number));
+                            true
+                        } else {
+                            result.failures.push(PrMetadataUpdateFailure {
+                                field: PrMetadataField::Milestone,
+                                message: "当前 Milestone 缺少可用编号，请重新加载详情".into(),
+                            });
+                            false
+                        }
+                    }
+                    Some(title) => match self.resolve_milestone_number(owner, repo, title).await {
+                        Ok(number) => {
+                            payload.insert("milestone".into(), serde_json::json!(number));
+                            true
+                        }
+                        Err(error) => {
+                            result.failures.push(PrMetadataUpdateFailure {
+                                field: PrMetadataField::Milestone,
+                                message: error.to_string(),
+                            });
+                            false
+                        }
+                    },
+                    None => {
+                        payload.insert("milestone".into(), serde_json::Value::Null);
+                        true
+                    }
+                }
+            } else {
+                false
+            };
+
+            if !payload.is_empty() {
+                let issue_url = format!("{}/repos/{}/{}/issues/{}", self.base_url, owner, repo, pr_number);
+                match self.patch_json(&issue_url, &serde_json::Value::Object(payload)).await {
+                    Ok(_) => {
+                        if assignees_changed {
+                            result.updated_fields.push(PrMetadataField::Assignees);
+                        }
+                        if labels_changed {
+                            result.updated_fields.push(PrMetadataField::Labels);
+                        }
+                        if milestone_changed && milestone_update_available {
+                            result.updated_fields.push(PrMetadataField::Milestone);
+                        }
+                    }
+                    Err(error) => {
+                        for field in [
+                            assignees_changed.then_some(PrMetadataField::Assignees),
+                            labels_changed.then_some(PrMetadataField::Labels),
+                            (milestone_changed && milestone_update_available).then_some(PrMetadataField::Milestone),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            result.failures.push(PrMetadataUpdateFailure { field, message: error.to_string() });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
 
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError> {
@@ -873,6 +1591,7 @@ impl GitPlatform for GitHubAdapter {
             })
         };
         let c: Value = self.post_json(&url, &payload).await?;
+        let comment_id = c["id"].as_str().map(str::to_string).unwrap_or_else(|| c["id"].to_string());
         Ok(PrComment {
             id: c["id"].clone(),
             body: c["body"].as_str().unwrap_or("").to_string(),
@@ -886,30 +1605,249 @@ impl GitPlatform for GitHubAdapter {
             original_line: c["original_line"].as_u64().map(|n| n as u32),
             original_start_line: c["original_start_line"].as_u64().map(|n| n as u32),
             diff_hunk: c["diff_hunk"].as_str().map(|s| s.to_string()),
+            thread_id: comment_id,
+            reply_to_id: None,
+            resolved: None,
+            resolvable: false,
         })
     }
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError> {
-        let url = format!("{}/repos/{}/{}/pulls/{}/comments?per_page=100", self.base_url, owner, repo, pr_number);
-        let items: Vec<Value> = self.get_json(&url).await?;
-        let comments = items
-            .iter()
-            .map(|c| PrComment {
-                id: c["id"].clone(),
-                body: c["body"].as_str().unwrap_or("").to_string(),
-                path: c["path"].as_str().unwrap_or("").to_string(),
-                line: c["line"].as_u64().map(|n| n as u32),
-                start_line: c["start_line"].as_u64().map(|n| n as u32),
-                author: Self::map_user(&c["user"]),
-                created_at: c["created_at"].as_str().unwrap_or("").to_string(),
-                commit_id: c["commit_id"].as_str().map(|s| s.to_string()),
-                original_commit_id: c["original_commit_id"].as_str().map(|s| s.to_string()),
-                original_line: c["original_line"].as_u64().map(|n| n as u32),
-                original_start_line: c["original_start_line"].as_u64().map(|n| n as u32),
-                diff_hunk: c["diff_hunk"].as_str().map(|s| s.to_string()),
-            })
-            .collect();
+        let number =
+            i32::try_from(pr_number).map_err(|_| AppError::Api("GitHub PR 编号超出 GraphQL Int 范围".into()))?;
+        let mut comments = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let data = self
+                .graphql(
+                    "评审线程查询",
+                    r#"query ReviewThreads($owner: String!, $repo: String!, $number: Int!, $after: String) {
+                        repository(owner: $owner, name: $repo) {
+                            pullRequest(number: $number) {
+                                reviewThreads(first: 100, after: $after) {
+                                    nodes {
+                                        id
+                                        isResolved
+                                        viewerCanResolve
+                                        viewerCanUnresolve
+                                        comments(first: 100) {
+                                            nodes {
+                                                id
+                                                fullDatabaseId
+                                                body
+                                                path
+                                                line
+                                                startLine
+                                                author {
+                                                    login
+                                                    avatarUrl
+                                                    ... on User { id name }
+                                                }
+                                                createdAt
+                                                commit { oid }
+                                                originalCommit { oid }
+                                                originalLine
+                                                originalStartLine
+                                                diffHunk
+                                                replyTo { id fullDatabaseId }
+                                            }
+                                            pageInfo { hasNextPage endCursor }
+                                        }
+                                    }
+                                    pageInfo { hasNextPage endCursor }
+                                }
+                            }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "owner": owner,
+                        "repo": repo,
+                        "number": number,
+                        "after": after,
+                    }),
+                )
+                .await?;
+            let review_threads = data["repository"]["pullRequest"]["reviewThreads"]
+                .as_object()
+                .ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少 reviewThreads".into()))?;
+            let threads = review_threads["nodes"]
+                .as_array()
+                .ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少 nodes".into()))?;
+            for thread in threads {
+                let thread_id = thread["id"]
+                    .as_str()
+                    .filter(|thread_id| !thread_id.is_empty())
+                    .ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少线程 ID".into()))?;
+                let mut comment_page = thread["comments"].clone();
+                loop {
+                    let page_comments = comment_page["nodes"]
+                        .as_array()
+                        .ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少评论 nodes".into()))?;
+                    for comment in page_comments {
+                        comments.push(Self::map_graphql_review_comment(thread, comment)?);
+                    }
+                    if comment_page["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
+                        break;
+                    }
+                    let cursor = comment_page["pageInfo"]["endCursor"]
+                        .as_str()
+                        .filter(|cursor| !cursor.is_empty())
+                        .ok_or_else(|| AppError::Api("GitHub 评审线程评论分页响应缺少游标".into()))?;
+                    comment_page = self.review_thread_comments_page(thread_id, cursor).await?;
+                }
+            }
+
+            if review_threads["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
+                break;
+            }
+            after = Some(
+                review_threads["pageInfo"]["endCursor"]
+                    .as_str()
+                    .filter(|cursor| !cursor.is_empty())
+                    .ok_or_else(|| AppError::Api("GitHub 评审线程分页响应缺少游标".into()))?
+                    .to_string(),
+            );
+        }
         Ok(comments)
+    }
+
+    async fn set_review_thread_resolved(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+        thread_id: &str,
+        resolved: bool,
+    ) -> Result<(), AppError> {
+        let (operation, mutation, result_field) = if resolved {
+            (
+                "解决评审线程",
+                r#"mutation ResolveReviewThread($threadId: ID!) {
+                    resolveReviewThread(input: { threadId: $threadId }) {
+                        thread { id isResolved }
+                    }
+                }"#,
+                "resolveReviewThread",
+            )
+        } else {
+            (
+                "重新打开评审线程",
+                r#"mutation UnresolveReviewThread($threadId: ID!) {
+                    unresolveReviewThread(input: { threadId: $threadId }) {
+                        thread { id isResolved }
+                    }
+                }"#,
+                "unresolveReviewThread",
+            )
+        };
+        let data = self.graphql(operation, mutation, serde_json::json!({ "threadId": thread_id })).await?;
+        let thread = &data[result_field]["thread"];
+        if thread["id"].as_str() != Some(thread_id) || thread["isResolved"].as_bool() != Some(resolved) {
+            return Err(AppError::Api(format!("GitHub {operation}响应与请求状态不一致")));
+        }
+        Ok(())
+    }
+
+    async fn list_viewed_pr_files(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<String>, AppError> {
+        let number =
+            i32::try_from(pr_number).map_err(|_| AppError::Api("GitHub PR 编号超出 GraphQL Int 范围".into()))?;
+        let mut viewed_files = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let data = self
+                .graphql(
+                    "文件已查看状态查询",
+                    r#"query PullRequestViewedFiles(
+                        $owner: String!
+                        $repo: String!
+                        $number: Int!
+                        $after: String
+                    ) {
+                        repository(owner: $owner, name: $repo) {
+                            pullRequest(number: $number) {
+                                files(first: 100, after: $after) {
+                                    nodes { path viewerViewedState }
+                                    pageInfo { hasNextPage endCursor }
+                                }
+                            }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "owner": owner,
+                        "repo": repo,
+                        "number": number,
+                        "after": after,
+                    }),
+                )
+                .await?;
+            let files = data["repository"]["pullRequest"]["files"]
+                .as_object()
+                .ok_or_else(|| AppError::Api("GitHub 文件已查看状态响应缺少 files".into()))?;
+            let nodes =
+                files["nodes"].as_array().ok_or_else(|| AppError::Api("GitHub 文件已查看状态响应缺少 nodes".into()))?;
+            for file in nodes {
+                let path = file["path"]
+                    .as_str()
+                    .filter(|path| !path.is_empty())
+                    .ok_or_else(|| AppError::Api("GitHub 文件已查看状态响应缺少路径".into()))?;
+                let viewed_state = file["viewerViewedState"]
+                    .as_str()
+                    .ok_or_else(|| AppError::Api("GitHub 文件已查看状态响应缺少状态".into()))?;
+                if viewed_state == "VIEWED" {
+                    viewed_files.push(path.to_string());
+                }
+            }
+            if files["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
+                break;
+            }
+            after = Some(
+                files["pageInfo"]["endCursor"]
+                    .as_str()
+                    .filter(|cursor| !cursor.is_empty())
+                    .ok_or_else(|| AppError::Api("GitHub 文件已查看状态分页响应缺少游标".into()))?
+                    .to_string(),
+            );
+        }
+        Ok(viewed_files)
+    }
+
+    async fn set_pr_file_viewed(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        path: &str,
+        viewed: bool,
+    ) -> Result<(), AppError> {
+        let pull_request_id = self.pull_request_node_id(owner, repo, pr_number).await?;
+        let (operation, mutation, result_field) = if viewed {
+            (
+                "标记文件为已查看",
+                r#"mutation MarkFileAsViewed($pullRequestId: ID!, $path: String!) {
+                    markFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path }) {
+                        pullRequest { id }
+                    }
+                }"#,
+                "markFileAsViewed",
+            )
+        } else {
+            (
+                "标记文件为未查看",
+                r#"mutation UnmarkFileAsViewed($pullRequestId: ID!, $path: String!) {
+                    unmarkFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path }) {
+                        pullRequest { id }
+                    }
+                }"#,
+                "unmarkFileAsViewed",
+            )
+        };
+        let data = self
+            .graphql(operation, mutation, serde_json::json!({ "pullRequestId": pull_request_id, "path": path }))
+            .await?;
+        if data[result_field]["pullRequest"]["id"].as_str() != Some(pull_request_id.as_str()) {
+            return Err(AppError::Api(format!("GitHub {operation}响应缺少匹配的 PR")));
+        }
+        Ok(())
     }
 
     async fn list_reviews(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<Review>, AppError> {

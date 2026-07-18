@@ -17,6 +17,16 @@ pub struct PlatformCapabilities {
     pub supports_issue_auto_close: bool,
     /// 平台是否提供可用于增量评审的可靠 base/head compare API。
     pub supports_compare_diff: bool,
+    /// 平台 API 是否支持解决和重新打开评审线程。
+    pub supports_review_thread_resolution: bool,
+    /// 平台公开 API 是否支持读取和写入文件已查看状态。
+    pub supports_remote_file_viewed_state: bool,
+    pub supports_pr_title_body_edit: bool,
+    pub supports_pr_draft_toggle: bool,
+    pub supports_pr_reviewer_management: bool,
+    pub supports_pr_assignee_management: bool,
+    pub supports_pr_label_management: bool,
+    pub supports_pr_milestone_management: bool,
 }
 
 /// 平台协议能力的唯一静态定义入口。
@@ -32,6 +42,14 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_fork_context: true,
             supports_issue_auto_close: true,
             supports_compare_diff: true,
+            supports_review_thread_resolution: true,
+            supports_remote_file_viewed_state: true,
+            supports_pr_title_body_edit: true,
+            supports_pr_draft_toggle: true,
+            supports_pr_reviewer_management: true,
+            supports_pr_assignee_management: true,
+            supports_pr_label_management: true,
+            supports_pr_milestone_management: true,
         },
         "gitlab" => PlatformCapabilities {
             platform: "gitlab",
@@ -40,6 +58,14 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_fork_context: true,
             supports_issue_auto_close: true,
             supports_compare_diff: true,
+            supports_review_thread_resolution: true,
+            supports_remote_file_viewed_state: false,
+            supports_pr_title_body_edit: true,
+            supports_pr_draft_toggle: true,
+            supports_pr_reviewer_management: true,
+            supports_pr_assignee_management: true,
+            supports_pr_label_management: true,
+            supports_pr_milestone_management: true,
         },
         "gitee" => PlatformCapabilities {
             platform: "gitee",
@@ -48,6 +74,14 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_fork_context: true,
             supports_issue_auto_close: true,
             supports_compare_diff: true,
+            supports_review_thread_resolution: false,
+            supports_remote_file_viewed_state: false,
+            supports_pr_title_body_edit: true,
+            supports_pr_draft_toggle: false,
+            supports_pr_reviewer_management: true,
+            supports_pr_assignee_management: true,
+            supports_pr_label_management: true,
+            supports_pr_milestone_management: true,
         },
         _ => return None,
     };
@@ -67,6 +101,70 @@ pub fn normalize_api_base(platform: &str, url: &str) -> String {
     } else {
         format!("{trimmed}{suffix}")
     }
+}
+
+fn readiness_rank(state: ReadinessState) -> u8 {
+    match state {
+        ReadinessState::Blocked => 4,
+        ReadinessState::Pending => 3,
+        ReadinessState::Ready => 2,
+        ReadinessState::Unknown => 1,
+    }
+}
+
+fn merge_readiness_state(left: ReadinessState, right: ReadinessState) -> ReadinessState {
+    if readiness_rank(right) > readiness_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn merge_optional_flag(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+    match (left, right) {
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        (Some(false), _) | (_, Some(false)) => Some(false),
+        (None, None) => None,
+    }
+}
+
+fn merge_inbox_status(left: &mut ReviewInboxStatusSummary, right: ReviewInboxStatusSummary) {
+    left.status = merge_readiness_state(left.status, right.status);
+    left.checks_status = merge_readiness_state(left.checks_status, right.checks_status);
+    left.approvals_status = merge_readiness_state(left.approvals_status, right.approvals_status);
+    left.draft = merge_optional_flag(left.draft, right.draft);
+    left.has_conflicts = merge_optional_flag(left.has_conflicts, right.has_conflicts);
+    for reason in right.blocking_reasons {
+        if !left.blocking_reasons.contains(&reason) {
+            left.blocking_reasons.push(reason);
+        }
+    }
+}
+
+pub(crate) fn merge_review_inbox_items(items: Vec<ReviewInboxItem>) -> Vec<ReviewInboxItem> {
+    let mut merged = Vec::<ReviewInboxItem>::new();
+    let mut indexes = std::collections::HashMap::<(String, u64), usize>::new();
+    for item in items {
+        let key = (item.repository_full_name.clone(), item.summary.number);
+        if let Some(index) = indexes.get(&key).copied() {
+            let existing = &mut merged[index];
+            for category in item.categories {
+                if !existing.categories.contains(&category) {
+                    existing.categories.push(category);
+                }
+            }
+            for relationship in item.relationships {
+                if !existing.relationships.contains(&relationship) {
+                    existing.relationships.push(relationship);
+                }
+            }
+            merge_inbox_status(&mut existing.status, item.status);
+        } else {
+            indexes.insert(key, merged.len());
+            merged.push(item);
+        }
+    }
+    merged
 }
 
 /// Common interface for all Git platforms (GitHub, GitLab, Gitee)
@@ -89,7 +187,23 @@ pub trait GitPlatform: Send + Sync {
         per_page: u32,
     ) -> Result<Paginated<PrSummary>, AppError>;
 
+    async fn list_review_inbox(
+        &self,
+        category: &ReviewInboxCategory,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Paginated<ReviewInboxItem>, AppError>;
+
     async fn get_pull_request(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrDetail, AppError>;
+
+    async fn update_pull_request_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        current: &PrDetail,
+        update: &PrMetadataUpdate,
+    ) -> Result<PrMetadataMutationResult, AppError>;
 
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError>;
 
@@ -139,6 +253,32 @@ pub trait GitPlatform: Send + Sync {
     ) -> Result<PrComment, AppError>;
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError>;
+
+    async fn set_review_thread_resolved(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+        _thread_id: &str,
+        _resolved: bool,
+    ) -> Result<(), AppError> {
+        Err(AppError::Api(format!("{} 不支持解决或重新打开评审线程", self.name())))
+    }
+
+    async fn list_viewed_pr_files(&self, _owner: &str, _repo: &str, _pr_number: u64) -> Result<Vec<String>, AppError> {
+        Err(AppError::Api(format!("{} 不支持同步文件已查看状态", self.name())))
+    }
+
+    async fn set_pr_file_viewed(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+        _path: &str,
+        _viewed: bool,
+    ) -> Result<(), AppError> {
+        Err(AppError::Api(format!("{} 不支持同步文件已查看状态", self.name())))
+    }
 
     // ── Merge / Close / Reopen ──
     async fn merge_pull_request(
@@ -195,6 +335,12 @@ mod tests {
         assert_eq!(gitee["merge_strategies"], serde_json::json!(["merge", "squash", "rebase"]));
         assert!(github["supports_fork_context"].as_bool().unwrap());
         assert!(gitlab["supports_issue_auto_close"].as_bool().unwrap());
+        assert_eq!(github["supports_review_thread_resolution"], serde_json::json!(true));
+        assert_eq!(gitlab["supports_review_thread_resolution"], serde_json::json!(true));
+        assert_eq!(gitee["supports_review_thread_resolution"], serde_json::json!(false));
+        assert_eq!(github["supports_remote_file_viewed_state"], serde_json::json!(true));
+        assert_eq!(gitlab["supports_remote_file_viewed_state"], serde_json::json!(false));
+        assert_eq!(gitee["supports_remote_file_viewed_state"], serde_json::json!(false));
         assert!(capabilities_for("unknown").is_none());
     }
 

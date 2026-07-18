@@ -1,8 +1,11 @@
 use mergebeacon_lib::error::AppError;
 use mergebeacon_lib::http_client::HttpClient;
-use mergebeacon_lib::models::{PrState, ReviewEvent};
+use mergebeacon_lib::models::{
+    PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary,
+    ReadinessState, ReviewEvent, ReviewInboxCategory, ReviewInboxRelationship, User,
+};
 use mergebeacon_lib::platform::{gitlab::GitLabAdapter, GitPlatform};
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
@@ -79,6 +82,80 @@ async fn test_gitlab_nested_subgroup_project_path_is_fully_encoded() {
 }
 
 #[tokio::test]
+async fn test_gitlab_open_pr_list_uses_list_fields_for_status_summary() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests"))
+        .and(query_param("state", "opened"))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("x-total-pages", "1").insert_header("x-total", "1").set_body_json(
+                serde_json::json!([{
+                    "iid": 3,
+                    "title": "Blocked MR",
+                    "author": gitlab_user(),
+                    "state": "opened",
+                    "merged_at": null,
+                    "created_at": "2026-07-15T10:00:00Z",
+                    "updated_at": "2026-07-16T10:00:00Z",
+                    "labels": ["backend"],
+                    "draft": true,
+                    "has_conflicts": true,
+                    "detailed_merge_status": "not_approved",
+                    "head_pipeline": { "status": "failed" },
+                    "blocking_discussions_resolved": false
+                }]),
+            ),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let result =
+        adapter.list_pull_requests("group", "repo", &PrState::Open, 1, 20).await.expect("should list merge requests");
+
+    let status = result.items[0].status.as_ref().expect("open MR should expose status summary");
+    assert_eq!(status.status, ReadinessState::Blocked);
+    assert_eq!(status.approvals_status, ReadinessState::Blocked);
+    assert_eq!(status.checks_status, ReadinessState::Blocked);
+    assert_eq!(status.draft, Some(true));
+    assert_eq!(status.has_conflicts, Some(true));
+}
+
+#[tokio::test]
+async fn test_gitlab_closed_pr_list_omits_live_status_summary() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests"))
+        .and(query_param("state", "closed"))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("x-total-pages", "1").insert_header("x-total", "1").set_body_json(
+                serde_json::json!([{
+                    "iid": 4,
+                    "title": "Closed MR",
+                    "author": gitlab_user(),
+                    "state": "closed",
+                    "merged_at": null,
+                    "created_at": "2026-07-15T10:00:00Z",
+                    "updated_at": "2026-07-16T10:00:00Z",
+                    "labels": [],
+                    "detailed_merge_status": "not_approved",
+                    "head_pipeline": { "status": "failed" }
+                }]),
+            ),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let result = adapter
+        .list_pull_requests("group", "repo", &PrState::Closed, 1, 20)
+        .await
+        .expect("should list closed merge requests");
+
+    assert!(result.items[0].status.is_none());
+}
+
+#[tokio::test]
 async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -96,7 +173,11 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
             "source_branch": "feature",
             "target_branch": "main",
             "sha": "head-sha",
-            "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"}
+            "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"},
+            "draft": true,
+            "reviewers": [gitlab_user()],
+            "assignees": [{"id": 8, "username": "assignee", "name": "Assignee", "avatar_url": ""}],
+            "milestone": {"id": 11, "iid": 2, "title": "0.6.0"}
         })))
         .expect(1)
         .mount(&mock_server)
@@ -107,6 +188,10 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
 
     assert_eq!(detail.head_sha, "head-sha");
     assert_eq!(detail.base_sha, "base-sha");
+    assert_eq!(detail.draft, Some(true));
+    assert_eq!(detail.reviewers[0].login, "reviewer");
+    assert_eq!(detail.assignees[0].login, "assignee");
+    assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
 
 #[tokio::test]
@@ -469,10 +554,20 @@ async fn test_gitlab_list_inline_comments_filters_regular_and_system_notes() {
                     "id": 50,
                     "body": "inline note",
                     "system": false,
+                    "resolvable": true,
+                    "resolved": false,
                     "author": gitlab_user(),
                     "created_at": "2026-07-15T10:00:00Z",
                     "position": gitlab_position(),
                     "original_position": old_position
+                }, {
+                    "id": 53,
+                    "body": "reply note",
+                    "system": false,
+                    "resolvable": false,
+                    "author": gitlab_user(),
+                    "created_at": "2026-07-15T11:00:00Z",
+                    "position": null
                 }]
             },
             {
@@ -505,10 +600,37 @@ async fn test_gitlab_list_inline_comments_filters_regular_and_system_notes() {
     let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
     let comments = adapter.list_pr_comments("group", "repo", 9).await.expect("should list inline comments");
 
-    assert_eq!(comments.len(), 1);
+    assert_eq!(comments.len(), 2);
     assert_eq!(comments[0].id, serde_json::json!(50));
     assert_eq!(comments[0].line, Some(12));
     assert_eq!(comments[0].original_line, Some(10));
+    assert_eq!(comments[0].thread_id, "inline");
+    assert_eq!(comments[0].resolved, Some(false));
+    assert!(comments[0].resolvable);
+    assert_eq!(comments[1].id, serde_json::json!(53));
+    assert_eq!(comments[1].reply_to_id.as_deref(), Some("50"));
+    assert_eq!(comments[1].line, Some(12));
+}
+
+#[tokio::test]
+async fn test_gitlab_resolves_and_reopens_discussion() {
+    let mock_server = MockServer::start().await;
+    for resolved in [true, false] {
+        Mock::given(method("PUT"))
+            .and(path("/api/v4/projects/group%2Frepo/merge_requests/9/discussions/thread-1"))
+            .and(body_json(serde_json::json!({ "resolved": resolved })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "thread-1",
+                "resolved": resolved
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+    }
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    adapter.set_review_thread_resolved("group", "repo", 9, "thread-1", true).await.expect("should resolve discussion");
+    adapter.set_review_thread_resolved("group", "repo", 9, "thread-1", false).await.expect("should reopen discussion");
 }
 
 #[tokio::test]
@@ -746,4 +868,271 @@ async fn test_gitlab_file_content_encodes_nested_project_and_file_path() {
 
     assert_eq!(content.content, "fn main() {}\n");
     assert_eq!(content.revision, "base-sha");
+}
+
+#[tokio::test]
+async fn test_gitlab_review_inbox_combines_reviewers_and_assignees() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/user"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 7,
+            "username": "reviewer",
+            "name": "Reviewer",
+            "avatar_url": ""
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/merge_requests"))
+        .and(query_param("scope", "all"))
+        .and(query_param("state", "opened"))
+        .and(query_param("reviewer_id", "7"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "100"))
+        .respond_with(
+            ResponseTemplate::new(200).append_header("x-total", "1").append_header("x-total-pages", "1").set_body_json(
+                serde_json::json!([{
+                    "iid": 9,
+                    "title": "Nested project MR",
+                    "state": "opened",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "updated_at": "2025-01-03T00:00:00Z",
+                    "author": { "id": 1, "username": "dev", "name": "Dev", "avatar_url": "" },
+                    "labels": ["backend"],
+                    "references": { "full": "group/subgroup/project!9" },
+                    "draft": false,
+                    "has_conflicts": false,
+                    "detailed_merge_status": "not_approved",
+                    "head_pipeline": { "status": "success" }
+                }]),
+            ),
+        )
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/merge_requests"))
+        .and(query_param("assignee_id", "7"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "100"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "iid": 9,
+                "title": "Nested project MR",
+                "state": "opened",
+                "created_at": "2025-01-01T00:00:00Z",
+                "updated_at": "2025-01-03T00:00:00Z",
+                "author": { "id": 1, "username": "dev", "name": "Dev", "avatar_url": "" },
+                "labels": ["backend"],
+                "references": { "full": "group/subgroup/project!9" },
+                "draft": false,
+                "has_conflicts": false,
+                "detailed_merge_status": "not_approved",
+                "head_pipeline": { "status": "success" }
+            },
+            {
+                "iid": 10,
+                "title": "Assigned MR",
+                "state": "opened",
+                "created_at": "2025-01-01T00:00:00Z",
+                "updated_at": "2025-01-02T00:00:00Z",
+                "author": { "id": 2, "username": "dev2", "name": "Dev 2", "avatar_url": "" },
+                "labels": [],
+                "references": { "full": "group/assigned!10" },
+                "draft": false,
+                "has_conflicts": false,
+                "detailed_merge_status": "can_be_merged",
+                "head_pipeline": { "status": "success" }
+            }
+        ])))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let result = adapter
+        .list_review_inbox(&ReviewInboxCategory::ReviewRequested, 1, 20)
+        .await
+        .expect("should list review inbox");
+
+    assert_eq!(result.total_count, 2);
+    assert_eq!(result.items.iter().map(|item| item.summary.number).collect::<Vec<_>>(), vec![9, 10]);
+    assert_eq!(result.items[0].owner, "group/subgroup");
+    assert_eq!(result.items[0].repo, "project");
+    assert_eq!(result.items[0].repository_full_name, "group/subgroup/project");
+    assert_eq!(result.items[0].platform, "gitlab");
+    assert_eq!(
+        result.items[0].relationships,
+        vec![ReviewInboxRelationship::Reviewer, ReviewInboxRelationship::Assignee]
+    );
+    assert_eq!(result.items[0].status.status, ReadinessState::Blocked);
+    assert_eq!(result.items[0].status.checks_status, ReadinessState::Ready);
+    assert_eq!(result.items[0].status.approvals_status, ReadinessState::Blocked);
+    assert_eq!(result.items[1].repository_full_name, "group/assigned");
+    assert_eq!(result.items[1].relationships, vec![ReviewInboxRelationship::Assignee]);
+    assert_eq!(result.items[1].status.status, ReadinessState::Ready);
+}
+
+#[tokio::test]
+async fn test_gitlab_updates_merge_request_metadata() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users"))
+        .and(query_param("username", "new-reviewer"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": 12, "username": "new-reviewer" }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users"))
+        .and(query_param("username", "new-assignee"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": 13, "username": "new-assignee" }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/milestones"))
+        .and(query_param("state", "all"))
+        .and(query_param("title", "0.7.0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": 8, "title": "0.7.0" }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/3"))
+        .and(body_json(serde_json::json!({
+            "title": "Draft: New title",
+            "description": "New body",
+            "reviewer_ids": [12],
+            "assignee_ids": [13],
+            "labels": "new-label",
+            "milestone_id": 8
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let current = PrDetail {
+        summary: PrSummary {
+            number: 3,
+            title: "Old title".into(),
+            author: User { id: serde_json::json!(1), login: "author".into(), name: "".into(), avatar_url: "".into() },
+            state: PrState::Open,
+            created_at: "2026-07-16T00:00:00Z".into(),
+            updated_at: "2026-07-17T00:00:00Z".into(),
+            labels: vec!["old-label".into()],
+            status: None,
+        },
+        body: "Old body".into(),
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        mergeable: None,
+        head_sha: "head".into(),
+        base_sha: "base".into(),
+        draft: Some(false),
+        reviewers: vec![User {
+            id: serde_json::json!(2),
+            login: "old-reviewer".into(),
+            name: "".into(),
+            avatar_url: "".into(),
+        }],
+        assignees: vec![User {
+            id: serde_json::json!(3),
+            login: "old-assignee".into(),
+            name: "".into(),
+            avatar_url: "".into(),
+        }],
+        milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
+        metadata_permissions: PrMetadataPermissions::default(),
+    };
+    let update = PrMetadataUpdate {
+        title: "New title".into(),
+        body: "New body".into(),
+        draft: Some(true),
+        reviewers: vec!["new-reviewer".into()],
+        assignees: vec!["new-assignee".into()],
+        labels: vec!["new-label".into()],
+        milestone: Some("0.7.0".into()),
+        expected_updated_at: current.summary.updated_at.clone(),
+    };
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+
+    let result = adapter
+        .update_pull_request_metadata("group", "repo", 3, &current, &update)
+        .await
+        .expect("metadata update should succeed");
+
+    assert!(result.failures.is_empty());
+    assert_eq!(
+        result.updated_fields,
+        vec![
+            PrMetadataField::TitleBody,
+            PrMetadataField::Draft,
+            PrMetadataField::Reviewers,
+            PrMetadataField::Assignees,
+            PrMetadataField::Labels,
+            PrMetadataField::Milestone,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_gitlab_clears_merge_request_milestone_with_zero_id() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/3"))
+        .and(body_json(serde_json::json!({ "milestone_id": 0 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let current = PrDetail {
+        summary: PrSummary {
+            number: 3,
+            title: "Title".into(),
+            author: User { id: serde_json::json!(1), login: "author".into(), name: "".into(), avatar_url: "".into() },
+            state: PrState::Open,
+            created_at: "2026-07-16T00:00:00Z".into(),
+            updated_at: "2026-07-17T00:00:00Z".into(),
+            labels: Vec::new(),
+            status: None,
+        },
+        body: "Body".into(),
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        mergeable: None,
+        head_sha: "head".into(),
+        base_sha: "base".into(),
+        draft: Some(false),
+        reviewers: Vec::new(),
+        assignees: Vec::new(),
+        milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
+        metadata_permissions: PrMetadataPermissions::default(),
+    };
+    let update = PrMetadataUpdate {
+        title: current.summary.title.clone(),
+        body: current.body.clone(),
+        draft: current.draft,
+        reviewers: Vec::new(),
+        assignees: Vec::new(),
+        labels: Vec::new(),
+        milestone: None,
+        expected_updated_at: current.summary.updated_at.clone(),
+    };
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+
+    let result = adapter
+        .update_pull_request_metadata("group", "repo", 3, &current, &update)
+        .await
+        .expect("milestone removal should succeed");
+
+    assert!(result.failures.is_empty());
+    assert_eq!(result.updated_fields, vec![PrMetadataField::Milestone]);
 }

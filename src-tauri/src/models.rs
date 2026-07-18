@@ -65,6 +65,77 @@ pub struct PrSummary {
     pub created_at: String,
     pub updated_at: String,
     pub labels: Vec<String>,
+    pub status: Option<PrStatusSummary>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewInboxCategory {
+    ReviewRequested,
+    Authored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewInboxRelationship {
+    Reviewer,
+    Assignee,
+    Tester,
+    Author,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrStatusSummary {
+    pub status: ReadinessState,
+    pub draft: Option<bool>,
+    pub has_conflicts: Option<bool>,
+    pub checks_status: ReadinessState,
+    pub approvals_status: ReadinessState,
+    pub blocking_reasons: Vec<MergeBlockingReason>,
+}
+
+impl Default for PrStatusSummary {
+    fn default() -> Self {
+        Self {
+            status: ReadinessState::Unknown,
+            draft: None,
+            has_conflicts: None,
+            checks_status: ReadinessState::Unknown,
+            approvals_status: ReadinessState::Unknown,
+            blocking_reasons: Vec::new(),
+        }
+    }
+}
+
+pub type ReviewInboxStatusSummary = PrStatusSummary;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewInboxItem {
+    pub platform: String,
+    pub owner: String,
+    pub repo: String,
+    pub repository_full_name: String,
+    pub categories: Vec<ReviewInboxCategory>,
+    pub relationships: Vec<ReviewInboxRelationship>,
+    pub status: ReviewInboxStatusSummary,
+    pub summary: PrSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrMilestone {
+    pub id: serde_json::Value,
+    pub number: Option<u64>,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PrMetadataPermissions {
+    pub can_edit_title_body: Option<bool>,
+    pub can_toggle_draft: Option<bool>,
+    pub can_manage_reviewers: Option<bool>,
+    pub can_manage_assignees: Option<bool>,
+    pub can_manage_labels: Option<bool>,
+    pub can_manage_milestone: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +147,54 @@ pub struct PrDetail {
     pub mergeable: Option<bool>,
     pub head_sha: String,
     pub base_sha: String,
+    pub draft: Option<bool>,
+    pub reviewers: Vec<User>,
+    pub assignees: Vec<User>,
+    pub milestone: Option<PrMilestone>,
+    pub metadata_permissions: PrMetadataPermissions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrMetadataUpdate {
+    pub title: String,
+    pub body: String,
+    pub draft: Option<bool>,
+    pub reviewers: Vec<String>,
+    pub assignees: Vec<String>,
+    pub labels: Vec<String>,
+    pub milestone: Option<String>,
+    pub expected_updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrMetadataField {
+    TitleBody,
+    Draft,
+    Reviewers,
+    Assignees,
+    Labels,
+    Milestone,
+    Refresh,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrMetadataUpdateFailure {
+    pub field: PrMetadataField,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PrMetadataMutationResult {
+    pub updated_fields: Vec<PrMetadataField>,
+    pub failures: Vec<PrMetadataUpdateFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrMetadataUpdateOutcome {
+    pub detail: Option<PrDetail>,
+    pub updated_fields: Vec<PrMetadataField>,
+    pub failures: Vec<PrMetadataUpdateFailure>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +378,10 @@ pub struct PrComment {
     pub original_line: Option<u32>,
     pub original_start_line: Option<u32>,
     pub diff_hunk: Option<String>,
+    pub thread_id: String,
+    pub reply_to_id: Option<String>,
+    pub resolved: Option<bool>,
+    pub resolvable: bool,
 }
 
 // ── Issue ──

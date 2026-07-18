@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::{stream, StreamExt};
 use serde_json::Value;
 
 use super::GitPlatform;
@@ -160,6 +161,121 @@ impl GiteeAdapter {
         }
     }
 
+    fn inbox_acceptance_progress(json: &Value, gates: &[(&str, &str)]) -> (Option<u32>, Option<u32>) {
+        let progress = Self::acceptance_progress(json, gates);
+        if progress.0.is_some() {
+            return progress;
+        }
+
+        let mut required = 0_u32;
+        let mut received = 0_u32;
+        let mut found = false;
+        for (_, participants_field) in gates {
+            let Some(participants) = json[*participants_field].as_array() else {
+                continue;
+            };
+            if participants.is_empty() {
+                continue;
+            }
+            found = true;
+            required = required.saturating_add(participants.len() as u32);
+            received = received.saturating_add(
+                participants.iter().filter(|participant| participant["accept"].as_bool() == Some(true)).count() as u32,
+            );
+        }
+        if found {
+            (Some(required), Some(received))
+        } else {
+            (None, None)
+        }
+    }
+
+    fn inbox_status(pr: &Value) -> ReviewInboxStatusSummary {
+        let mergeable = pr["mergeable"].as_bool();
+        let draft = pr["draft"].as_bool().or_else(|| pr["work_in_progress"].as_bool());
+        let has_conflicts = pr["has_conflicts"]
+            .as_bool()
+            .or_else(|| pr["conflict"].as_bool())
+            .or_else(|| (mergeable == Some(true)).then_some(false));
+        let mut blocking_reasons = Vec::new();
+
+        if draft == Some(true) {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::Draft,
+                message: "PR 仍处于 Draft 状态".into(),
+            });
+        }
+        if has_conflicts == Some(true) {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::Conflicts,
+                message: "源分支存在合并冲突".into(),
+            });
+        }
+        if mergeable == Some(false) && has_conflicts != Some(true) {
+            blocking_reasons.push(MergeBlockingReason {
+                code: MergeBlockingReasonCode::PlatformBlocked,
+                message: "平台报告当前 PR 不可合并".into(),
+            });
+        }
+
+        let (approvals_required, approvals_received) = Self::inbox_acceptance_progress(
+            pr,
+            &[("assignees_number", "assignees"), ("api_reviewers_number", "api_reviewers")],
+        );
+        let approvals_status = match (approvals_required, approvals_received) {
+            (Some(required), Some(received)) if received >= required => ReadinessState::Ready,
+            (Some(required), Some(received)) => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ApprovalsRequired,
+                    message: format!("还需要 {} 个审批", required.saturating_sub(received)),
+                });
+                ReadinessState::Blocked
+            }
+            _ => ReadinessState::Unknown,
+        };
+
+        let (tests_required, tests_received) = Self::inbox_acceptance_progress(pr, &[("testers_number", "testers")]);
+        let checks_status = match (tests_required, tests_received) {
+            (Some(required), Some(received)) if received >= required => ReadinessState::Ready,
+            (Some(required), Some(received)) => {
+                blocking_reasons.push(MergeBlockingReason {
+                    code: MergeBlockingReasonCode::ChecksPending,
+                    message: format!("还需要 {} 个测试通过", required.saturating_sub(received)),
+                });
+                ReadinessState::Pending
+            }
+            _ => ReadinessState::Unknown,
+        };
+
+        let has_hard_blocker =
+            blocking_reasons.iter().any(|reason| reason.code != MergeBlockingReasonCode::ChecksPending);
+        let status = if has_hard_blocker || approvals_status == ReadinessState::Blocked {
+            ReadinessState::Blocked
+        } else if checks_status == ReadinessState::Pending {
+            ReadinessState::Pending
+        } else if mergeable == Some(true)
+            && approvals_status == ReadinessState::Ready
+            && checks_status == ReadinessState::Ready
+            && draft != Some(true)
+            && has_conflicts != Some(true)
+        {
+            ReadinessState::Ready
+        } else {
+            ReadinessState::Unknown
+        };
+
+        ReviewInboxStatusSummary { status, draft, has_conflicts, checks_status, approvals_status, blocking_reasons }
+    }
+
+    fn inbox_relationship(filter_name: &str) -> ReviewInboxRelationship {
+        match filter_name {
+            "assignee" => ReviewInboxRelationship::Reviewer,
+            "tester" => ReviewInboxRelationship::Tester,
+            "author" => ReviewInboxRelationship::Author,
+            _ => ReviewInboxRelationship::Reviewer,
+        }
+    }
+
     fn file_paths(value: &Value) -> (&str, &str) {
         let old_path = value["previous_filename"]
             .as_str()
@@ -223,6 +339,53 @@ impl GiteeAdapter {
         diff
     }
 
+    fn metadata_milestone(json: &Value) -> Option<PrMilestone> {
+        (!json.is_null()).then(|| PrMilestone {
+            id: json["id"].clone(),
+            number: json["number"].as_u64(),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+        })
+    }
+
+    fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+        match (left, right) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        }
+    }
+
+    async fn metadata_permissions(&self, owner: &str, repo: &str, author_login: &str) -> PrMetadataPermissions {
+        let user_url = format!("{}/user", self.base_url);
+        let repo_url = format!("{}/repos/{}/{}", self.base_url, owner, repo);
+        let (user, repository) = tokio::join!(self.get_json::<Value>(&user_url), self.get_json::<Value>(&repo_url));
+        let is_author =
+            user.ok().and_then(|user| user["login"].as_str().map(|login| login.eq_ignore_ascii_case(author_login)));
+        let can_write = repository.ok().and_then(|repository| Self::repository_merge_permission(&repository));
+        let can_edit = Self::known_or(is_author, can_write);
+        PrMetadataPermissions {
+            can_edit_title_body: can_edit,
+            can_toggle_draft: Some(false),
+            can_manage_reviewers: can_edit,
+            can_manage_assignees: can_edit,
+            can_manage_labels: can_edit,
+            can_manage_milestone: can_edit,
+        }
+    }
+
+    async fn resolve_milestone_number(&self, owner: &str, repo: &str, title: &str) -> Result<u64, AppError> {
+        let encoded = urlencoding::encode(title);
+        let url =
+            format!("{}/repos/{}/{}/milestones?state=all&per_page=100&title={}", self.base_url, owner, repo, encoded);
+        let milestones = self.get_json::<Value>(&url).await?;
+        milestones
+            .as_array()
+            .and_then(|items| {
+                items.iter().find(|item| item["title"].as_str() == Some(title)).and_then(|item| item["number"].as_u64())
+            })
+            .ok_or_else(|| AppError::Api(format!("Gitee 仓库中不存在 Milestone：{title}")))
+    }
+
     fn repository_merge_permission(value: &Value) -> Option<bool> {
         let permissions = value.get("permission").or_else(|| value.get("permissions"))?;
         let admin = permissions["admin"].as_bool();
@@ -264,6 +427,234 @@ impl GiteeAdapter {
             .await?
             .error_for_status()?;
         Ok(resp.json().await?)
+    }
+
+    async fn delete_json(&self, url: &str, body: &Value) -> Result<Value, AppError> {
+        let separator = if url.contains('?') { "&" } else { "?" };
+        let full_url = format!("{}{}{}", url, separator, self.auth_query());
+
+        let resp = self
+            .client
+            .raw_client()
+            .delete(&full_url)
+            .header("User-Agent", "mergebeacon")
+            .json(body)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(resp.json().await?)
+    }
+
+    fn repository_parts(full_name: &str) -> Result<(String, String), AppError> {
+        let (owner, repo) = full_name
+            .rsplit_once('/')
+            .filter(|(owner, repo)| !owner.is_empty() && !repo.is_empty())
+            .ok_or_else(|| AppError::Api("Gitee 收件箱响应中的仓库路径无效".into()))?;
+        Ok((owner.to_string(), repo.to_string()))
+    }
+
+    fn matches_inbox_category(json: &Value, category: &ReviewInboxCategory, login: &str, filter_name: &str) -> bool {
+        match category {
+            ReviewInboxCategory::Authored => json["user"]["login"].as_str() == Some(login),
+            ReviewInboxCategory::ReviewRequested => {
+                let mut found_login = false;
+                let mut pending = false;
+                let mut found_other_reviewer = false;
+                let responsibility_fields: &[&str] = match filter_name {
+                    "tester" => &["testers"],
+                    _ => &["assignees", "api_reviewers"],
+                };
+                for field in responsibility_fields {
+                    if let Some(reviewers) = json[field].as_array() {
+                        for reviewer in reviewers {
+                            if reviewer["login"].as_str() == Some(login) {
+                                found_login = true;
+                                pending |= reviewer["accept"].as_bool() != Some(true);
+                            } else {
+                                found_other_reviewer = true;
+                            }
+                        }
+                    }
+                }
+                if found_login {
+                    pending
+                } else {
+                    // The repository endpoint's active responsibility filter is authoritative. Some Gitee
+                    // responses omit reviewer/tester arrays, so retain those results; only reject
+                    // explicit responsibility lists that do not contain the current user.
+                    !found_other_reviewer
+                }
+            }
+        }
+    }
+
+    fn inbox_api_error(status: reqwest::StatusCode, url: &str, body: &str) -> AppError {
+        let detail = serde_json::from_str::<Value>(body)
+            .ok()
+            .and_then(|json| json["message"].as_str().map(str::to_string))
+            .or_else(|| {
+                let trimmed = body.trim();
+                (!trimmed.is_empty() && !trimmed.starts_with('<'))
+                    .then(|| trimmed.chars().take(240).collect::<String>())
+            })
+            .unwrap_or_else(|| "远端返回了非 JSON 错误页面".to_string());
+        AppError::Api(format!("Gitee API {status} ({url}): {detail}"))
+    }
+
+    async fn send_inbox_request(&self, url: &str, query: &[(&str, String)]) -> Result<reqwest::Response, AppError> {
+        let response = self
+            .client
+            .get(url)
+            .header("User-Agent", "mergebeacon")
+            .query(query)
+            .query(&[("access_token", &self.token)])
+            .send()
+            .await
+            .map_err(|_| AppError::Api(format!("Gitee 收件箱请求失败（{url}）")))?;
+        if response.status().is_success() {
+            return Ok(response);
+        }
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(Self::inbox_api_error(status, url, &body))
+    }
+
+    async fn list_inbox_repositories(&self) -> Result<Vec<(String, String)>, AppError> {
+        const REMOTE_PAGE_SIZE: usize = 100;
+        let url = format!("{}/user/repos", self.base_url);
+        let mut page = 1_u32;
+        let mut repositories = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        loop {
+            let query = [
+                ("visibility", "all".to_string()),
+                ("sort", "updated".to_string()),
+                ("direction", "desc".to_string()),
+                ("page", page.to_string()),
+                ("per_page", REMOTE_PAGE_SIZE.to_string()),
+            ];
+            let response = self.send_inbox_request(&url, &query).await?;
+            let link_header = response.headers().get("link").and_then(|value| value.to_str().ok());
+            let total_pages = response
+                .headers()
+                .get("x-total-pages")
+                .or_else(|| response.headers().get("total_page"))
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or_else(|| Self::parse_last_page_gitee(link_header, page));
+            let raw_repositories: Vec<Value> = response.json().await?;
+            let fetched = raw_repositories.len();
+
+            for repository in raw_repositories {
+                let full_name = repository["full_name"]
+                    .as_str()
+                    .ok_or_else(|| AppError::Api("Gitee 收件箱仓库响应缺少 full_name".into()))?;
+                let parts = Self::repository_parts(full_name)?;
+                if seen.insert(full_name.to_string()) {
+                    repositories.push(parts);
+                }
+            }
+
+            if page >= total_pages && fetched < REMOTE_PAGE_SIZE {
+                break;
+            }
+            page = page.saturating_add(1);
+        }
+        Ok(repositories)
+    }
+
+    async fn list_repository_inbox_by_filter(
+        &self,
+        owner: &str,
+        repo: &str,
+        category: ReviewInboxCategory,
+        login: &str,
+        filter_name: &str,
+    ) -> Result<Vec<ReviewInboxItem>, AppError> {
+        const REMOTE_PAGE_SIZE: usize = 100;
+        let url = format!("{}/repos/{owner}/{repo}/pulls", self.base_url);
+        let filter_value = login;
+        let mut page = 1_u32;
+        let mut items = Vec::new();
+
+        loop {
+            let query = [
+                ("state", "open".to_string()),
+                ("sort", "updated".to_string()),
+                ("direction", "desc".to_string()),
+                (filter_name, filter_value.to_string()),
+                ("page", page.to_string()),
+                ("per_page", REMOTE_PAGE_SIZE.to_string()),
+            ];
+            let response = self.send_inbox_request(&url, &query).await?;
+            let link_header = response.headers().get("link").and_then(|value| value.to_str().ok());
+            let total_pages = response
+                .headers()
+                .get("x-total-pages")
+                .or_else(|| response.headers().get("total_page"))
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or_else(|| Self::parse_last_page_gitee(link_header, page));
+            let raw_items: Vec<Value> = response.json().await?;
+            let fetched = raw_items.len();
+
+            for pr in raw_items.iter().filter(|pr| Self::matches_inbox_category(pr, &category, login, filter_name)) {
+                items.push(ReviewInboxItem {
+                    platform: self.name().to_string(),
+                    owner: owner.to_string(),
+                    repo: repo.to_string(),
+                    repository_full_name: format!("{owner}/{repo}"),
+                    categories: vec![category],
+                    relationships: vec![Self::inbox_relationship(filter_name)],
+                    status: Self::inbox_status(pr),
+                    summary: PrSummary {
+                        number: pr["number"].as_u64().unwrap_or(0),
+                        title: pr["title"].as_str().unwrap_or("").to_string(),
+                        author: Self::map_user(&pr["user"]),
+                        state: PrState::Open,
+                        created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
+                        updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
+                        labels: pr["labels"]
+                            .as_array()
+                            .map(|labels| {
+                                labels.iter().filter_map(|label| label["name"].as_str().map(str::to_string)).collect()
+                            })
+                            .unwrap_or_default(),
+                        status: None,
+                    },
+                });
+            }
+
+            if page >= total_pages && fetched < REMOTE_PAGE_SIZE {
+                break;
+            }
+            page = page.saturating_add(1);
+        }
+        Ok(items)
+    }
+
+    async fn list_repository_inbox(
+        &self,
+        owner: &str,
+        repo: &str,
+        category: ReviewInboxCategory,
+        login: &str,
+    ) -> Result<Vec<ReviewInboxItem>, AppError> {
+        match category {
+            ReviewInboxCategory::ReviewRequested => {
+                let (reviews, tests) = tokio::try_join!(
+                    self.list_repository_inbox_by_filter(owner, repo, category, login, "assignee"),
+                    self.list_repository_inbox_by_filter(owner, repo, category, login, "tester"),
+                )?;
+                let mut items = super::merge_review_inbox_items(reviews.into_iter().chain(tests).collect());
+                items.sort_by(|left, right| right.summary.updated_at.cmp(&left.summary.updated_at));
+                Ok(items)
+            }
+            ReviewInboxCategory::Authored => {
+                self.list_repository_inbox_by_filter(owner, repo, category, login, "author").await
+            }
+        }
     }
 
     fn map_user(json: &Value) -> User {
@@ -415,17 +806,19 @@ impl GitPlatform for GiteeAdapter {
             .map(|pr| {
                 let state_str = pr["state"].as_str().unwrap_or("");
                 let merged = !pr["merged_at"].is_null();
+                let pr_state = if merged || state_str == "merged" {
+                    PrState::Merged
+                } else if state_str == "closed" {
+                    PrState::Closed
+                } else {
+                    PrState::Open
+                };
                 PrSummary {
                     number: pr["number"].as_u64().unwrap_or(0),
                     title: pr["title"].as_str().unwrap_or("").to_string(),
                     author: Self::map_user(&pr["user"]),
-                    state: if merged {
-                        PrState::Merged
-                    } else if state_str == "closed" {
-                        PrState::Closed
-                    } else {
-                        PrState::Open
-                    },
+                    status: matches!(pr_state, PrState::Open).then(|| Self::inbox_status(pr)),
+                    state: pr_state,
                     created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
                     updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
                     labels: pr["labels"]
@@ -455,6 +848,39 @@ impl GitPlatform for GiteeAdapter {
         Ok(Paginated { items: prs, page, total_pages: last_page, total_count })
     }
 
+    async fn list_review_inbox(
+        &self,
+        category: &ReviewInboxCategory,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Paginated<ReviewInboxItem>, AppError> {
+        let user = self.current_user().await?;
+        let repositories = self.list_inbox_repositories().await?;
+        let category = *category;
+        let login = user.login;
+        let batches = stream::iter(repositories.into_iter().map(|(owner, repo)| {
+            let login = login.clone();
+            async move { self.list_repository_inbox(&owner, &repo, category, &login).await }
+        }))
+        .buffer_unordered(6)
+        .collect::<Vec<_>>()
+        .await;
+
+        let mut items = Vec::new();
+        for batch in batches {
+            items.extend(batch?);
+        }
+        let mut items = super::merge_review_inbox_items(items);
+        items.sort_by(|left, right| right.summary.updated_at.cmp(&left.summary.updated_at));
+
+        let total_count = items.len() as u32;
+        let total_pages = if total_count == 0 { 1 } else { total_count.div_ceil(per_page) };
+        let start = page.saturating_sub(1).saturating_mul(per_page) as usize;
+        let page_items = items.into_iter().skip(start).take(per_page as usize).collect();
+
+        Ok(Paginated { items: page_items, page, total_pages, total_count })
+    }
+
     async fn get_pull_request(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrDetail, AppError> {
         let url = format!("{}/repos/{}/{}/pulls/{}", self.base_url, owner, repo, pr_number);
         let json = self.get_json::<Value>(&url).await?;
@@ -480,8 +906,22 @@ impl GitPlatform for GiteeAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            status: None,
         };
 
+        let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
+        let mut reviewers = Vec::new();
+        let mut reviewer_logins = std::collections::BTreeSet::new();
+        for field in ["assignees", "api_reviewers"] {
+            if let Some(users) = json[field].as_array() {
+                for user in users {
+                    let mapped = Self::map_user(user);
+                    if reviewer_logins.insert(mapped.login.to_lowercase()) {
+                        reviewers.push(mapped);
+                    }
+                }
+            }
+        }
         Ok(PrDetail {
             summary,
             body: json["body"].as_str().unwrap_or("").to_string(),
@@ -490,7 +930,196 @@ impl GitPlatform for GiteeAdapter {
             mergeable: json["mergeable"].as_bool(),
             head_sha: json["head"]["sha"].as_str().unwrap_or("").to_string(),
             base_sha: json["base"]["sha"].as_str().unwrap_or("").to_string(),
+            draft: None,
+            reviewers,
+            assignees: json["testers"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            milestone: Self::metadata_milestone(&json["milestone"]),
+            metadata_permissions,
         })
+    }
+
+    async fn update_pull_request_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        current: &PrDetail,
+        update: &PrMetadataUpdate,
+    ) -> Result<PrMetadataMutationResult, AppError> {
+        let mut result = PrMetadataMutationResult::default();
+        let mut payload = serde_json::Map::new();
+        let title_body_changed = current.summary.title != update.title || current.body != update.body;
+        if title_body_changed {
+            payload.insert("title".into(), Value::String(update.title.clone()));
+            payload.insert("body".into(), Value::String(update.body.clone()));
+        }
+
+        let current_reviewers =
+            current.reviewers.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_reviewers =
+            update.reviewers.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let reviewers_changed = current_reviewers != target_reviewers;
+        let mut reviewers_updated = false;
+        if reviewers_changed {
+            let assignees_url = format!("{}/repos/{}/{}/pulls/{}/assignees", self.base_url, owner, repo, pr_number);
+            let removed = current
+                .reviewers
+                .iter()
+                .filter(|user| !target_reviewers.contains(&user.login.to_lowercase()))
+                .map(|user| user.login.as_str())
+                .collect::<Vec<_>>();
+            let added = update
+                .reviewers
+                .iter()
+                .filter(|login| !current_reviewers.contains(&login.to_lowercase()))
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let mut reviewer_error = None;
+            if !removed.is_empty() {
+                if let Err(error) =
+                    self.delete_json(&assignees_url, &serde_json::json!({ "assignees": removed.join(",") })).await
+                {
+                    reviewer_error = Some(error);
+                }
+            }
+            if reviewer_error.is_none() && !added.is_empty() {
+                if let Err(error) =
+                    self.post_json(&assignees_url, &serde_json::json!({ "assignees": added.join(",") })).await
+                {
+                    reviewer_error = Some(error);
+                }
+            }
+            match reviewer_error {
+                Some(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Reviewers, message: error.to_string() }),
+                None => reviewers_updated = true,
+            }
+        }
+
+        let current_testers =
+            current.assignees.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_testers =
+            update.assignees.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let testers_changed = current_testers != target_testers;
+        let mut testers_updated = false;
+        if testers_changed {
+            let testers_url = format!("{}/repos/{}/{}/pulls/{}/testers", self.base_url, owner, repo, pr_number);
+            let removed = current
+                .assignees
+                .iter()
+                .filter(|user| !target_testers.contains(&user.login.to_lowercase()))
+                .map(|user| user.login.as_str())
+                .collect::<Vec<_>>();
+            let added = update
+                .assignees
+                .iter()
+                .filter(|login| !current_testers.contains(&login.to_lowercase()))
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let mut tester_error = None;
+            if !removed.is_empty() {
+                if let Err(error) =
+                    self.delete_json(&testers_url, &serde_json::json!({ "testers": removed.join(",") })).await
+                {
+                    tester_error = Some(error);
+                }
+            }
+            if tester_error.is_none() && !added.is_empty() {
+                if let Err(error) =
+                    self.post_json(&testers_url, &serde_json::json!({ "testers": added.join(",") })).await
+                {
+                    tester_error = Some(error);
+                }
+            }
+            match tester_error {
+                Some(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Assignees, message: error.to_string() }),
+                None => testers_updated = true,
+            }
+        }
+
+        let labels_changed =
+            current.summary.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>()
+                != update.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        if labels_changed {
+            payload.insert("labels".into(), Value::String(update.labels.join(",")));
+        }
+        let milestone_changed =
+            current.milestone.as_ref().map(|milestone| milestone.title.as_str()) != update.milestone.as_deref();
+        if milestone_changed {
+            match update.milestone.as_deref() {
+                Some(title) => match self.resolve_milestone_number(owner, repo, title).await {
+                    Ok(number) => {
+                        payload.insert("milestone_number".into(), serde_json::json!(number));
+                    }
+                    Err(error) => result.failures.push(PrMetadataUpdateFailure {
+                        field: PrMetadataField::Milestone,
+                        message: error.to_string(),
+                    }),
+                },
+                None => {
+                    payload.insert("milestone_number".into(), serde_json::json!(0));
+                }
+            }
+        }
+
+        if payload.is_empty() {
+            if reviewers_updated {
+                result.updated_fields.push(PrMetadataField::Reviewers);
+            }
+            if testers_updated {
+                result.updated_fields.push(PrMetadataField::Assignees);
+            }
+            return Ok(result);
+        }
+        let url = format!("{}/repos/{}/{}/pulls/{}", self.base_url, owner, repo, pr_number);
+        match self.patch_json(&url, &Value::Object(payload)).await {
+            Ok(_) => {
+                if title_body_changed {
+                    result.updated_fields.push(PrMetadataField::TitleBody);
+                }
+                if reviewers_updated {
+                    result.updated_fields.push(PrMetadataField::Reviewers);
+                }
+                if testers_updated {
+                    result.updated_fields.push(PrMetadataField::Assignees);
+                }
+                if labels_changed {
+                    result.updated_fields.push(PrMetadataField::Labels);
+                }
+                if milestone_changed
+                    && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Milestone)
+                {
+                    result.updated_fields.push(PrMetadataField::Milestone);
+                }
+            }
+            Err(error) => {
+                if reviewers_updated {
+                    result.updated_fields.push(PrMetadataField::Reviewers);
+                }
+                if testers_updated {
+                    result.updated_fields.push(PrMetadataField::Assignees);
+                }
+                for field in [
+                    title_body_changed.then_some(PrMetadataField::TitleBody),
+                    labels_changed.then_some(PrMetadataField::Labels),
+                    (milestone_changed
+                        && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Milestone))
+                    .then_some(PrMetadataField::Milestone),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    result.failures.push(PrMetadataUpdateFailure { field, message: error.to_string() });
+                }
+            }
+        }
+        Ok(result)
     }
 
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError> {
@@ -767,6 +1396,7 @@ impl GitPlatform for GiteeAdapter {
             "position": line,
         });
         let c: Value = self.post_json(&url, &payload).await?;
+        let comment_id = c["id"].as_str().map(str::to_string).unwrap_or_else(|| c["id"].to_string());
         Ok(PrComment {
             id: c["id"].clone(),
             body: c["body"].as_str().unwrap_or("").to_string(),
@@ -780,6 +1410,17 @@ impl GitPlatform for GiteeAdapter {
             original_line: c["original_line"].as_u64().map(|n| n as u32),
             original_start_line: c["original_start_line"].as_u64().map(|n| n as u32),
             diff_hunk: None, // Gitee API does not return diff_hunk
+            thread_id: c["in_reply_to_id"]
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| c["in_reply_to_id"].as_u64().map(|id| id.to_string()))
+                .unwrap_or(comment_id),
+            reply_to_id: c["in_reply_to_id"]
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| c["in_reply_to_id"].as_u64().map(|id| id.to_string())),
+            resolved: None,
+            resolvable: false,
         })
     }
 
@@ -791,6 +1432,11 @@ impl GitPlatform for GiteeAdapter {
             .filter(|c| c["path"].is_string() && !c["path"].as_str().unwrap_or("").is_empty())
             .map(|c| {
                 let line = c["new_line"].as_u64().or_else(|| c["position"].as_u64()).map(|n| n as u32);
+                let comment_id = c["id"].as_str().map(str::to_string).unwrap_or_else(|| c["id"].to_string());
+                let reply_to_id = c["in_reply_to_id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| c["in_reply_to_id"].as_u64().map(|id| id.to_string()));
                 PrComment {
                     id: c["id"].clone(),
                     body: c["body"].as_str().unwrap_or("").to_string(),
@@ -804,6 +1450,10 @@ impl GitPlatform for GiteeAdapter {
                     original_line: c["original_line"].as_u64().map(|n| n as u32),
                     original_start_line: c["original_start_line"].as_u64().map(|n| n as u32),
                     diff_hunk: None, // populated by command layer from SQLite
+                    thread_id: reply_to_id.clone().unwrap_or(comment_id),
+                    reply_to_id,
+                    resolved: None,
+                    resolvable: false,
                 }
             })
             .collect();

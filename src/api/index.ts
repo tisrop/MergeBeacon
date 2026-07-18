@@ -7,7 +7,11 @@ import type {
   PrComment,
   PrState,
   PrSummary,
+  ReviewInboxCategory,
+  ReviewInboxItem,
   PrDetail,
+  PrMetadataUpdate,
+  PrMetadataUpdateOutcome,
   PrMergeReadiness,
   DiffResult,
   PrFileContent,
@@ -110,6 +114,15 @@ export async function repoList(
 }
 
 // ── PR ──
+export async function reviewInboxList(
+  platform: Platform,
+  category: ReviewInboxCategory = "review_requested",
+  page: number = 1,
+  perPage: number = 20,
+): Promise<Paginated<ReviewInboxItem>> {
+  return invoke("review_inbox_list", { platform, category, page, perPage });
+}
+
 export async function prList(
   platform: Platform,
   owner: string,
@@ -128,6 +141,16 @@ export async function prDetail(
   number: number,
 ): Promise<PrDetail> {
   return invoke("pr_detail", { platform, owner, repo, number });
+}
+
+export async function prMetadataUpdate(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+  update: PrMetadataUpdate,
+): Promise<PrMetadataUpdateOutcome> {
+  return invoke("pr_metadata_update", { platform, owner, repo, number, update });
 }
 
 export async function prMergeReadiness(
@@ -237,6 +260,44 @@ export async function reviewCommentsList(
   prNumber: number,
 ): Promise<PrComment[]> {
   return invoke("review_comments_list", { platform, owner, repo, prNumber });
+}
+
+export async function reviewThreadSetResolved(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  threadId: string,
+  resolved: boolean,
+): Promise<void> {
+  return invoke("review_thread_set_resolved", {
+    platform,
+    owner,
+    repo,
+    prNumber,
+    threadId,
+    resolved,
+  });
+}
+
+export async function reviewViewedFilesList(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<string[]> {
+  return invoke("review_viewed_files_list", { platform, owner, repo, prNumber });
+}
+
+export async function reviewFileSetViewed(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  path: string,
+  viewed: boolean,
+): Promise<void> {
+  return invoke("review_file_set_viewed", { platform, owner, repo, prNumber, path, viewed });
 }
 
 export async function reviewCommentAdd(

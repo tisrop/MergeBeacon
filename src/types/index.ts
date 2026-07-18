@@ -28,6 +28,14 @@ export interface PlatformCapabilities {
   supports_fork_context: boolean;
   supports_issue_auto_close: boolean;
   supports_compare_diff: boolean;
+  supports_review_thread_resolution: boolean;
+  supports_remote_file_viewed_state: boolean;
+  supports_pr_title_body_edit: boolean;
+  supports_pr_draft_toggle: boolean;
+  supports_pr_reviewer_management: boolean;
+  supports_pr_assignee_management: boolean;
+  supports_pr_label_management: boolean;
+  supports_pr_milestone_management: boolean;
 }
 
 export interface UpdateProgressEvent {
@@ -71,6 +79,47 @@ export interface PrSummary {
   created_at: string;
   updated_at: string;
   labels: string[];
+  status?: PrStatusSummary | null;
+}
+
+export type ReviewInboxCategory = "review_requested" | "authored";
+export type ReviewInboxRelationship = "reviewer" | "assignee" | "tester" | "author";
+
+export interface PrStatusSummary {
+  status: ReadinessState;
+  draft: boolean | null;
+  has_conflicts: boolean | null;
+  checks_status: ReadinessState;
+  approvals_status: ReadinessState;
+  blocking_reasons: MergeBlockingReason[];
+}
+
+export type ReviewInboxStatusSummary = PrStatusSummary;
+
+export interface ReviewInboxItem {
+  platform: Platform;
+  owner: string;
+  repo: string;
+  repository_full_name: string;
+  categories: ReviewInboxCategory[];
+  relationships: ReviewInboxRelationship[];
+  status: ReviewInboxStatusSummary;
+  summary: PrSummary;
+}
+
+export interface PrMilestone {
+  id: number | string;
+  number: number | null;
+  title: string;
+}
+
+export interface PrMetadataPermissions {
+  can_edit_title_body: boolean | null;
+  can_toggle_draft: boolean | null;
+  can_manage_reviewers: boolean | null;
+  can_manage_assignees: boolean | null;
+  can_manage_labels: boolean | null;
+  can_manage_milestone: boolean | null;
 }
 
 export interface PrDetail {
@@ -81,6 +130,42 @@ export interface PrDetail {
   mergeable: boolean | null;
   head_sha: string;
   base_sha: string;
+  draft: boolean | null;
+  reviewers: User[];
+  assignees: User[];
+  milestone: PrMilestone | null;
+  metadata_permissions: PrMetadataPermissions;
+}
+
+export interface PrMetadataUpdate {
+  title: string;
+  body: string;
+  draft: boolean | null;
+  reviewers: string[];
+  assignees: string[];
+  labels: string[];
+  milestone: string | null;
+  expected_updated_at: string;
+}
+
+export type PrMetadataField =
+  | "title_body"
+  | "draft"
+  | "reviewers"
+  | "assignees"
+  | "labels"
+  | "milestone"
+  | "refresh";
+
+export interface PrMetadataUpdateFailure {
+  field: PrMetadataField;
+  message: string;
+}
+
+export interface PrMetadataUpdateOutcome {
+  detail: PrDetail | null;
+  updated_fields: PrMetadataField[];
+  failures: PrMetadataUpdateFailure[];
 }
 
 export interface PrFileContent {
@@ -233,7 +318,7 @@ export interface Review {
 }
 
 export interface PrComment {
-  id: number;
+  id: number | string;
   body: string;
   path: string;
   line: number | null;
@@ -245,6 +330,22 @@ export interface PrComment {
   original_line: number | null;
   original_start_line: number | null;
   diff_hunk: string | null;
+  thread_id: string;
+  reply_to_id: string | null;
+  resolved: boolean | null;
+  resolvable: boolean;
+}
+
+export interface ReviewThreadFileSummary {
+  comments: number;
+  unresolved: number;
+}
+
+export interface ReviewThreadSummary {
+  comments: number;
+  threads: number;
+  unresolved: number;
+  by_file: Record<string, ReviewThreadFileSummary>;
 }
 
 // ── Issue ──
