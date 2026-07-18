@@ -5,12 +5,18 @@ import DiffViewer from "@/components/diff/DiffViewer.vue";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import type { DiffLocationRequest, DiffResult, Platform, PrFileContent } from "@/types";
 
-const { prFileContentMock } = vi.hoisted(() => ({
-  prFileContentMock: vi.fn(),
-}));
+const { prFileContentMock, reviewViewedFilesListMock, reviewFileSetViewedMock } = vi.hoisted(
+  () => ({
+    prFileContentMock: vi.fn(),
+    reviewViewedFilesListMock: vi.fn(),
+    reviewFileSetViewedMock: vi.fn(),
+  }),
+);
 
 vi.mock("@/api", () => ({
   prFileContent: prFileContentMock,
+  reviewViewedFilesList: reviewViewedFilesListMock,
+  reviewFileSetViewed: reviewFileSetViewedMock,
 }));
 
 const storage = new Map<string, string>();
@@ -61,9 +67,11 @@ interface ContextProps {
   platform?: Platform;
   owner?: string;
   repo?: string;
+  prNumber?: number;
   baseSha?: string;
   headSha?: string;
   locationRequest?: DiffLocationRequest | null;
+  canSyncViewedFiles?: boolean;
 }
 
 async function mountViewer(value = diff, extraProps: ContextProps = {}) {
@@ -194,9 +202,11 @@ const contextProps: Required<ContextProps> = {
   platform: "github",
   owner: "octo",
   repo: "demo",
+  prNumber: 42,
   baseSha: "base-sha",
   headSha: "head-sha",
   locationRequest: null,
+  canSyncViewedFiles: false,
 };
 
 function fileContent(path: string, revision: string, content: string): PrFileContent {
@@ -789,6 +799,10 @@ describe("DiffViewer 受控标准 patch", () => {
 describe("DiffViewer 文件树", () => {
   beforeEach(() => {
     storage.clear();
+    reviewViewedFilesListMock.mockReset();
+    reviewFileSetViewedMock.mockReset();
+    reviewViewedFilesListMock.mockResolvedValue([]);
+    reviewFileSetViewedMock.mockResolvedValue(undefined);
     setActivePinia(createPinia());
   });
 
@@ -806,6 +820,129 @@ describe("DiffViewer 文件树", () => {
     ).toContain("新增文件");
     expect(wrapper.get(".navigator-header").text()).toContain("+2");
     expect(wrapper.get(".navigator-header").text()).toContain("-1");
+  });
+
+  it("按 PR 和 head SHA 保存本地文件已查看状态并显示进度", async () => {
+    const wrapper = await mountViewer(standardizedDiff, {
+      platform: "github",
+      owner: "octocat",
+      repo: "hello-world",
+      prNumber: 42,
+      headSha: "head-1",
+    });
+
+    expect(wrapper.get(".local-progress-label").text()).toContain("0/2 已查看");
+    await wrapper.get(".viewed-toggle-button").trigger("click");
+
+    expect(wrapper.get(".local-progress-label").text()).toContain("1/2 已查看");
+    expect(wrapper.get('[data-file-path="src/components/App.ts"]').classes()).toContain("viewed");
+    expect(wrapper.get(".viewed-toggle-button").attributes("aria-pressed")).toBe("true");
+    expect(storage.get("mergebeacon:review-progress:github:octocat:hello-world:42:head-1")).toBe(
+      '["src/components/App.ts"]',
+    );
+  });
+
+  it("GitHub 从远端加载文件已查看状态并同步修改", async () => {
+    reviewViewedFilesListMock.mockResolvedValue(["tests/App.spec.ts"]);
+    const wrapper = await mountViewer(standardizedDiff, {
+      platform: "github",
+      owner: "octocat",
+      repo: "hello-world",
+      prNumber: 42,
+      headSha: "head-1",
+      canSyncViewedFiles: true,
+    });
+
+    expect(reviewViewedFilesListMock).toHaveBeenCalledWith("github", "octocat", "hello-world", 42);
+    expect(wrapper.get(".local-progress-label").text()).toContain("远端 1/2 已查看");
+    expect(wrapper.get('[data-file-path="tests/App.spec.ts"]').classes()).toContain("viewed");
+
+    await wrapper.get(".viewed-toggle-button").trigger("click");
+    await flushPromises();
+
+    expect(reviewFileSetViewedMock).toHaveBeenCalledWith(
+      "github",
+      "octocat",
+      "hello-world",
+      42,
+      "src/components/App.ts",
+      true,
+    );
+    expect(wrapper.get(".local-progress-label").text()).toContain("远端 2/2 已查看");
+  });
+
+  it("远端文件状态写入失败时回滚并显示错误", async () => {
+    reviewFileSetViewedMock.mockRejectedValue(new Error("Token 权限不足"));
+    const wrapper = await mountViewer(standardizedDiff, {
+      platform: "github",
+      owner: "octocat",
+      repo: "hello-world",
+      prNumber: 42,
+      headSha: "head-1",
+      canSyncViewedFiles: true,
+    });
+
+    await wrapper.get(".viewed-toggle-button").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get(".viewed-toggle-button").attributes("aria-pressed")).toBe("false");
+    expect(wrapper.get(".review-progress-error").text()).toContain("Token 权限不足");
+    expect(storage.get("mergebeacon:review-progress:github:octocat:hello-world:42:head-1")).toBe(
+      "[]",
+    );
+  });
+
+  it("远端文件状态加载期间禁用切换，避免迟到响应覆盖写入", async () => {
+    let resolveViewedFiles: ((paths: string[]) => void) | undefined;
+    reviewViewedFilesListMock.mockReturnValue(
+      new Promise<string[]>((resolve) => {
+        resolveViewedFiles = resolve;
+      }),
+    );
+    const wrapper = await mountViewer(standardizedDiff, {
+      platform: "github",
+      owner: "octocat",
+      repo: "hello-world",
+      prNumber: 42,
+      headSha: "head-1",
+      canSyncViewedFiles: true,
+    });
+
+    expect(wrapper.get(".viewed-toggle-button").attributes()).toHaveProperty("disabled");
+    resolveViewedFiles?.([]);
+    await flushPromises();
+
+    expect(wrapper.get(".viewed-toggle-button").attributes()).not.toHaveProperty("disabled");
+  });
+
+  it("可以导航到下一个未查看文件并展示未解决线程数量", async () => {
+    const wrapper = await mountViewer(standardizedDiff, {
+      platform: "github",
+      owner: "octocat",
+      repo: "hello-world",
+      prNumber: 42,
+      headSha: "head-1",
+    });
+    await wrapper.get(".viewed-toggle-button").trigger("click");
+    await wrapper.get('[aria-label="下一个未查看文件"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get(".selected-file-name").text()).toBe("tests/App.spec.ts");
+
+    await wrapper.setProps({
+      threadSummary: {
+        comments: 3,
+        threads: 2,
+        unresolved: 1,
+        by_file: {
+          "tests/App.spec.ts": { comments: 2, unresolved: 1 },
+        },
+      },
+    });
+
+    expect(wrapper.get('[data-file-path="tests/App.spec.ts"] .unresolved-indicator').text()).toBe(
+      "1",
+    );
   });
 
   it("选择文件后右侧只显示对应的 Diff 上下文", async () => {

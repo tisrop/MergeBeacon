@@ -137,6 +137,9 @@ pub fn run() {
             review::review_comment_add,
             review::review_list,
             review::review_comments_list,
+            review::review_thread_set_resolved,
+            review::review_viewed_files_list,
+            review::review_file_set_viewed,
             // Issue
             issue::issue_list,
             issue::issue_create,

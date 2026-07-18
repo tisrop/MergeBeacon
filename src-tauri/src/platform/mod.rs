@@ -17,6 +17,10 @@ pub struct PlatformCapabilities {
     pub supports_issue_auto_close: bool,
     /// 平台是否提供可用于增量评审的可靠 base/head compare API。
     pub supports_compare_diff: bool,
+    /// 平台 API 是否支持解决和重新打开评审线程。
+    pub supports_review_thread_resolution: bool,
+    /// 平台公开 API 是否支持读取和写入文件已查看状态。
+    pub supports_remote_file_viewed_state: bool,
 }
 
 /// 平台协议能力的唯一静态定义入口。
@@ -32,6 +36,8 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_fork_context: true,
             supports_issue_auto_close: true,
             supports_compare_diff: true,
+            supports_review_thread_resolution: true,
+            supports_remote_file_viewed_state: true,
         },
         "gitlab" => PlatformCapabilities {
             platform: "gitlab",
@@ -40,6 +46,8 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_fork_context: true,
             supports_issue_auto_close: true,
             supports_compare_diff: true,
+            supports_review_thread_resolution: true,
+            supports_remote_file_viewed_state: false,
         },
         "gitee" => PlatformCapabilities {
             platform: "gitee",
@@ -48,6 +56,8 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_fork_context: true,
             supports_issue_auto_close: true,
             supports_compare_diff: true,
+            supports_review_thread_resolution: false,
+            supports_remote_file_viewed_state: false,
         },
         _ => return None,
     };
@@ -211,6 +221,32 @@ pub trait GitPlatform: Send + Sync {
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError>;
 
+    async fn set_review_thread_resolved(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+        _thread_id: &str,
+        _resolved: bool,
+    ) -> Result<(), AppError> {
+        Err(AppError::Api(format!("{} 不支持解决或重新打开评审线程", self.name())))
+    }
+
+    async fn list_viewed_pr_files(&self, _owner: &str, _repo: &str, _pr_number: u64) -> Result<Vec<String>, AppError> {
+        Err(AppError::Api(format!("{} 不支持同步文件已查看状态", self.name())))
+    }
+
+    async fn set_pr_file_viewed(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+        _path: &str,
+        _viewed: bool,
+    ) -> Result<(), AppError> {
+        Err(AppError::Api(format!("{} 不支持同步文件已查看状态", self.name())))
+    }
+
     // ── Merge / Close / Reopen ──
     async fn merge_pull_request(
         &self,
@@ -266,6 +302,12 @@ mod tests {
         assert_eq!(gitee["merge_strategies"], serde_json::json!(["merge", "squash", "rebase"]));
         assert!(github["supports_fork_context"].as_bool().unwrap());
         assert!(gitlab["supports_issue_auto_close"].as_bool().unwrap());
+        assert_eq!(github["supports_review_thread_resolution"], serde_json::json!(true));
+        assert_eq!(gitlab["supports_review_thread_resolution"], serde_json::json!(true));
+        assert_eq!(gitee["supports_review_thread_resolution"], serde_json::json!(false));
+        assert_eq!(github["supports_remote_file_viewed_state"], serde_json::json!(true));
+        assert_eq!(gitlab["supports_remote_file_viewed_state"], serde_json::json!(false));
+        assert_eq!(gitee["supports_remote_file_viewed_state"], serde_json::json!(false));
         assert!(capabilities_for("unknown").is_none());
     }
 

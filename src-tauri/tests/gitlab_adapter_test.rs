@@ -2,7 +2,7 @@ use mergebeacon_lib::error::AppError;
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{PrState, ReadinessState, ReviewEvent, ReviewInboxCategory, ReviewInboxRelationship};
 use mergebeacon_lib::platform::{gitlab::GitLabAdapter, GitPlatform};
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
@@ -543,10 +543,20 @@ async fn test_gitlab_list_inline_comments_filters_regular_and_system_notes() {
                     "id": 50,
                     "body": "inline note",
                     "system": false,
+                    "resolvable": true,
+                    "resolved": false,
                     "author": gitlab_user(),
                     "created_at": "2026-07-15T10:00:00Z",
                     "position": gitlab_position(),
                     "original_position": old_position
+                }, {
+                    "id": 53,
+                    "body": "reply note",
+                    "system": false,
+                    "resolvable": false,
+                    "author": gitlab_user(),
+                    "created_at": "2026-07-15T11:00:00Z",
+                    "position": null
                 }]
             },
             {
@@ -579,10 +589,37 @@ async fn test_gitlab_list_inline_comments_filters_regular_and_system_notes() {
     let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
     let comments = adapter.list_pr_comments("group", "repo", 9).await.expect("should list inline comments");
 
-    assert_eq!(comments.len(), 1);
+    assert_eq!(comments.len(), 2);
     assert_eq!(comments[0].id, serde_json::json!(50));
     assert_eq!(comments[0].line, Some(12));
     assert_eq!(comments[0].original_line, Some(10));
+    assert_eq!(comments[0].thread_id, "inline");
+    assert_eq!(comments[0].resolved, Some(false));
+    assert!(comments[0].resolvable);
+    assert_eq!(comments[1].id, serde_json::json!(53));
+    assert_eq!(comments[1].reply_to_id.as_deref(), Some("50"));
+    assert_eq!(comments[1].line, Some(12));
+}
+
+#[tokio::test]
+async fn test_gitlab_resolves_and_reopens_discussion() {
+    let mock_server = MockServer::start().await;
+    for resolved in [true, false] {
+        Mock::given(method("PUT"))
+            .and(path("/api/v4/projects/group%2Frepo/merge_requests/9/discussions/thread-1"))
+            .and(body_json(serde_json::json!({ "resolved": resolved })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "thread-1",
+                "resolved": resolved
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+    }
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    adapter.set_review_thread_resolved("group", "repo", 9, "thread-1", true).await.expect("should resolve discussion");
+    adapter.set_review_thread_resolved("group", "repo", 9, "thread-1", false).await.expect("should reopen discussion");
 }
 
 #[tokio::test]

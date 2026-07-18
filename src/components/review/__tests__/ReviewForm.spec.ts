@@ -16,6 +16,8 @@ function capabilities(platform: Platform): PlatformCapabilities {
     supports_fork_context: true,
     supports_issue_auto_close: true,
     supports_compare_diff: true,
+    supports_review_thread_resolution: false,
+    supports_remote_file_viewed_state: false,
   };
 }
 

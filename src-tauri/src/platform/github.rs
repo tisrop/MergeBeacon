@@ -561,6 +561,144 @@ impl GitHubAdapter {
         Ok(statuses)
     }
 
+    async fn graphql(&self, operation: &str, query: &str, variables: Value) -> Result<Value, AppError> {
+        let url = format!("{}/graphql", self.base_url);
+        let response = self
+            .post_json(
+                &url,
+                &serde_json::json!({
+                    "query": query,
+                    "variables": variables,
+                }),
+            )
+            .await?;
+        if let Some(errors) = response["errors"].as_array().filter(|errors| !errors.is_empty()) {
+            return Err(AppError::Api(format!("GitHub GraphQL {operation}失败: {errors:?}")));
+        }
+        let data = response
+            .get("data")
+            .filter(|data| !data.is_null())
+            .ok_or_else(|| AppError::Api(format!("GitHub GraphQL {operation}响应缺少 data")))?;
+        Ok(data.clone())
+    }
+
+    fn graphql_database_id(value: &Value) -> Option<(Value, String)> {
+        if let Some(id) = value["fullDatabaseId"].as_u64() {
+            return Some((serde_json::json!(id), id.to_string()));
+        }
+        if let Some(id) = value["fullDatabaseId"].as_str() {
+            let json_id = id.parse::<u64>().map_or_else(|_| Value::String(id.to_string()), |id| serde_json::json!(id));
+            return Some((json_id, id.to_string()));
+        }
+        value["id"].as_str().map(|id| (Value::String(id.to_string()), id.to_string()))
+    }
+
+    fn map_graphql_user(json: &Value) -> User {
+        User {
+            id: json["id"].clone(),
+            login: json["login"].as_str().unwrap_or("").to_string(),
+            name: json["name"].as_str().unwrap_or("").to_string(),
+            avatar_url: json["avatarUrl"].as_str().unwrap_or("").to_string(),
+        }
+    }
+
+    fn map_graphql_review_comment(thread: &Value, comment: &Value) -> Result<PrComment, AppError> {
+        let thread_id =
+            thread["id"].as_str().ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少线程 ID".into()))?.to_string();
+        let resolved =
+            thread["isResolved"].as_bool().ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少解决状态".into()))?;
+        let resolvable = if resolved {
+            thread["viewerCanUnresolve"].as_bool().unwrap_or(false)
+        } else {
+            thread["viewerCanResolve"].as_bool().unwrap_or(false)
+        };
+        let (id, _) =
+            Self::graphql_database_id(comment).ok_or_else(|| AppError::Api("GitHub 评审评论响应缺少评论 ID".into()))?;
+        let reply_to_id = Self::graphql_database_id(&comment["replyTo"]).map(|(_, id)| id);
+
+        Ok(PrComment {
+            id,
+            body: comment["body"].as_str().unwrap_or("").to_string(),
+            path: comment["path"].as_str().unwrap_or("").to_string(),
+            line: comment["line"].as_u64().map(|line| line as u32),
+            start_line: comment["startLine"].as_u64().map(|line| line as u32),
+            author: Self::map_graphql_user(&comment["author"]),
+            created_at: comment["createdAt"].as_str().unwrap_or("").to_string(),
+            commit_id: comment["commit"]["oid"].as_str().map(str::to_string),
+            original_commit_id: comment["originalCommit"]["oid"].as_str().map(str::to_string),
+            original_line: comment["originalLine"].as_u64().map(|line| line as u32),
+            original_start_line: comment["originalStartLine"].as_u64().map(|line| line as u32),
+            diff_hunk: comment["diffHunk"].as_str().map(str::to_string),
+            thread_id,
+            reply_to_id,
+            resolved: Some(resolved),
+            resolvable,
+        })
+    }
+
+    async fn review_thread_comments_page(&self, thread_id: &str, after: &str) -> Result<Value, AppError> {
+        let data = self
+            .graphql(
+                "评审线程评论分页查询",
+                r#"query ReviewThreadComments($threadId: ID!, $after: String) {
+                    node(id: $threadId) {
+                        ... on PullRequestReviewThread {
+                            comments(first: 100, after: $after) {
+                                nodes {
+                                    id
+                                    fullDatabaseId
+                                    body
+                                    path
+                                    line
+                                    startLine
+                                    author {
+                                        login
+                                        avatarUrl
+                                        ... on User { id name }
+                                    }
+                                    createdAt
+                                    commit { oid }
+                                    originalCommit { oid }
+                                    originalLine
+                                    originalStartLine
+                                    diffHunk
+                                    replyTo { id fullDatabaseId }
+                                }
+                                pageInfo { hasNextPage endCursor }
+                            }
+                        }
+                    }
+                }"#,
+                serde_json::json!({ "threadId": thread_id, "after": after }),
+            )
+            .await?;
+        data["node"]["comments"]
+            .as_object()
+            .map(|comments| Value::Object(comments.clone()))
+            .ok_or_else(|| AppError::Api("GitHub 评审线程评论分页响应缺少 comments".into()))
+    }
+
+    async fn pull_request_node_id(&self, owner: &str, repo: &str, pr_number: u64) -> Result<String, AppError> {
+        let number =
+            i32::try_from(pr_number).map_err(|_| AppError::Api("GitHub PR 编号超出 GraphQL Int 范围".into()))?;
+        let data = self
+            .graphql(
+                "PR Node ID 查询",
+                r#"query PullRequestNodeId($owner: String!, $repo: String!, $number: Int!) {
+                    repository(owner: $owner, name: $repo) {
+                        pullRequest(number: $number) { id }
+                    }
+                }"#,
+                serde_json::json!({ "owner": owner, "repo": repo, "number": number }),
+            )
+            .await?;
+        data["repository"]["pullRequest"]["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| AppError::Api("GitHub PR Node ID 响应缺少 ID".into()))
+    }
+
     fn repository_from_api_url(url: &str) -> Result<(String, String), AppError> {
         let path = url
             .split_once("/repos/")
@@ -1182,6 +1320,7 @@ impl GitPlatform for GitHubAdapter {
             })
         };
         let c: Value = self.post_json(&url, &payload).await?;
+        let comment_id = c["id"].as_str().map(str::to_string).unwrap_or_else(|| c["id"].to_string());
         Ok(PrComment {
             id: c["id"].clone(),
             body: c["body"].as_str().unwrap_or("").to_string(),
@@ -1195,30 +1334,249 @@ impl GitPlatform for GitHubAdapter {
             original_line: c["original_line"].as_u64().map(|n| n as u32),
             original_start_line: c["original_start_line"].as_u64().map(|n| n as u32),
             diff_hunk: c["diff_hunk"].as_str().map(|s| s.to_string()),
+            thread_id: comment_id,
+            reply_to_id: None,
+            resolved: None,
+            resolvable: false,
         })
     }
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError> {
-        let url = format!("{}/repos/{}/{}/pulls/{}/comments?per_page=100", self.base_url, owner, repo, pr_number);
-        let items: Vec<Value> = self.get_json(&url).await?;
-        let comments = items
-            .iter()
-            .map(|c| PrComment {
-                id: c["id"].clone(),
-                body: c["body"].as_str().unwrap_or("").to_string(),
-                path: c["path"].as_str().unwrap_or("").to_string(),
-                line: c["line"].as_u64().map(|n| n as u32),
-                start_line: c["start_line"].as_u64().map(|n| n as u32),
-                author: Self::map_user(&c["user"]),
-                created_at: c["created_at"].as_str().unwrap_or("").to_string(),
-                commit_id: c["commit_id"].as_str().map(|s| s.to_string()),
-                original_commit_id: c["original_commit_id"].as_str().map(|s| s.to_string()),
-                original_line: c["original_line"].as_u64().map(|n| n as u32),
-                original_start_line: c["original_start_line"].as_u64().map(|n| n as u32),
-                diff_hunk: c["diff_hunk"].as_str().map(|s| s.to_string()),
-            })
-            .collect();
+        let number =
+            i32::try_from(pr_number).map_err(|_| AppError::Api("GitHub PR 编号超出 GraphQL Int 范围".into()))?;
+        let mut comments = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let data = self
+                .graphql(
+                    "评审线程查询",
+                    r#"query ReviewThreads($owner: String!, $repo: String!, $number: Int!, $after: String) {
+                        repository(owner: $owner, name: $repo) {
+                            pullRequest(number: $number) {
+                                reviewThreads(first: 100, after: $after) {
+                                    nodes {
+                                        id
+                                        isResolved
+                                        viewerCanResolve
+                                        viewerCanUnresolve
+                                        comments(first: 100) {
+                                            nodes {
+                                                id
+                                                fullDatabaseId
+                                                body
+                                                path
+                                                line
+                                                startLine
+                                                author {
+                                                    login
+                                                    avatarUrl
+                                                    ... on User { id name }
+                                                }
+                                                createdAt
+                                                commit { oid }
+                                                originalCommit { oid }
+                                                originalLine
+                                                originalStartLine
+                                                diffHunk
+                                                replyTo { id fullDatabaseId }
+                                            }
+                                            pageInfo { hasNextPage endCursor }
+                                        }
+                                    }
+                                    pageInfo { hasNextPage endCursor }
+                                }
+                            }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "owner": owner,
+                        "repo": repo,
+                        "number": number,
+                        "after": after,
+                    }),
+                )
+                .await?;
+            let review_threads = data["repository"]["pullRequest"]["reviewThreads"]
+                .as_object()
+                .ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少 reviewThreads".into()))?;
+            let threads = review_threads["nodes"]
+                .as_array()
+                .ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少 nodes".into()))?;
+            for thread in threads {
+                let thread_id = thread["id"]
+                    .as_str()
+                    .filter(|thread_id| !thread_id.is_empty())
+                    .ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少线程 ID".into()))?;
+                let mut comment_page = thread["comments"].clone();
+                loop {
+                    let page_comments = comment_page["nodes"]
+                        .as_array()
+                        .ok_or_else(|| AppError::Api("GitHub 评审线程响应缺少评论 nodes".into()))?;
+                    for comment in page_comments {
+                        comments.push(Self::map_graphql_review_comment(thread, comment)?);
+                    }
+                    if comment_page["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
+                        break;
+                    }
+                    let cursor = comment_page["pageInfo"]["endCursor"]
+                        .as_str()
+                        .filter(|cursor| !cursor.is_empty())
+                        .ok_or_else(|| AppError::Api("GitHub 评审线程评论分页响应缺少游标".into()))?;
+                    comment_page = self.review_thread_comments_page(thread_id, cursor).await?;
+                }
+            }
+
+            if review_threads["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
+                break;
+            }
+            after = Some(
+                review_threads["pageInfo"]["endCursor"]
+                    .as_str()
+                    .filter(|cursor| !cursor.is_empty())
+                    .ok_or_else(|| AppError::Api("GitHub 评审线程分页响应缺少游标".into()))?
+                    .to_string(),
+            );
+        }
         Ok(comments)
+    }
+
+    async fn set_review_thread_resolved(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+        thread_id: &str,
+        resolved: bool,
+    ) -> Result<(), AppError> {
+        let (operation, mutation, result_field) = if resolved {
+            (
+                "解决评审线程",
+                r#"mutation ResolveReviewThread($threadId: ID!) {
+                    resolveReviewThread(input: { threadId: $threadId }) {
+                        thread { id isResolved }
+                    }
+                }"#,
+                "resolveReviewThread",
+            )
+        } else {
+            (
+                "重新打开评审线程",
+                r#"mutation UnresolveReviewThread($threadId: ID!) {
+                    unresolveReviewThread(input: { threadId: $threadId }) {
+                        thread { id isResolved }
+                    }
+                }"#,
+                "unresolveReviewThread",
+            )
+        };
+        let data = self.graphql(operation, mutation, serde_json::json!({ "threadId": thread_id })).await?;
+        let thread = &data[result_field]["thread"];
+        if thread["id"].as_str() != Some(thread_id) || thread["isResolved"].as_bool() != Some(resolved) {
+            return Err(AppError::Api(format!("GitHub {operation}响应与请求状态不一致")));
+        }
+        Ok(())
+    }
+
+    async fn list_viewed_pr_files(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<String>, AppError> {
+        let number =
+            i32::try_from(pr_number).map_err(|_| AppError::Api("GitHub PR 编号超出 GraphQL Int 范围".into()))?;
+        let mut viewed_files = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let data = self
+                .graphql(
+                    "文件已查看状态查询",
+                    r#"query PullRequestViewedFiles(
+                        $owner: String!
+                        $repo: String!
+                        $number: Int!
+                        $after: String
+                    ) {
+                        repository(owner: $owner, name: $repo) {
+                            pullRequest(number: $number) {
+                                files(first: 100, after: $after) {
+                                    nodes { path viewerViewedState }
+                                    pageInfo { hasNextPage endCursor }
+                                }
+                            }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "owner": owner,
+                        "repo": repo,
+                        "number": number,
+                        "after": after,
+                    }),
+                )
+                .await?;
+            let files = data["repository"]["pullRequest"]["files"]
+                .as_object()
+                .ok_or_else(|| AppError::Api("GitHub 文件已查看状态响应缺少 files".into()))?;
+            let nodes =
+                files["nodes"].as_array().ok_or_else(|| AppError::Api("GitHub 文件已查看状态响应缺少 nodes".into()))?;
+            for file in nodes {
+                let path = file["path"]
+                    .as_str()
+                    .filter(|path| !path.is_empty())
+                    .ok_or_else(|| AppError::Api("GitHub 文件已查看状态响应缺少路径".into()))?;
+                let viewed_state = file["viewerViewedState"]
+                    .as_str()
+                    .ok_or_else(|| AppError::Api("GitHub 文件已查看状态响应缺少状态".into()))?;
+                if viewed_state == "VIEWED" {
+                    viewed_files.push(path.to_string());
+                }
+            }
+            if files["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
+                break;
+            }
+            after = Some(
+                files["pageInfo"]["endCursor"]
+                    .as_str()
+                    .filter(|cursor| !cursor.is_empty())
+                    .ok_or_else(|| AppError::Api("GitHub 文件已查看状态分页响应缺少游标".into()))?
+                    .to_string(),
+            );
+        }
+        Ok(viewed_files)
+    }
+
+    async fn set_pr_file_viewed(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        path: &str,
+        viewed: bool,
+    ) -> Result<(), AppError> {
+        let pull_request_id = self.pull_request_node_id(owner, repo, pr_number).await?;
+        let (operation, mutation, result_field) = if viewed {
+            (
+                "标记文件为已查看",
+                r#"mutation MarkFileAsViewed($pullRequestId: ID!, $path: String!) {
+                    markFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path }) {
+                        pullRequest { id }
+                    }
+                }"#,
+                "markFileAsViewed",
+            )
+        } else {
+            (
+                "标记文件为未查看",
+                r#"mutation UnmarkFileAsViewed($pullRequestId: ID!, $path: String!) {
+                    unmarkFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path }) {
+                        pullRequest { id }
+                    }
+                }"#,
+                "unmarkFileAsViewed",
+            )
+        };
+        let data = self
+            .graphql(operation, mutation, serde_json::json!({ "pullRequestId": pull_request_id, "path": path }))
+            .await?;
+        if data[result_field]["pullRequest"]["id"].as_str() != Some(pull_request_id.as_str()) {
+            return Err(AppError::Api(format!("GitHub {operation}响应缺少匹配的 PR")));
+        }
+        Ok(())
     }
 
     async fn list_reviews(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<Review>, AppError> {

@@ -303,8 +303,20 @@ impl GitLabAdapter {
         }
     }
 
-    fn map_pr_comment(note: &Value) -> Option<PrComment> {
-        let position = note.get("position")?.as_object()?;
+    fn value_id(value: &Value) -> String {
+        value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string())
+    }
+
+    fn map_pr_comment(
+        note: &Value,
+        thread_id: &str,
+        fallback_position: &Value,
+        reply_to_id: Option<String>,
+        resolved: Option<bool>,
+        resolvable: bool,
+    ) -> Option<PrComment> {
+        let position =
+            note.get("position").filter(|position| position.is_object()).unwrap_or(fallback_position).as_object()?;
         let position = Value::Object(position.clone());
         let path = position["new_path"].as_str().or_else(|| position["old_path"].as_str())?.to_string();
         let line = position["new_line"].as_u64().or_else(|| position["old_line"].as_u64()).map(|line| line as u32);
@@ -334,6 +346,10 @@ impl GitLabAdapter {
                 .or_else(|| original["line_range"]["start"]["old_line"].as_u64())
                 .map(|line| line as u32),
             diff_hunk: None,
+            thread_id: thread_id.to_string(),
+            reply_to_id,
+            resolved,
+            resolvable,
         })
     }
 }
@@ -984,11 +1000,20 @@ impl GitPlatform for GitLabAdapter {
 
         let url = format!("{merge_request_url}/discussions");
         let discussion = self.post_json(&url, &serde_json::json!({ "body": body, "position": position })).await?;
+        let thread_id = Self::value_id(&discussion["id"]);
         let note = discussion["notes"]
             .as_array()
             .and_then(|notes| notes.iter().find(|note| note["position"].is_object()))
             .ok_or_else(|| AppError::Api("GitLab 创建行级评论后未返回有效 Note".into()))?;
-        Self::map_pr_comment(note).ok_or_else(|| AppError::Api("GitLab 行级评论响应缺少位置信息".into()))
+        Self::map_pr_comment(
+            note,
+            &thread_id,
+            &note["position"],
+            None,
+            note["resolved"].as_bool(),
+            note["resolvable"].as_bool().unwrap_or(false),
+        )
+        .ok_or_else(|| AppError::Api("GitLab 行级评论响应缺少位置信息".into()))
     }
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError> {
@@ -996,12 +1021,48 @@ impl GitPlatform for GitLabAdapter {
         let url =
             format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions?per_page=100", self.base_url);
         let discussions: Vec<Value> = self.get_json(&url).await?;
-        Ok(discussions
-            .iter()
-            .flat_map(|discussion| discussion["notes"].as_array().into_iter().flatten())
-            .filter(|note| !note["system"].as_bool().unwrap_or(false))
-            .filter_map(Self::map_pr_comment)
-            .collect())
+        let mut comments = Vec::new();
+        for discussion in &discussions {
+            let Some(notes) = discussion["notes"].as_array() else {
+                continue;
+            };
+            let Some(root_note) =
+                notes.iter().find(|note| !note["system"].as_bool().unwrap_or(false) && note["position"].is_object())
+            else {
+                continue;
+            };
+            let thread_id = Self::value_id(&discussion["id"]);
+            let root_id = Self::value_id(&root_note["id"]);
+            let resolved = notes.iter().find_map(|note| note["resolved"].as_bool());
+            let resolvable = notes.iter().any(|note| note["resolvable"].as_bool().unwrap_or(false));
+            for note in notes.iter().filter(|note| !note["system"].as_bool().unwrap_or(false)) {
+                let note_id = Self::value_id(&note["id"]);
+                let reply_to_id = (note_id != root_id).then(|| root_id.clone());
+                if let Some(comment) =
+                    Self::map_pr_comment(note, &thread_id, &root_note["position"], reply_to_id, resolved, resolvable)
+                {
+                    comments.push(comment);
+                }
+            }
+        }
+        Ok(comments)
+    }
+
+    async fn set_review_thread_resolved(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        thread_id: &str,
+        resolved: bool,
+    ) -> Result<(), AppError> {
+        if thread_id.trim().is_empty() {
+            return Err(AppError::Api("GitLab Discussion ID 不能为空".into()));
+        }
+        let project_id = urlencoding(owner, repo);
+        let url = format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}", self.base_url);
+        self.put_json(&url, &serde_json::json!({ "resolved": resolved })).await?;
+        Ok(())
     }
 
     async fn list_reviews(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<Review>, AppError> {

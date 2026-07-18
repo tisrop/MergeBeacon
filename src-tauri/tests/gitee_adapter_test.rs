@@ -297,6 +297,17 @@ async fn test_gitee_list_pr_comments() {
                 "path": "",
                 "user": { "id": 3, "login": "dev3", "name": "Dev Three", "avatar_url": "" },
                 "created_at": "2025-01-04T02:00:00Z"
+            },
+            {
+                "id": 104,
+                "in_reply_to_id": 100,
+                "body": "Thanks, updated.",
+                "path": "src/main.rs",
+                "position": 15,
+                "new_line": 15,
+                "commit_id": "abc123",
+                "user": { "id": 4, "login": "author", "name": "PR Author", "avatar_url": "" },
+                "created_at": "2025-01-04T04:00:00Z"
             }
         ])))
         .mount(&mock_server)
@@ -308,11 +319,15 @@ async fn test_gitee_list_pr_comments() {
 
     let comments = adapter.list_pr_comments("octocat", "hello-world", 42).await.expect("should list PR comments");
 
-    assert_eq!(comments.len(), 3);
+    assert_eq!(comments.len(), 4);
     assert_eq!(comments[0].body, "Nice fix!");
     assert_eq!(comments[0].path, "src/main.rs");
     assert_eq!(comments[0].line, Some(15));
     assert_eq!(comments[0].start_line, None);
+    assert_eq!(comments[0].thread_id, "100");
+    assert_eq!(comments[0].reply_to_id, None);
+    assert_eq!(comments[0].resolved, None);
+    assert!(!comments[0].resolvable);
     assert_eq!(comments[1].body, "Please add tests");
     assert_eq!(comments[1].path, "src/lib.rs");
     assert_eq!(comments[1].line, Some(42));
@@ -321,6 +336,11 @@ async fn test_gitee_list_pr_comments() {
     assert_eq!(comments[2].path, "src/main.rs");
     assert_eq!(comments[2].line, Some(20));
     assert_eq!(comments[2].start_line, Some(10));
+    assert_eq!(comments[3].body, "Thanks, updated.");
+    assert_eq!(comments[3].thread_id, "100");
+    assert_eq!(comments[3].reply_to_id.as_deref(), Some("100"));
+    assert_eq!(comments[3].resolved, None);
+    assert!(!comments[3].resolvable);
 }
 
 #[tokio::test]

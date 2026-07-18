@@ -1,7 +1,7 @@
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{ReadinessState, ReviewInboxCategory, ReviewInboxRelationship};
 use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
-use wiremock::matchers::{header, method, path, query_param};
+use wiremock::matchers::{body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn github_search_issue(number: u64, title: &str, updated_at: &str) -> serde_json::Value {
@@ -14,6 +14,30 @@ fn github_search_issue(number: u64, title: &str, updated_at: &str) -> serde_json
         "updated_at": updated_at,
         "user": { "id": 1, "login": "dev1", "name": "", "avatar_url": "" },
         "labels": [{ "name": "review" }]
+    })
+}
+
+fn github_review_comment(id: u64, body: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": format!("PRRC_{id}"),
+        "fullDatabaseId": id.to_string(),
+        "body": body,
+        "path": "src/lib.rs",
+        "line": 8,
+        "startLine": null,
+        "author": {
+            "id": "U_reviewer",
+            "login": "reviewer",
+            "name": "Reviewer",
+            "avatarUrl": "https://avatars.example.com/reviewer"
+        },
+        "createdAt": "2026-07-16T10:00:00Z",
+        "commit": { "oid": "head" },
+        "originalCommit": { "oid": "head" },
+        "originalLine": 8,
+        "originalStartLine": null,
+        "diffHunk": "@@ -8 +8 @@",
+        "replyTo": null
     })
 }
 
@@ -78,6 +102,7 @@ async fn test_github_list_prs() {
         .await;
     Mock::given(method("POST"))
         .and(path("/graphql"))
+        .and(body_string_contains("query ReviewInboxStatuses"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "data": {
                 "nodes": [{
@@ -188,6 +213,398 @@ async fn test_github_create_review() {
     assert_eq!(review.id, serde_json::json!(1001));
     assert_eq!(review.body, "LGTM!");
     assert_eq!(review.state, "APPROVED");
+}
+
+#[tokio::test]
+async fn test_github_list_pr_comments_uses_review_threads_with_resolution_state() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [{
+                                "id": "PRRT_thread_1",
+                                "isResolved": false,
+                                "viewerCanResolve": true,
+                                "viewerCanUnresolve": false,
+                                "comments": {
+                                    "nodes": [
+                                        {
+                                            "id": "PRRC_root",
+                                            "fullDatabaseId": "100",
+                                            "body": "root",
+                                            "path": "src/lib.rs",
+                                            "line": 8,
+                                            "startLine": null,
+                                            "author": {
+                                                "id": "U_reviewer",
+                                                "login": "reviewer",
+                                                "name": "Reviewer",
+                                                "avatarUrl": "https://avatars.example.com/reviewer"
+                                            },
+                                            "createdAt": "2026-07-16T10:00:00Z",
+                                            "commit": { "oid": "head" },
+                                            "originalCommit": { "oid": "head" },
+                                            "originalLine": 8,
+                                            "originalStartLine": null,
+                                            "diffHunk": "@@ -8 +8 @@",
+                                            "replyTo": null
+                                        },
+                                        {
+                                            "id": "PRRC_reply",
+                                            "fullDatabaseId": "101",
+                                            "body": "reply",
+                                            "path": "src/lib.rs",
+                                            "line": 8,
+                                            "startLine": null,
+                                            "author": {
+                                                "id": "U_author",
+                                                "login": "author",
+                                                "name": "Author",
+                                                "avatarUrl": "https://avatars.example.com/author"
+                                            },
+                                            "createdAt": "2026-07-16T11:00:00Z",
+                                            "commit": { "oid": "head" },
+                                            "originalCommit": { "oid": "head" },
+                                            "originalLine": 8,
+                                            "originalStartLine": null,
+                                            "diffHunk": "@@ -8 +8 @@",
+                                            "replyTo": {
+                                                "id": "PRRC_root",
+                                                "fullDatabaseId": "100"
+                                            }
+                                        }
+                                    ],
+                                    "pageInfo": { "hasNextPage": false, "endCursor": null }
+                                }
+                            }],
+                            "pageInfo": { "hasNextPage": false, "endCursor": null }
+                        }
+                    }
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let comments = adapter.list_pr_comments("octocat", "hello-world", 42).await.expect("should list review threads");
+
+    assert_eq!(comments.len(), 2);
+    assert_eq!(comments[0].id, serde_json::json!(100));
+    assert_eq!(comments[0].thread_id, "PRRT_thread_1");
+    assert_eq!(comments[0].resolved, Some(false));
+    assert!(comments[0].resolvable);
+    assert_eq!(comments[1].thread_id, "PRRT_thread_1");
+    assert_eq!(comments[1].reply_to_id.as_deref(), Some("100"));
+    assert_eq!(comments[1].author.name, "Author");
+
+    let requests = mock_server.received_requests().await.expect("requests");
+    let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("GraphQL JSON body");
+    assert!(body["query"].as_str().unwrap_or_default().contains("reviewThreads"));
+    assert_eq!(body["variables"]["owner"], "octocat");
+    assert_eq!(body["variables"]["repo"], "hello-world");
+    assert_eq!(body["variables"]["number"], 42);
+}
+
+#[tokio::test]
+async fn test_github_list_pr_comments_paginates_threads_and_comments() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query ReviewThreads"))
+        .and(body_string_contains("\"after\":null"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [{
+                                "id": "PRRT_thread_1",
+                                "isResolved": false,
+                                "viewerCanResolve": true,
+                                "viewerCanUnresolve": false,
+                                "comments": {
+                                    "nodes": [github_review_comment(100, "first comment page")],
+                                    "pageInfo": { "hasNextPage": true, "endCursor": "comment_cursor_1" }
+                                }
+                            }],
+                            "pageInfo": { "hasNextPage": true, "endCursor": "thread_cursor_1" }
+                        }
+                    }
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query ReviewThreadComments"))
+        .and(body_string_contains("\"after\":\"comment_cursor_1\""))
+        .and(body_string_contains("\"threadId\":\"PRRT_thread_1\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "node": {
+                    "comments": {
+                        "nodes": [github_review_comment(101, "second comment page")],
+                        "pageInfo": { "hasNextPage": false, "endCursor": null }
+                    }
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query ReviewThreads"))
+        .and(body_string_contains("\"after\":\"thread_cursor_1\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [{
+                                "id": "PRRT_thread_2",
+                                "isResolved": true,
+                                "viewerCanResolve": false,
+                                "viewerCanUnresolve": true,
+                                "comments": {
+                                    "nodes": [github_review_comment(200, "second thread page")],
+                                    "pageInfo": { "hasNextPage": false, "endCursor": null }
+                                }
+                            }],
+                            "pageInfo": { "hasNextPage": false, "endCursor": null }
+                        }
+                    }
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let comments =
+        adapter.list_pr_comments("octocat", "hello-world", 42).await.expect("should paginate review threads");
+
+    assert_eq!(comments.len(), 3);
+    assert_eq!(comments[0].id, serde_json::json!(100));
+    assert_eq!(comments[1].id, serde_json::json!(101));
+    assert_eq!(comments[0].thread_id, "PRRT_thread_1");
+    assert_eq!(comments[1].thread_id, "PRRT_thread_1");
+    assert_eq!(comments[2].id, serde_json::json!(200));
+    assert_eq!(comments[2].thread_id, "PRRT_thread_2");
+    assert_eq!(comments[2].resolved, Some(true));
+    assert!(comments[2].resolvable);
+}
+
+#[tokio::test]
+async fn test_github_list_pr_comments_reports_graphql_errors() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query ReviewThreads"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": null,
+            "errors": [{ "message": "Resource not accessible by integration" }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let error = adapter
+        .list_pr_comments("octocat", "hello-world", 42)
+        .await
+        .expect_err("GraphQL errors must fail the review thread query");
+
+    assert!(error.to_string().contains("GitHub GraphQL 评审线程查询失败"));
+    assert!(error.to_string().contains("Resource not accessible by integration"));
+}
+
+#[tokio::test]
+async fn test_github_resolves_and_reopens_review_thread() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("mutation ResolveReviewThread"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "resolveReviewThread": {
+                    "thread": { "id": "PRRT_thread_1", "isResolved": true }
+                }
+            }
+        })))
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("mutation UnresolveReviewThread"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "unresolveReviewThread": {
+                    "thread": { "id": "PRRT_thread_1", "isResolved": false }
+                }
+            }
+        })))
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    adapter
+        .set_review_thread_resolved("octocat", "hello-world", 42, "PRRT_thread_1", true)
+        .await
+        .expect("should resolve review thread");
+    adapter
+        .set_review_thread_resolved("octocat", "hello-world", 42, "PRRT_thread_1", false)
+        .await
+        .expect("should reopen review thread");
+
+    let requests = mock_server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 2);
+    let request_bodies = requests
+        .iter()
+        .map(|request| serde_json::from_slice::<serde_json::Value>(&request.body).expect("GraphQL JSON body"))
+        .collect::<Vec<_>>();
+    assert!(request_bodies.iter().any(|body| {
+        body["query"].as_str().unwrap_or_default().contains("mutation ResolveReviewThread")
+            && body["variables"]["threadId"] == "PRRT_thread_1"
+    }));
+    assert!(request_bodies.iter().any(|body| {
+        body["query"].as_str().unwrap_or_default().contains("mutation UnresolveReviewThread")
+            && body["variables"]["threadId"] == "PRRT_thread_1"
+    }));
+}
+
+#[tokio::test]
+async fn test_github_lists_viewed_files_with_pagination() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query PullRequestViewedFiles"))
+        .and(body_string_contains("\"after\":null"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "files": {
+                            "nodes": [
+                                { "path": "src/viewed.rs", "viewerViewedState": "VIEWED" },
+                                { "path": "src/unviewed.rs", "viewerViewedState": "UNVIEWED" }
+                            ],
+                            "pageInfo": { "hasNextPage": true, "endCursor": "files_cursor_1" }
+                        }
+                    }
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query PullRequestViewedFiles"))
+        .and(body_string_contains("\"after\":\"files_cursor_1\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "files": {
+                            "nodes": [
+                                { "path": "tests/viewed.rs", "viewerViewedState": "VIEWED" },
+                                { "path": "tests/dismissed.rs", "viewerViewedState": "DISMISSED" }
+                            ],
+                            "pageInfo": { "hasNextPage": false, "endCursor": null }
+                        }
+                    }
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let viewed = adapter.list_viewed_pr_files("octocat", "hello-world", 42).await.expect("should list viewed files");
+
+    assert_eq!(viewed, vec!["src/viewed.rs", "tests/viewed.rs"]);
+}
+
+#[tokio::test]
+async fn test_github_marks_and_unmarks_file_as_viewed() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query PullRequestNodeId"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": { "id": "PR_node_42" }
+                }
+            }
+        })))
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("mutation MarkFileAsViewed"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "markFileAsViewed": {
+                    "pullRequest": { "id": "PR_node_42" }
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("mutation UnmarkFileAsViewed"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "unmarkFileAsViewed": {
+                    "pullRequest": { "id": "PR_node_42" }
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    adapter
+        .set_pr_file_viewed("octocat", "hello-world", 42, "src/lib.rs", true)
+        .await
+        .expect("should mark file as viewed");
+    adapter
+        .set_pr_file_viewed("octocat", "hello-world", 42, "src/lib.rs", false)
+        .await
+        .expect("should mark file as unviewed");
+
+    let requests = mock_server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 4);
+    let bodies = requests
+        .iter()
+        .map(|request| serde_json::from_slice::<serde_json::Value>(&request.body).expect("GraphQL JSON body"))
+        .collect::<Vec<_>>();
+    for operation in ["mutation MarkFileAsViewed", "mutation UnmarkFileAsViewed"] {
+        let body = bodies
+            .iter()
+            .find(|body| body["query"].as_str().unwrap_or_default().contains(operation))
+            .expect("viewed mutation request");
+        assert_eq!(body["variables"]["pullRequestId"], "PR_node_42");
+        assert_eq!(body["variables"]["path"], "src/lib.rs");
+    }
 }
 
 #[tokio::test]

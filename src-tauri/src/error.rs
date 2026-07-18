@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum AppError {
     #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(reqwest::Error),
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
@@ -29,6 +29,15 @@ pub enum AppError {
 
     #[error("Unknown error: {0}")]
     Unknown(String),
+}
+
+impl From<reqwest::Error> for AppError {
+    fn from(error: reqwest::Error) -> Self {
+        // reqwest includes the full request URL in status and transport errors.
+        // Gitee authenticates through an access_token query parameter, so never
+        // let that URL cross the IPC boundary.
+        Self::Http(error.without_url())
+    }
 }
 
 // Allow converting AppError to String for Tauri command returns

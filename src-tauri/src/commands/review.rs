@@ -160,6 +160,67 @@ pub async fn review_comments_list(
 }
 
 #[tauri::command]
+pub async fn review_thread_set_resolved(
+    state: State<'_, AppState>,
+    platform: String,
+    owner: String,
+    repo: String,
+    pr_number: u64,
+    thread_id: String,
+    resolved: bool,
+) -> Result<(), String> {
+    if thread_id.trim().is_empty() {
+        return Err("评审线程 ID 不能为空".to_string());
+    }
+    let capabilities =
+        crate::platform::capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
+    if !capabilities.supports_review_thread_resolution {
+        return Err(format!("{platform} 不支持解决或重新打开评审线程"));
+    }
+    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
+    p.set_review_thread_resolved(&owner, &repo, pr_number, &thread_id, resolved).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn review_viewed_files_list(
+    state: State<'_, AppState>,
+    platform: String,
+    owner: String,
+    repo: String,
+    pr_number: u64,
+) -> Result<Vec<String>, String> {
+    let capabilities =
+        crate::platform::capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
+    if !capabilities.supports_remote_file_viewed_state {
+        return Err(format!("{platform} 不支持同步文件已查看状态"));
+    }
+    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
+    p.list_viewed_pr_files(&owner, &repo, pr_number).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn review_file_set_viewed(
+    state: State<'_, AppState>,
+    platform: String,
+    owner: String,
+    repo: String,
+    pr_number: u64,
+    path: String,
+    viewed: bool,
+) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("文件路径不能为空".to_string());
+    }
+    let capabilities =
+        crate::platform::capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
+    if !capabilities.supports_remote_file_viewed_state {
+        return Err(format!("{platform} 不支持同步文件已查看状态"));
+    }
+    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
+    p.set_pr_file_viewed(&owner, &repo, pr_number, &path, viewed).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn review_comment_add(
     state: State<'_, AppState>,

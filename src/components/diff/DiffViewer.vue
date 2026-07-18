@@ -12,24 +12,39 @@ import type {
   PatchLine,
   Platform,
   PrFile,
+  ReviewThreadSummary,
   StandardPatchFile,
 } from "@/types";
-import { prFileContent } from "@/api";
+import { prFileContent, reviewFileSetViewed, reviewViewedFilesList } from "@/api";
 import AppSelect from "@/components/shared/AppSelect.vue";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
+import {
+  useReviewProgressStore,
+  type ReviewProgressContext,
+} from "@/stores/useReviewProgressStore";
+import { getErrorMessage } from "@/utils/error";
 
 const props = defineProps<{
   diff: DiffResult | null;
   platform?: Platform;
   owner?: string;
   repo?: string;
+  prNumber?: number;
   baseSha?: string;
   headSha?: string;
   locationRequest?: DiffLocationRequest | null;
+  threadSummary?: ReviewThreadSummary | null;
+  canSyncViewedFiles?: boolean;
 }>();
 
 const uiSettings = useUiSettingsStore();
+const reviewProgress = useReviewProgressStore();
 const { isDiffSyncScrollEnabled } = storeToRefs(uiSettings);
+const viewedFilesLoading = ref(false);
+const viewedFilesError = ref("");
+const viewedFilesLoadedRemotely = ref(false);
+const syncingViewedFiles = ref(new Set<string>());
+let viewedFilesRequestSequence = 0;
 
 const emit = defineEmits<{
   addComment: [
@@ -220,6 +235,45 @@ const visibleTreeRows = computed(() => {
 });
 const selectedFile = computed(
   () => props.diff?.files.find((file) => file.filename === selectedFilePath.value) ?? null,
+);
+const reviewProgressContext = computed(() => {
+  if (!props.platform || !props.owner || !props.repo || !props.prNumber || !props.headSha)
+    return null;
+  return {
+    platform: props.platform,
+    owner: props.owner,
+    repo: props.repo,
+    prNumber: props.prNumber,
+    headSha: props.headSha,
+  };
+});
+function reviewProgressIdentity(context: ReviewProgressContext): string {
+  return [context.platform, context.owner, context.repo, context.prNumber, context.headSha].join(
+    ":",
+  );
+}
+
+const viewedProgressSource = computed(() => {
+  if (!props.canSyncViewedFiles) return "本地";
+  if (viewedFilesLoading.value) return "同步中";
+  if (!viewedFilesLoadedRemotely.value) return "本地缓存";
+  return "远端";
+});
+const viewedProgressDescription = computed(() => {
+  if (!props.canSyncViewedFiles) return "查看进度仅保存在本机";
+  if (viewedFilesLoading.value) return "正在从远端同步查看进度";
+  if (!viewedFilesLoadedRemotely.value) return "远端同步失败，当前展示本地缓存";
+  return "查看进度已同步到远端平台";
+});
+const viewedFilePaths = computed(() => {
+  const context = reviewProgressContext.value;
+  return context ? reviewProgress.viewedFiles(context) : new Set<string>();
+});
+const viewedFileCount = computed(
+  () => props.diff?.files.filter((file) => viewedFilePaths.value.has(file.filename)).length ?? 0,
+);
+const unviewedFileCount = computed(() =>
+  Math.max(0, (props.diff?.files.length ?? 0) - viewedFileCount.value),
 );
 const hasStandardPatchPayload = computed(
   () => props.diff?.patch_schema_version === 1 && Array.isArray(props.diff?.patches),
@@ -811,6 +865,64 @@ async function selectFile(path: string) {
   if (topScrollbarRef.value) topScrollbarRef.value.scrollLeft = 0;
 }
 
+function isFileViewed(path: string): boolean {
+  return viewedFilePaths.value.has(path);
+}
+
+async function toggleSelectedFileViewed(): Promise<void> {
+  const context = reviewProgressContext.value;
+  const path = selectedFile.value?.filename;
+  if (!context || !path || viewedFilesLoading.value || syncingViewedFiles.value.has(path)) return;
+  const viewed = !isFileViewed(path);
+  reviewProgress.setFileViewed(context, path, viewed);
+  if (!props.canSyncViewedFiles) return;
+
+  viewedFilesError.value = "";
+  syncingViewedFiles.value = new Set(syncingViewedFiles.value).add(path);
+  const capturedProgressIdentity = reviewProgressIdentity(context);
+  try {
+    await reviewFileSetViewed(
+      context.platform,
+      context.owner,
+      context.repo,
+      context.prNumber,
+      path,
+      viewed,
+    );
+  } catch (error) {
+    reviewProgress.setFileViewed(context, path, !viewed);
+    if (
+      reviewProgressContext.value &&
+      reviewProgressIdentity(reviewProgressContext.value) === capturedProgressIdentity
+    ) {
+      viewedFilesError.value = getErrorMessage(error, "无法同步文件已查看状态");
+    }
+  } finally {
+    const next = new Set(syncingViewedFiles.value);
+    next.delete(path);
+    syncingViewedFiles.value = next;
+  }
+}
+
+function navigateUnviewed(direction: -1 | 1): void {
+  const files = props.diff?.files ?? [];
+  if (files.length === 0 || unviewedFileCount.value === 0) return;
+  const currentIndex = Math.max(
+    0,
+    files.findIndex((file) => file.filename === selectedFilePath.value),
+  );
+  for (let offset = 1; offset <= files.length; offset++) {
+    const index = (currentIndex + direction * offset + files.length) % files.length;
+    const candidate = files[index];
+    if (!isFileViewed(candidate.filename)) {
+      void selectFile(candidate.filename);
+      expandDirectoriesForFile(candidate.filename);
+      void nextTick(() => scrollSelectedTreeRowIntoView(candidate.filename));
+      return;
+    }
+  }
+}
+
 function syncRenderedFile() {
   const wrappers = containerRef.value?.querySelectorAll<HTMLElement>(".d2h-file-wrapper");
   if (!wrappers?.length) return;
@@ -973,6 +1085,45 @@ watch(
     const files = props.diff?.files ?? [];
     selectedFilePath.value = firstFilePath(fileTree.value);
     expandedDirectories.value = collectDirectoryKeys(fileTree.value);
+  },
+  { immediate: true },
+);
+
+watch(
+  [reviewProgressContext, fileSignature, () => props.canSyncViewedFiles],
+  async ([context]) => {
+    const requestSequence = ++viewedFilesRequestSequence;
+    viewedFilesError.value = "";
+    viewedFilesLoadedRemotely.value = false;
+    viewedFilesLoading.value = false;
+    if (!context) return;
+
+    const validPaths = props.diff?.files.map((file) => file.filename) ?? [];
+    reviewProgress.pruneFiles(context, validPaths);
+    if (!props.canSyncViewedFiles) return;
+
+    viewedFilesLoading.value = true;
+    try {
+      const viewedFiles = await reviewViewedFilesList(
+        context.platform,
+        context.owner,
+        context.repo,
+        context.prNumber,
+      );
+      if (requestSequence !== viewedFilesRequestSequence) return;
+      const validPathSet = new Set(validPaths);
+      reviewProgress.replaceViewedFiles(
+        context,
+        viewedFiles.filter((path) => validPathSet.has(path)),
+      );
+      viewedFilesLoadedRemotely.value = true;
+    } catch (error) {
+      if (requestSequence === viewedFilesRequestSequence) {
+        viewedFilesError.value = getErrorMessage(error, "无法加载文件已查看状态");
+      }
+    } finally {
+      if (requestSequence === viewedFilesRequestSequence) viewedFilesLoading.value = false;
+    }
   },
   { immediate: true },
 );
@@ -1305,6 +1456,13 @@ onUnmounted(() => {
           <div>
             <strong>文件</strong>
             <span>{{ diff?.files.length ?? 0 }}</span>
+            <span
+              v-if="reviewProgressContext"
+              class="local-progress-label"
+              :title="viewedProgressDescription"
+            >
+              {{ viewedProgressSource }} {{ viewedFileCount }}/{{ diff?.files.length ?? 0 }} 已查看
+            </span>
           </div>
           <div class="change-summary" aria-label="变更统计">
             <span class="additions">+{{ totalAdditions }}</span>
@@ -1317,7 +1475,10 @@ onUnmounted(() => {
             v-for="row in visibleTreeRows"
             :key="row.key"
             class="tree-row"
-            :class="{ selected: row.file?.filename === selectedFilePath }"
+            :class="{
+              selected: row.file?.filename === selectedFilePath,
+              viewed: row.file ? isFileViewed(row.file.filename) : false,
+            }"
             :style="{ '--tree-depth': row.depth }"
             type="button"
             role="treeitem"
@@ -1326,7 +1487,7 @@ onUnmounted(() => {
             :aria-current="row.file?.filename === selectedFilePath ? 'true' : undefined"
             :aria-label="
               row.file
-                ? `${statusDescriptions[row.file.status]}文件：${row.file.filename}`
+                ? `${statusDescriptions[row.file.status]}文件：${row.file.filename}，${isFileViewed(row.file.filename) ? `已查看，${viewedProgressSource}状态` : '未查看'}${threadSummary?.by_file[row.file.filename]?.unresolved ? `，${threadSummary.by_file[row.file.filename].unresolved} 个未解决线程` : ''}`
                 : `目录：${row.name}`
             "
             :data-file-path="row.file?.filename"
@@ -1383,6 +1544,28 @@ onUnmounted(() => {
               {{ row.name }}
             </span>
             <template v-if="row.file">
+              <span class="file-review-indicators" aria-hidden="true">
+                <span
+                  v-if="isFileViewed(row.file.filename)"
+                  class="viewed-indicator"
+                  :title="`已查看（${viewedProgressSource}状态）`"
+                  >✓</span
+                >
+                <span
+                  v-if="threadSummary?.by_file[row.file.filename]?.unresolved"
+                  class="unresolved-indicator"
+                  :title="`${threadSummary.by_file[row.file.filename].unresolved} 个未解决线程`"
+                >
+                  {{ threadSummary.by_file[row.file.filename].unresolved }}
+                </span>
+                <span
+                  v-else-if="threadSummary?.by_file[row.file.filename]?.comments"
+                  class="comment-indicator"
+                  :title="`${threadSummary.by_file[row.file.filename].comments} 条人工评论`"
+                >
+                  {{ threadSummary.by_file[row.file.filename].comments }}
+                </span>
+              </span>
               <span class="file-change-count" aria-hidden="true">
                 <span v-if="row.file.additions" class="additions">+{{ row.file.additions }}</span>
                 <span v-if="row.file.deletions" class="deletions">-{{ row.file.deletions }}</span>
@@ -1429,6 +1612,54 @@ onUnmounted(() => {
           <div v-if="selectedFile" class="selected-file-stats" aria-label="当前文件变更统计">
             <span class="additions">+{{ selectedFile.additions }}</span>
             <span class="deletions">-{{ selectedFile.deletions }}</span>
+          </div>
+          <div v-if="reviewProgressContext && selectedFile" class="review-progress-actions">
+            <span class="unviewed-summary">剩余 {{ unviewedFileCount }} 个未查看</span>
+            <span
+              v-if="viewedFilesError"
+              class="review-progress-error"
+              role="alert"
+              :title="viewedFilesError"
+            >
+              远端同步失败：{{ viewedFilesError }}
+            </span>
+            <button
+              type="button"
+              class="review-progress-button progress-nav-button"
+              :disabled="unviewedFileCount === 0"
+              title="上一个未查看文件"
+              aria-label="上一个未查看文件"
+              @click="navigateUnviewed(-1)"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              class="review-progress-button progress-nav-button"
+              :disabled="unviewedFileCount === 0"
+              title="下一个未查看文件"
+              aria-label="下一个未查看文件"
+              @click="navigateUnviewed(1)"
+            >
+              ↓
+            </button>
+            <button
+              type="button"
+              class="review-progress-button viewed-toggle-button"
+              :class="{ viewed: isFileViewed(selectedFile.filename) }"
+              :aria-pressed="isFileViewed(selectedFile.filename)"
+              :disabled="viewedFilesLoading || syncingViewedFiles.has(selectedFile.filename)"
+              :title="viewedProgressDescription"
+              @click="toggleSelectedFileViewed"
+            >
+              {{
+                viewedFilesLoading || syncingViewedFiles.has(selectedFile.filename)
+                  ? "同步中..."
+                  : isFileViewed(selectedFile.filename)
+                    ? "标记为未查看"
+                    : "标记为已查看"
+              }}
+            </button>
           </div>
           <div v-if="hasControlledPatch && canExpandContext" class="context-toolbar-actions">
             <button
@@ -1913,6 +2144,13 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+.local-progress-label {
+  color: var(--color-primary);
+  font-size: 10px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
 .change-summary,
 .selected-file-stats,
 .file-change-count {
@@ -1962,6 +2200,10 @@ onUnmounted(() => {
 .tree-row.selected {
   background: var(--color-primary-light);
   color: var(--color-primary);
+}
+
+.tree-row.viewed .tree-label {
+  color: var(--color-text-secondary);
 }
 
 .disclosure-icon,
@@ -2015,6 +2257,40 @@ onUnmounted(() => {
 .file-change-count {
   min-width: 0;
   color: var(--color-text-tertiary);
+}
+
+.file-review-indicators {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+}
+
+.viewed-indicator,
+.unresolved-indicator,
+.comment-indicator {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full, 999px);
+}
+
+.viewed-indicator {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.unresolved-indicator {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.comment-indicator {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 
 .diff-context {
@@ -2079,6 +2355,39 @@ onUnmounted(() => {
 .selected-file-stats {
   flex-shrink: 0;
   font-size: 11px;
+}
+
+.review-progress-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.unviewed-summary {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.review-progress-error {
+  max-width: 240px;
+  overflow: hidden;
+  color: var(--color-danger);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-nav-button {
+  width: 28px;
+  padding: 0;
+}
+
+.viewed-toggle-button.viewed {
+  border-color: var(--color-success-border);
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 
 .diff-top-scrollbars {
@@ -2269,7 +2578,8 @@ onUnmounted(() => {
   gap: var(--space-1);
 }
 
-.context-toolbar-button {
+.context-toolbar-button,
+.review-progress-button {
   min-height: 28px;
   padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
@@ -2280,7 +2590,8 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.context-toolbar-button:hover:not(:disabled) {
+.context-toolbar-button:hover:not(:disabled),
+.review-progress-button:hover:not(:disabled) {
   border-color: var(--color-primary);
   background: var(--color-primary-light);
   color: var(--color-primary);
@@ -2288,6 +2599,11 @@ onUnmounted(() => {
 
 .context-toolbar-button:disabled {
   cursor: wait;
+  opacity: 0.65;
+}
+
+.review-progress-button:disabled {
+  cursor: not-allowed;
   opacity: 0.65;
 }
 

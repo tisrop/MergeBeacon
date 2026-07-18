@@ -313,6 +313,10 @@ pub struct PrComment {
     pub original_line: Option<u32>,
     pub original_start_line: Option<u32>,
     pub diff_hunk: Option<String>,
+    pub thread_id: String,
+    pub reply_to_id: Option<String>,
+    pub resolved: Option<bool>,
+    pub resolvable: bool,
 }
 
 // ── Issue ──

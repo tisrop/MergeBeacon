@@ -250,6 +250,44 @@ export async function reviewCommentsList(
   return invoke("review_comments_list", { platform, owner, repo, prNumber });
 }
 
+export async function reviewThreadSetResolved(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  threadId: string,
+  resolved: boolean,
+): Promise<void> {
+  return invoke("review_thread_set_resolved", {
+    platform,
+    owner,
+    repo,
+    prNumber,
+    threadId,
+    resolved,
+  });
+}
+
+export async function reviewViewedFilesList(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<string[]> {
+  return invoke("review_viewed_files_list", { platform, owner, repo, prNumber });
+}
+
+export async function reviewFileSetViewed(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  path: string,
+  viewed: boolean,
+): Promise<void> {
+  return invoke("review_file_set_viewed", { platform, owner, repo, prNumber, path, viewed });
+}
+
 export async function reviewCommentAdd(
   platform: Platform,
   owner: string,

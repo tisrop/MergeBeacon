@@ -28,6 +28,8 @@ export interface PlatformCapabilities {
   supports_fork_context: boolean;
   supports_issue_auto_close: boolean;
   supports_compare_diff: boolean;
+  supports_review_thread_resolution: boolean;
+  supports_remote_file_viewed_state: boolean;
 }
 
 export interface UpdateProgressEvent {
@@ -259,7 +261,7 @@ export interface Review {
 }
 
 export interface PrComment {
-  id: number;
+  id: number | string;
   body: string;
   path: string;
   line: number | null;
@@ -271,6 +273,22 @@ export interface PrComment {
   original_line: number | null;
   original_start_line: number | null;
   diff_hunk: string | null;
+  thread_id: string;
+  reply_to_id: string | null;
+  resolved: boolean | null;
+  resolvable: boolean;
+}
+
+export interface ReviewThreadFileSummary {
+  comments: number;
+  unresolved: number;
+}
+
+export interface ReviewThreadSummary {
+  comments: number;
+  threads: number;
+  unresolved: number;
+  by_file: Record<string, ReviewThreadFileSummary>;
 }
 
 // ── Issue ──

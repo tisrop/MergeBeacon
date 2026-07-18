@@ -19,6 +19,7 @@ import type {
   MergeStrategy,
   Platform,
   PrFile,
+  ReviewThreadSummary,
 } from "@/types";
 
 function extractDiffHunk(files: PrFile[], path: string, line: number): string | undefined {
@@ -135,7 +136,19 @@ function handleDiffLocationResult(result: DiffLocationResult): void {
   diffLocationError.value = result.success ? "" : (result.message ?? "无法定位该 AI 建议");
 }
 
+function handleReviewCommentLocate(path: string, line: number | null): void {
+  diffLocationError.value = "";
+  diffLocationRequest.value = {
+    id: ++diffLocationRequestId,
+    path,
+    line,
+  };
+  selectTab("diff");
+  void nextTick(scrollTabBarIntoView);
+}
+
 const reviewListRef = ref<InstanceType<typeof ReviewList> | null>(null);
+const reviewThreadSummary = ref<ReviewThreadSummary | null>(null);
 const commentError = ref("");
 const commentSuccess = ref(false);
 
@@ -597,9 +610,14 @@ onMounted(async () => {
             :platform="platform"
             :owner="owner"
             :repo="repo"
+            :pr-number="number"
             :base-sha="pr.currentPr?.base_sha ?? ''"
             :head-sha="pr.currentPr?.head_sha ?? ''"
             :location-request="diffLocationRequest"
+            :thread-summary="reviewThreadSummary"
+            :can-sync-viewed-files="
+              platformCapabilities?.supports_remote_file_viewed_state ?? false
+            "
             @add-comment="handleAddComment"
             @location-result="handleDiffLocationResult"
           />
@@ -607,14 +625,18 @@ onMounted(async () => {
           <p v-if="commentSuccess" class="success-msg">✓ 行内评论已提交</p>
           <ReviewForm :platform="platform" :owner="owner" :repo="repo" :pr-number="number" />
         </div>
-        <div v-else-if="activeTab === 'reviews'">
+        <div v-show="activeTab === 'reviews'">
           <ReviewList
+            ref="reviewListRef"
             :platform="platform"
             :owner="owner"
             :repo="repo"
             :pr-number="number"
             :head-sha="pr.currentPr?.head_sha ?? null"
             :diff-files="pr.diff?.files"
+            :can-resolve-threads="platformCapabilities?.supports_review_thread_resolution ?? false"
+            @thread-summary="reviewThreadSummary = $event"
+            @locate-comment="handleReviewCommentLocate"
           />
         </div>
         <div v-if="aiPanelMounted" v-show="activeTab === 'ai'">

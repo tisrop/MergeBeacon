@@ -1131,6 +1131,7 @@ impl GitPlatform for GiteeAdapter {
             "position": line,
         });
         let c: Value = self.post_json(&url, &payload).await?;
+        let comment_id = c["id"].as_str().map(str::to_string).unwrap_or_else(|| c["id"].to_string());
         Ok(PrComment {
             id: c["id"].clone(),
             body: c["body"].as_str().unwrap_or("").to_string(),
@@ -1144,6 +1145,17 @@ impl GitPlatform for GiteeAdapter {
             original_line: c["original_line"].as_u64().map(|n| n as u32),
             original_start_line: c["original_start_line"].as_u64().map(|n| n as u32),
             diff_hunk: None, // Gitee API does not return diff_hunk
+            thread_id: c["in_reply_to_id"]
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| c["in_reply_to_id"].as_u64().map(|id| id.to_string()))
+                .unwrap_or(comment_id),
+            reply_to_id: c["in_reply_to_id"]
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| c["in_reply_to_id"].as_u64().map(|id| id.to_string())),
+            resolved: None,
+            resolvable: false,
         })
     }
 
@@ -1155,6 +1167,11 @@ impl GitPlatform for GiteeAdapter {
             .filter(|c| c["path"].is_string() && !c["path"].as_str().unwrap_or("").is_empty())
             .map(|c| {
                 let line = c["new_line"].as_u64().or_else(|| c["position"].as_u64()).map(|n| n as u32);
+                let comment_id = c["id"].as_str().map(str::to_string).unwrap_or_else(|| c["id"].to_string());
+                let reply_to_id = c["in_reply_to_id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| c["in_reply_to_id"].as_u64().map(|id| id.to_string()));
                 PrComment {
                     id: c["id"].clone(),
                     body: c["body"].as_str().unwrap_or("").to_string(),
@@ -1168,6 +1185,10 @@ impl GitPlatform for GiteeAdapter {
                     original_line: c["original_line"].as_u64().map(|n| n as u32),
                     original_start_line: c["original_start_line"].as_u64().map(|n| n as u32),
                     diff_hunk: None, // populated by command layer from SQLite
+                    thread_id: reply_to_id.clone().unwrap_or(comment_id),
+                    reply_to_id,
+                    resolved: None,
+                    resolvable: false,
                 }
             })
             .collect();
