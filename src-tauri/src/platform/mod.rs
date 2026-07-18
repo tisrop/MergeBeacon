@@ -21,6 +21,12 @@ pub struct PlatformCapabilities {
     pub supports_review_thread_resolution: bool,
     /// 平台公开 API 是否支持读取和写入文件已查看状态。
     pub supports_remote_file_viewed_state: bool,
+    pub supports_pr_title_body_edit: bool,
+    pub supports_pr_draft_toggle: bool,
+    pub supports_pr_reviewer_management: bool,
+    pub supports_pr_assignee_management: bool,
+    pub supports_pr_label_management: bool,
+    pub supports_pr_milestone_management: bool,
 }
 
 /// 平台协议能力的唯一静态定义入口。
@@ -38,6 +44,12 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_compare_diff: true,
             supports_review_thread_resolution: true,
             supports_remote_file_viewed_state: true,
+            supports_pr_title_body_edit: true,
+            supports_pr_draft_toggle: true,
+            supports_pr_reviewer_management: true,
+            supports_pr_assignee_management: true,
+            supports_pr_label_management: true,
+            supports_pr_milestone_management: true,
         },
         "gitlab" => PlatformCapabilities {
             platform: "gitlab",
@@ -48,6 +60,12 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_compare_diff: true,
             supports_review_thread_resolution: true,
             supports_remote_file_viewed_state: false,
+            supports_pr_title_body_edit: true,
+            supports_pr_draft_toggle: true,
+            supports_pr_reviewer_management: true,
+            supports_pr_assignee_management: true,
+            supports_pr_label_management: true,
+            supports_pr_milestone_management: true,
         },
         "gitee" => PlatformCapabilities {
             platform: "gitee",
@@ -58,6 +76,12 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_compare_diff: true,
             supports_review_thread_resolution: false,
             supports_remote_file_viewed_state: false,
+            supports_pr_title_body_edit: true,
+            supports_pr_draft_toggle: false,
+            supports_pr_reviewer_management: true,
+            supports_pr_assignee_management: true,
+            supports_pr_label_management: true,
+            supports_pr_milestone_management: true,
         },
         _ => return None,
     };
@@ -171,6 +195,15 @@ pub trait GitPlatform: Send + Sync {
     ) -> Result<Paginated<ReviewInboxItem>, AppError>;
 
     async fn get_pull_request(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrDetail, AppError>;
+
+    async fn update_pull_request_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        current: &PrDetail,
+        update: &PrMetadataUpdate,
+    ) -> Result<PrMetadataMutationResult, AppError>;
 
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError>;
 

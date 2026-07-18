@@ -1,6 +1,9 @@
 use mergebeacon_lib::error::AppError;
 use mergebeacon_lib::http_client::HttpClient;
-use mergebeacon_lib::models::{PrState, ReadinessState, ReviewEvent, ReviewInboxCategory, ReviewInboxRelationship};
+use mergebeacon_lib::models::{
+    PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary,
+    ReadinessState, ReviewEvent, ReviewInboxCategory, ReviewInboxRelationship, User,
+};
 use mergebeacon_lib::platform::{gitlab::GitLabAdapter, GitPlatform};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -170,7 +173,11 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
             "source_branch": "feature",
             "target_branch": "main",
             "sha": "head-sha",
-            "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"}
+            "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"},
+            "draft": true,
+            "reviewers": [gitlab_user()],
+            "assignees": [{"id": 8, "username": "assignee", "name": "Assignee", "avatar_url": ""}],
+            "milestone": {"id": 11, "iid": 2, "title": "0.6.0"}
         })))
         .expect(1)
         .mount(&mock_server)
@@ -181,6 +188,10 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
 
     assert_eq!(detail.head_sha, "head-sha");
     assert_eq!(detail.base_sha, "base-sha");
+    assert_eq!(detail.draft, Some(true));
+    assert_eq!(detail.reviewers[0].login, "reviewer");
+    assert_eq!(detail.assignees[0].login, "assignee");
+    assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
 
 #[tokio::test]
@@ -959,4 +970,169 @@ async fn test_gitlab_review_inbox_combines_reviewers_and_assignees() {
     assert_eq!(result.items[1].repository_full_name, "group/assigned");
     assert_eq!(result.items[1].relationships, vec![ReviewInboxRelationship::Assignee]);
     assert_eq!(result.items[1].status.status, ReadinessState::Ready);
+}
+
+#[tokio::test]
+async fn test_gitlab_updates_merge_request_metadata() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users"))
+        .and(query_param("username", "new-reviewer"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": 12, "username": "new-reviewer" }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users"))
+        .and(query_param("username", "new-assignee"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": 13, "username": "new-assignee" }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/milestones"))
+        .and(query_param("state", "all"))
+        .and(query_param("title", "0.7.0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "id": 8, "title": "0.7.0" }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/3"))
+        .and(body_json(serde_json::json!({
+            "title": "Draft: New title",
+            "description": "New body",
+            "reviewer_ids": [12],
+            "assignee_ids": [13],
+            "labels": "new-label",
+            "milestone_id": 8
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let current = PrDetail {
+        summary: PrSummary {
+            number: 3,
+            title: "Old title".into(),
+            author: User { id: serde_json::json!(1), login: "author".into(), name: "".into(), avatar_url: "".into() },
+            state: PrState::Open,
+            created_at: "2026-07-16T00:00:00Z".into(),
+            updated_at: "2026-07-17T00:00:00Z".into(),
+            labels: vec!["old-label".into()],
+            status: None,
+        },
+        body: "Old body".into(),
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        mergeable: None,
+        head_sha: "head".into(),
+        base_sha: "base".into(),
+        draft: Some(false),
+        reviewers: vec![User {
+            id: serde_json::json!(2),
+            login: "old-reviewer".into(),
+            name: "".into(),
+            avatar_url: "".into(),
+        }],
+        assignees: vec![User {
+            id: serde_json::json!(3),
+            login: "old-assignee".into(),
+            name: "".into(),
+            avatar_url: "".into(),
+        }],
+        milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
+        metadata_permissions: PrMetadataPermissions::default(),
+    };
+    let update = PrMetadataUpdate {
+        title: "New title".into(),
+        body: "New body".into(),
+        draft: Some(true),
+        reviewers: vec!["new-reviewer".into()],
+        assignees: vec!["new-assignee".into()],
+        labels: vec!["new-label".into()],
+        milestone: Some("0.7.0".into()),
+        expected_updated_at: current.summary.updated_at.clone(),
+    };
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+
+    let result = adapter
+        .update_pull_request_metadata("group", "repo", 3, &current, &update)
+        .await
+        .expect("metadata update should succeed");
+
+    assert!(result.failures.is_empty());
+    assert_eq!(
+        result.updated_fields,
+        vec![
+            PrMetadataField::TitleBody,
+            PrMetadataField::Draft,
+            PrMetadataField::Reviewers,
+            PrMetadataField::Assignees,
+            PrMetadataField::Labels,
+            PrMetadataField::Milestone,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_gitlab_clears_merge_request_milestone_with_zero_id() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/3"))
+        .and(body_json(serde_json::json!({ "milestone_id": 0 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let current = PrDetail {
+        summary: PrSummary {
+            number: 3,
+            title: "Title".into(),
+            author: User { id: serde_json::json!(1), login: "author".into(), name: "".into(), avatar_url: "".into() },
+            state: PrState::Open,
+            created_at: "2026-07-16T00:00:00Z".into(),
+            updated_at: "2026-07-17T00:00:00Z".into(),
+            labels: Vec::new(),
+            status: None,
+        },
+        body: "Body".into(),
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        mergeable: None,
+        head_sha: "head".into(),
+        base_sha: "base".into(),
+        draft: Some(false),
+        reviewers: Vec::new(),
+        assignees: Vec::new(),
+        milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
+        metadata_permissions: PrMetadataPermissions::default(),
+    };
+    let update = PrMetadataUpdate {
+        title: current.summary.title.clone(),
+        body: current.body.clone(),
+        draft: current.draft,
+        reviewers: Vec::new(),
+        assignees: Vec::new(),
+        labels: Vec::new(),
+        milestone: None,
+        expected_updated_at: current.summary.updated_at.clone(),
+    };
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+
+    let result = adapter
+        .update_pull_request_metadata("group", "repo", 3, &current, &update)
+        .await
+        .expect("milestone removal should succeed");
+
+    assert!(result.failures.is_empty());
+    assert_eq!(result.updated_fields, vec![PrMetadataField::Milestone]);
 }

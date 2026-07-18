@@ -3,6 +3,7 @@ import { onMounted, ref, computed, watch, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
+import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import { reviewCommentAdd } from "@/api";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { getErrorMessage } from "@/utils/error";
@@ -12,12 +13,14 @@ import ReviewForm from "@/components/review/ReviewForm.vue";
 import ReviewList from "@/components/review/ReviewList.vue";
 import AiReviewPanel from "@/components/ai/AiReviewPanel.vue";
 import MergeReadinessPanel from "@/components/pr/MergeReadinessPanel.vue";
+import PrMetadataPanel from "@/components/pr/PrMetadataPanel.vue";
 import type {
   AiSuggestion,
   DiffLocationRequest,
   DiffLocationResult,
   MergeStrategy,
   Platform,
+  PrMetadataUpdate,
   PrFile,
   ReviewThreadSummary,
 } from "@/types";
@@ -65,6 +68,7 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const pr = usePrStore();
+const reviewInbox = useReviewInboxStore();
 const capabilityStore = useCapabilityStore();
 
 const platform = route.params.platform as Platform;
@@ -158,6 +162,9 @@ const dropdownOpen = ref(false);
 const operating = ref(false);
 const statusMsg = ref("");
 const mergeWarning = ref("");
+const metadataSaving = ref(false);
+const metadataStatus = ref("");
+const metadataError = ref("");
 
 const defaultCommitMessage = computed(
   () => `Merge pull request #${number} from ${pr.currentPr?.source_branch ?? ""}`,
@@ -241,6 +248,30 @@ const closeDisabledReason = computed(() => {
   return "只有 PR 作者或具备仓库写入权限的成员才能关闭 PR";
 });
 const canReopen = computed(() => isClosed.value && !isMerged.value);
+
+async function handleMetadataSave(update: PrMetadataUpdate): Promise<void> {
+  metadataSaving.value = true;
+  metadataStatus.value = "";
+  metadataError.value = "";
+  try {
+    const outcome = await pr.updateMetadata(platform, owner, repo, number, update);
+    if (!outcome) return;
+    if (outcome.detail) {
+      reviewInbox.applyPrSummary(platform, owner, repo, outcome.detail.summary);
+    }
+    if (outcome.failures.length > 0) {
+      metadataError.value = outcome.failures.map((failure) => failure.message).join("；");
+      metadataStatus.value =
+        outcome.updated_fields.length > 0 ? "部分元数据已更新，请检查失败项。" : "";
+    } else {
+      metadataStatus.value = "元数据已更新";
+    }
+  } catch (error) {
+    metadataError.value = getErrorMessage(error, "保存 PR / MR 元数据失败");
+  } finally {
+    metadataSaving.value = false;
+  }
+}
 
 async function handleMerge() {
   if (!pr.currentPr || !canMerge.value) return;
@@ -551,6 +582,15 @@ onMounted(async () => {
     </div>
 
     <div v-else-if="pr.currentPr" class="pr-detail">
+      <PrMetadataPanel
+        :detail="pr.currentPr"
+        :capabilities="platformCapabilities ?? null"
+        :saving="metadataSaving"
+        :status-message="metadataStatus"
+        :error-message="metadataError"
+        @save="handleMetadataSave"
+      />
+
       <div ref="tabsRef" class="tabs">
         <button :class="{ active: activeTab === 'diff' }" @click="selectTab('diff')">
           <svg

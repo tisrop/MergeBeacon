@@ -30,6 +30,12 @@ export interface PlatformCapabilities {
   supports_compare_diff: boolean;
   supports_review_thread_resolution: boolean;
   supports_remote_file_viewed_state: boolean;
+  supports_pr_title_body_edit: boolean;
+  supports_pr_draft_toggle: boolean;
+  supports_pr_reviewer_management: boolean;
+  supports_pr_assignee_management: boolean;
+  supports_pr_label_management: boolean;
+  supports_pr_milestone_management: boolean;
 }
 
 export interface UpdateProgressEvent {
@@ -101,6 +107,21 @@ export interface ReviewInboxItem {
   summary: PrSummary;
 }
 
+export interface PrMilestone {
+  id: number | string;
+  number: number | null;
+  title: string;
+}
+
+export interface PrMetadataPermissions {
+  can_edit_title_body: boolean | null;
+  can_toggle_draft: boolean | null;
+  can_manage_reviewers: boolean | null;
+  can_manage_assignees: boolean | null;
+  can_manage_labels: boolean | null;
+  can_manage_milestone: boolean | null;
+}
+
 export interface PrDetail {
   summary: PrSummary;
   body: string;
@@ -109,6 +130,42 @@ export interface PrDetail {
   mergeable: boolean | null;
   head_sha: string;
   base_sha: string;
+  draft: boolean | null;
+  reviewers: User[];
+  assignees: User[];
+  milestone: PrMilestone | null;
+  metadata_permissions: PrMetadataPermissions;
+}
+
+export interface PrMetadataUpdate {
+  title: string;
+  body: string;
+  draft: boolean | null;
+  reviewers: string[];
+  assignees: string[];
+  labels: string[];
+  milestone: string | null;
+  expected_updated_at: string;
+}
+
+export type PrMetadataField =
+  | "title_body"
+  | "draft"
+  | "reviewers"
+  | "assignees"
+  | "labels"
+  | "milestone"
+  | "refresh";
+
+export interface PrMetadataUpdateFailure {
+  field: PrMetadataField;
+  message: string;
+}
+
+export interface PrMetadataUpdateOutcome {
+  detail: PrDetail | null;
+  updated_fields: PrMetadataField[];
+  failures: PrMetadataUpdateFailure[];
 }
 
 export interface PrFileContent {

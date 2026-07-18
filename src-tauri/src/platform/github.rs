@@ -303,6 +303,29 @@ impl GitHubAdapter {
         Ok(resp.json().await?)
     }
 
+    async fn delete_json(&self, url: &str, body: &Value) -> Result<Value, AppError> {
+        let resp = self
+            .client
+            .raw_client()
+            .delete(url)
+            .header("Authorization", &self.auth_header())
+            .header("User-Agent", "mergebeacon")
+            .header("Accept", "application/vnd.github.v3+json")
+            .json(body)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let error_body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Api(format!("GitHub API {} ({}): {}", status, url, error_body)));
+        }
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(Value::Null)
+        } else {
+            Ok(resp.json().await?)
+        }
+    }
+
     fn map_compare_file(file: &Value) -> PrFile {
         let status = match file["status"].as_str().unwrap_or("") {
             "added" => FileStatus::Added,
@@ -732,6 +755,64 @@ impl GitHubAdapter {
             }
         }
     }
+
+    fn metadata_milestone(json: &Value) -> Option<PrMilestone> {
+        (!json.is_null()).then(|| PrMilestone {
+            id: json["id"].clone(),
+            number: json["number"].as_u64(),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+        })
+    }
+
+    fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+        match (left, right) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        }
+    }
+
+    async fn metadata_permissions(&self, owner: &str, repo: &str, author_login: &str) -> PrMetadataPermissions {
+        let user_url = format!("{}/user", self.base_url);
+        let repo_url = format!("{}/repos/{}/{}", self.base_url, owner, repo);
+        let (user, repository) = tokio::join!(self.get_json::<Value>(&user_url), self.get_json::<Value>(&repo_url));
+        let is_author =
+            user.ok().and_then(|user| user["login"].as_str().map(|login| login.eq_ignore_ascii_case(author_login)));
+        let can_write = repository.ok().and_then(|repository| {
+            let permissions = &repository["permissions"];
+            let values = [
+                permissions["admin"].as_bool(),
+                permissions["maintain"].as_bool(),
+                permissions["push"].as_bool(),
+                permissions["triage"].as_bool(),
+            ];
+            values.iter().any(Option::is_some).then(|| values.contains(&Some(true)))
+        });
+        let can_edit = Self::known_or(is_author, can_write);
+        PrMetadataPermissions {
+            can_edit_title_body: can_edit,
+            can_toggle_draft: can_edit,
+            can_manage_reviewers: can_write,
+            can_manage_assignees: can_write,
+            can_manage_labels: can_write,
+            can_manage_milestone: can_write,
+        }
+    }
+
+    async fn resolve_milestone_number(&self, owner: &str, repo: &str, title: &str) -> Result<u64, AppError> {
+        let encoded_title = urlencoding::encode(title);
+        let url = format!(
+            "{}/repos/{}/{}/milestones?state=all&per_page=100&title={}",
+            self.base_url, owner, repo, encoded_title
+        );
+        let milestones = self.get_json::<Value>(&url).await?;
+        milestones
+            .as_array()
+            .and_then(|items| {
+                items.iter().find(|item| item["title"].as_str() == Some(title)).and_then(|item| item["number"].as_u64())
+            })
+            .ok_or_else(|| AppError::Api(format!("GitHub 仓库中不存在 Milestone：{title}")))
+    }
 }
 #[async_trait]
 impl GitPlatform for GitHubAdapter {
@@ -1010,6 +1091,7 @@ impl GitPlatform for GitHubAdapter {
             status: None,
         };
 
+        let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
             body: json["body"].as_str().unwrap_or("").to_string(),
@@ -1018,7 +1100,196 @@ impl GitPlatform for GitHubAdapter {
             mergeable: json["mergeable"].as_bool(),
             head_sha: json["head"]["sha"].as_str().unwrap_or("").to_string(),
             base_sha: json["base"]["sha"].as_str().unwrap_or("").to_string(),
+            draft: json["draft"].as_bool(),
+            reviewers: json["requested_reviewers"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            assignees: json["assignees"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            milestone: Self::metadata_milestone(&json["milestone"]),
+            metadata_permissions,
         })
+    }
+
+    async fn update_pull_request_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        current: &PrDetail,
+        update: &PrMetadataUpdate,
+    ) -> Result<PrMetadataMutationResult, AppError> {
+        let mut result = PrMetadataMutationResult::default();
+        let pull_url = format!("{}/repos/{}/{}/pulls/{}", self.base_url, owner, repo, pr_number);
+        if current.summary.title != update.title || current.body != update.body {
+            match self.patch_json(&pull_url, &serde_json::json!({ "title": update.title, "body": update.body })).await {
+                Ok(_) => result.updated_fields.push(PrMetadataField::TitleBody),
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::TitleBody, message: error.to_string() }),
+            }
+        }
+
+        if update.draft.is_some() && current.draft != update.draft {
+            let pull_request_id = self.pull_request_node_id(owner, repo, pr_number).await;
+            let draft_result = match (pull_request_id, update.draft) {
+                (Ok(pull_request_id), Some(true)) => self
+                    .graphql(
+                        "转换为 Draft",
+                        r#"mutation ConvertPullRequestToDraft($pullRequestId: ID!) {
+                            convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
+                                pullRequest { id isDraft }
+                            }
+                        }"#,
+                        serde_json::json!({ "pullRequestId": pull_request_id }),
+                    )
+                    .await
+                    .map(|_| ()),
+                (Ok(pull_request_id), Some(false)) => self
+                    .graphql(
+                        "标记为 Ready",
+                        r#"mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+                            markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+                                pullRequest { id isDraft }
+                            }
+                        }"#,
+                        serde_json::json!({ "pullRequestId": pull_request_id }),
+                    )
+                    .await
+                    .map(|_| ()),
+                (Err(error), _) => Err(error),
+                (_, None) => Ok(()),
+            };
+            match draft_result {
+                Ok(()) => result.updated_fields.push(PrMetadataField::Draft),
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Draft, message: error.to_string() }),
+            }
+        }
+
+        let current_reviewers =
+            current.reviewers.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_reviewers =
+            update.reviewers.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        if current_reviewers != target_reviewers {
+            let reviewers_url = format!("{pull_url}/requested_reviewers");
+            let removed = current
+                .reviewers
+                .iter()
+                .filter(|user| !target_reviewers.contains(&user.login.to_lowercase()))
+                .map(|user| user.login.clone())
+                .collect::<Vec<_>>();
+            let added = update
+                .reviewers
+                .iter()
+                .filter(|login| !current_reviewers.contains(&login.to_lowercase()))
+                .cloned()
+                .collect::<Vec<_>>();
+            let remove_result = if removed.is_empty() {
+                Ok(Value::Null)
+            } else {
+                self.delete_json(&reviewers_url, &serde_json::json!({ "reviewers": removed })).await
+            };
+            let add_result = if added.is_empty() {
+                Ok(Value::Null)
+            } else {
+                self.post_json(&reviewers_url, &serde_json::json!({ "reviewers": added })).await
+            };
+            match remove_result.and(add_result) {
+                Ok(_) => result.updated_fields.push(PrMetadataField::Reviewers),
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Reviewers, message: error.to_string() }),
+            }
+        }
+
+        let assignees_changed =
+            current.assignees.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>()
+                != update.assignees.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let labels_changed =
+            current.summary.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>()
+                != update.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let milestone_changed =
+            current.milestone.as_ref().map(|milestone| milestone.title.as_str()) != update.milestone.as_deref();
+        if assignees_changed || labels_changed || milestone_changed {
+            let mut payload = serde_json::Map::new();
+            if assignees_changed {
+                payload.insert("assignees".into(), serde_json::json!(update.assignees));
+            }
+            if labels_changed {
+                payload.insert("labels".into(), serde_json::json!(update.labels));
+            }
+
+            let milestone_update_available = if milestone_changed {
+                match update.milestone.as_deref() {
+                    Some(title) if current.milestone.as_ref().is_some_and(|milestone| milestone.title == title) => {
+                        if let Some(number) = current.milestone.as_ref().and_then(|milestone| milestone.number) {
+                            payload.insert("milestone".into(), serde_json::json!(number));
+                            true
+                        } else {
+                            result.failures.push(PrMetadataUpdateFailure {
+                                field: PrMetadataField::Milestone,
+                                message: "当前 Milestone 缺少可用编号，请重新加载详情".into(),
+                            });
+                            false
+                        }
+                    }
+                    Some(title) => match self.resolve_milestone_number(owner, repo, title).await {
+                        Ok(number) => {
+                            payload.insert("milestone".into(), serde_json::json!(number));
+                            true
+                        }
+                        Err(error) => {
+                            result.failures.push(PrMetadataUpdateFailure {
+                                field: PrMetadataField::Milestone,
+                                message: error.to_string(),
+                            });
+                            false
+                        }
+                    },
+                    None => {
+                        payload.insert("milestone".into(), serde_json::Value::Null);
+                        true
+                    }
+                }
+            } else {
+                false
+            };
+
+            if !payload.is_empty() {
+                let issue_url = format!("{}/repos/{}/{}/issues/{}", self.base_url, owner, repo, pr_number);
+                match self.patch_json(&issue_url, &serde_json::Value::Object(payload)).await {
+                    Ok(_) => {
+                        if assignees_changed {
+                            result.updated_fields.push(PrMetadataField::Assignees);
+                        }
+                        if labels_changed {
+                            result.updated_fields.push(PrMetadataField::Labels);
+                        }
+                        if milestone_changed && milestone_update_available {
+                            result.updated_fields.push(PrMetadataField::Milestone);
+                        }
+                    }
+                    Err(error) => {
+                        for field in [
+                            assignees_changed.then_some(PrMetadataField::Assignees),
+                            labels_changed.then_some(PrMetadataField::Labels),
+                            (milestone_changed && milestone_update_available).then_some(PrMetadataField::Milestone),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            result.failures.push(PrMetadataUpdateFailure { field, message: error.to_string() });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
 
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError> {

@@ -339,6 +339,53 @@ impl GiteeAdapter {
         diff
     }
 
+    fn metadata_milestone(json: &Value) -> Option<PrMilestone> {
+        (!json.is_null()).then(|| PrMilestone {
+            id: json["id"].clone(),
+            number: json["number"].as_u64(),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+        })
+    }
+
+    fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+        match (left, right) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        }
+    }
+
+    async fn metadata_permissions(&self, owner: &str, repo: &str, author_login: &str) -> PrMetadataPermissions {
+        let user_url = format!("{}/user", self.base_url);
+        let repo_url = format!("{}/repos/{}/{}", self.base_url, owner, repo);
+        let (user, repository) = tokio::join!(self.get_json::<Value>(&user_url), self.get_json::<Value>(&repo_url));
+        let is_author =
+            user.ok().and_then(|user| user["login"].as_str().map(|login| login.eq_ignore_ascii_case(author_login)));
+        let can_write = repository.ok().and_then(|repository| Self::repository_merge_permission(&repository));
+        let can_edit = Self::known_or(is_author, can_write);
+        PrMetadataPermissions {
+            can_edit_title_body: can_edit,
+            can_toggle_draft: Some(false),
+            can_manage_reviewers: can_edit,
+            can_manage_assignees: can_edit,
+            can_manage_labels: can_edit,
+            can_manage_milestone: can_edit,
+        }
+    }
+
+    async fn resolve_milestone_number(&self, owner: &str, repo: &str, title: &str) -> Result<u64, AppError> {
+        let encoded = urlencoding::encode(title);
+        let url =
+            format!("{}/repos/{}/{}/milestones?state=all&per_page=100&title={}", self.base_url, owner, repo, encoded);
+        let milestones = self.get_json::<Value>(&url).await?;
+        milestones
+            .as_array()
+            .and_then(|items| {
+                items.iter().find(|item| item["title"].as_str() == Some(title)).and_then(|item| item["number"].as_u64())
+            })
+            .ok_or_else(|| AppError::Api(format!("Gitee 仓库中不存在 Milestone：{title}")))
+    }
+
     fn repository_merge_permission(value: &Value) -> Option<bool> {
         let permissions = value.get("permission").or_else(|| value.get("permissions"))?;
         let admin = permissions["admin"].as_bool();
@@ -374,6 +421,22 @@ impl GiteeAdapter {
             .client
             .raw_client()
             .patch(&full_url)
+            .header("User-Agent", "mergebeacon")
+            .json(body)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(resp.json().await?)
+    }
+
+    async fn delete_json(&self, url: &str, body: &Value) -> Result<Value, AppError> {
+        let separator = if url.contains('?') { "&" } else { "?" };
+        let full_url = format!("{}{}{}", url, separator, self.auth_query());
+
+        let resp = self
+            .client
+            .raw_client()
+            .delete(&full_url)
             .header("User-Agent", "mergebeacon")
             .json(body)
             .send()
@@ -846,6 +909,19 @@ impl GitPlatform for GiteeAdapter {
             status: None,
         };
 
+        let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
+        let mut reviewers = Vec::new();
+        let mut reviewer_logins = std::collections::BTreeSet::new();
+        for field in ["assignees", "api_reviewers"] {
+            if let Some(users) = json[field].as_array() {
+                for user in users {
+                    let mapped = Self::map_user(user);
+                    if reviewer_logins.insert(mapped.login.to_lowercase()) {
+                        reviewers.push(mapped);
+                    }
+                }
+            }
+        }
         Ok(PrDetail {
             summary,
             body: json["body"].as_str().unwrap_or("").to_string(),
@@ -854,7 +930,196 @@ impl GitPlatform for GiteeAdapter {
             mergeable: json["mergeable"].as_bool(),
             head_sha: json["head"]["sha"].as_str().unwrap_or("").to_string(),
             base_sha: json["base"]["sha"].as_str().unwrap_or("").to_string(),
+            draft: None,
+            reviewers,
+            assignees: json["testers"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            milestone: Self::metadata_milestone(&json["milestone"]),
+            metadata_permissions,
         })
+    }
+
+    async fn update_pull_request_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        current: &PrDetail,
+        update: &PrMetadataUpdate,
+    ) -> Result<PrMetadataMutationResult, AppError> {
+        let mut result = PrMetadataMutationResult::default();
+        let mut payload = serde_json::Map::new();
+        let title_body_changed = current.summary.title != update.title || current.body != update.body;
+        if title_body_changed {
+            payload.insert("title".into(), Value::String(update.title.clone()));
+            payload.insert("body".into(), Value::String(update.body.clone()));
+        }
+
+        let current_reviewers =
+            current.reviewers.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_reviewers =
+            update.reviewers.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let reviewers_changed = current_reviewers != target_reviewers;
+        let mut reviewers_updated = false;
+        if reviewers_changed {
+            let assignees_url = format!("{}/repos/{}/{}/pulls/{}/assignees", self.base_url, owner, repo, pr_number);
+            let removed = current
+                .reviewers
+                .iter()
+                .filter(|user| !target_reviewers.contains(&user.login.to_lowercase()))
+                .map(|user| user.login.as_str())
+                .collect::<Vec<_>>();
+            let added = update
+                .reviewers
+                .iter()
+                .filter(|login| !current_reviewers.contains(&login.to_lowercase()))
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let mut reviewer_error = None;
+            if !removed.is_empty() {
+                if let Err(error) =
+                    self.delete_json(&assignees_url, &serde_json::json!({ "assignees": removed.join(",") })).await
+                {
+                    reviewer_error = Some(error);
+                }
+            }
+            if reviewer_error.is_none() && !added.is_empty() {
+                if let Err(error) =
+                    self.post_json(&assignees_url, &serde_json::json!({ "assignees": added.join(",") })).await
+                {
+                    reviewer_error = Some(error);
+                }
+            }
+            match reviewer_error {
+                Some(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Reviewers, message: error.to_string() }),
+                None => reviewers_updated = true,
+            }
+        }
+
+        let current_testers =
+            current.assignees.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_testers =
+            update.assignees.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let testers_changed = current_testers != target_testers;
+        let mut testers_updated = false;
+        if testers_changed {
+            let testers_url = format!("{}/repos/{}/{}/pulls/{}/testers", self.base_url, owner, repo, pr_number);
+            let removed = current
+                .assignees
+                .iter()
+                .filter(|user| !target_testers.contains(&user.login.to_lowercase()))
+                .map(|user| user.login.as_str())
+                .collect::<Vec<_>>();
+            let added = update
+                .assignees
+                .iter()
+                .filter(|login| !current_testers.contains(&login.to_lowercase()))
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let mut tester_error = None;
+            if !removed.is_empty() {
+                if let Err(error) =
+                    self.delete_json(&testers_url, &serde_json::json!({ "testers": removed.join(",") })).await
+                {
+                    tester_error = Some(error);
+                }
+            }
+            if tester_error.is_none() && !added.is_empty() {
+                if let Err(error) =
+                    self.post_json(&testers_url, &serde_json::json!({ "testers": added.join(",") })).await
+                {
+                    tester_error = Some(error);
+                }
+            }
+            match tester_error {
+                Some(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Assignees, message: error.to_string() }),
+                None => testers_updated = true,
+            }
+        }
+
+        let labels_changed =
+            current.summary.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>()
+                != update.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        if labels_changed {
+            payload.insert("labels".into(), Value::String(update.labels.join(",")));
+        }
+        let milestone_changed =
+            current.milestone.as_ref().map(|milestone| milestone.title.as_str()) != update.milestone.as_deref();
+        if milestone_changed {
+            match update.milestone.as_deref() {
+                Some(title) => match self.resolve_milestone_number(owner, repo, title).await {
+                    Ok(number) => {
+                        payload.insert("milestone_number".into(), serde_json::json!(number));
+                    }
+                    Err(error) => result.failures.push(PrMetadataUpdateFailure {
+                        field: PrMetadataField::Milestone,
+                        message: error.to_string(),
+                    }),
+                },
+                None => {
+                    payload.insert("milestone_number".into(), serde_json::json!(0));
+                }
+            }
+        }
+
+        if payload.is_empty() {
+            if reviewers_updated {
+                result.updated_fields.push(PrMetadataField::Reviewers);
+            }
+            if testers_updated {
+                result.updated_fields.push(PrMetadataField::Assignees);
+            }
+            return Ok(result);
+        }
+        let url = format!("{}/repos/{}/{}/pulls/{}", self.base_url, owner, repo, pr_number);
+        match self.patch_json(&url, &Value::Object(payload)).await {
+            Ok(_) => {
+                if title_body_changed {
+                    result.updated_fields.push(PrMetadataField::TitleBody);
+                }
+                if reviewers_updated {
+                    result.updated_fields.push(PrMetadataField::Reviewers);
+                }
+                if testers_updated {
+                    result.updated_fields.push(PrMetadataField::Assignees);
+                }
+                if labels_changed {
+                    result.updated_fields.push(PrMetadataField::Labels);
+                }
+                if milestone_changed
+                    && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Milestone)
+                {
+                    result.updated_fields.push(PrMetadataField::Milestone);
+                }
+            }
+            Err(error) => {
+                if reviewers_updated {
+                    result.updated_fields.push(PrMetadataField::Reviewers);
+                }
+                if testers_updated {
+                    result.updated_fields.push(PrMetadataField::Assignees);
+                }
+                for field in [
+                    title_body_changed.then_some(PrMetadataField::TitleBody),
+                    labels_changed.then_some(PrMetadataField::Labels),
+                    (milestone_changed
+                        && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Milestone))
+                    .then_some(PrMetadataField::Milestone),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    result.failures.push(PrMetadataUpdateFailure { field, message: error.to_string() });
+                }
+            }
+        }
+        Ok(result)
     }
 
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError> {

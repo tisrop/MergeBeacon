@@ -217,6 +217,33 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
     return fetchPlatform(platform, requestedPage, filters.value.category, contextSequence);
   }
 
+  function applyPrSummary(
+    platform: Platform,
+    owner: string,
+    repo: string,
+    summary: ReviewInboxItem["summary"],
+  ): void {
+    const repositoryFullName = `${owner}/${repo}`;
+    itemsByPlatform.value[platform] = itemsByPlatform.value[platform].map((item) => {
+      if (
+        item.repository_full_name !== repositoryFullName ||
+        item.summary.number !== summary.number
+      ) {
+        return item;
+      }
+      return {
+        ...item,
+        summary,
+        status: summary.status
+          ? {
+              ...item.status,
+              draft: summary.status.draft,
+            }
+          : item.status,
+      };
+    });
+  }
+
   function clear(): void {
     contextSequence += 1;
     loggedInPlatforms.value = [];
@@ -246,6 +273,7 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
     refresh,
     loadMore,
     retry,
+    applyPrSummary,
     clear,
   };
 });

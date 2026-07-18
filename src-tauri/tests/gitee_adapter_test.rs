@@ -1,5 +1,8 @@
 use mergebeacon_lib::http_client::HttpClient;
-use mergebeacon_lib::models::{ReadinessState, ReviewInboxCategory, ReviewInboxRelationship};
+use mergebeacon_lib::models::{
+    PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary,
+    ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
+};
 use mergebeacon_lib::platform::{gitee::GiteeAdapter, GitPlatform};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1061,7 +1064,11 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
             "body": "",
             "head": {"ref": "feature", "sha": "head-sha"},
             "base": {"ref": "main", "sha": "base-sha"},
-            "mergeable": true
+            "mergeable": true,
+            "assignees": [{"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}],
+            "api_reviewers": [{"id": 3, "login": "api-reviewer", "name": "API Reviewer", "avatar_url": ""}],
+            "testers": [{"id": 4, "login": "tester", "name": "Tester", "avatar_url": ""}],
+            "milestone": {"id": 9, "number": 4, "title": "0.6.0"}
         })))
         .mount(&mock_server)
         .await;
@@ -1072,6 +1079,13 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
 
     assert_eq!(detail.base_sha, "base-sha");
     assert_eq!(detail.head_sha, "head-sha");
+    assert_eq!(detail.draft, None);
+    assert_eq!(
+        detail.reviewers.iter().map(|value| value.login.as_str()).collect::<Vec<_>>(),
+        vec!["reviewer", "api-reviewer"]
+    );
+    assert_eq!(detail.assignees.iter().map(|value| value.login.as_str()).collect::<Vec<_>>(), vec!["tester"]);
+    assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
 
 #[tokio::test]
@@ -1303,4 +1317,247 @@ async fn test_gitee_review_inbox_sanitizes_html_errors() {
     assert!(message.contains("非 JSON 错误页面"));
     assert!(!message.contains("<html>"));
     assert!(!message.contains("test-token"));
+}
+
+#[tokio::test]
+async fn test_gitee_updates_pull_request_metadata_without_unsupported_fields() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/milestones"))
+        .and(query_param("state", "all"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("title", "0.7.0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 10,
+            "number": 5,
+            "title": "0.7.0"
+        }])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/assignees"))
+        .and(body_json(serde_json::json!({ "assignees": "old-reviewer" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/assignees"))
+        .and(body_json(serde_json::json!({ "assignees": "new-reviewer" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/testers"))
+        .and(body_json(serde_json::json!({ "testers": "old-tester" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/testers"))
+        .and(body_json(serde_json::json!({ "testers": "new-tester" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42"))
+        .and(body_json(serde_json::json!({
+            "title": "New title",
+            "body": "New body",
+            "labels": "new-label",
+            "milestone_number": 5
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let current = PrDetail {
+        summary: PrSummary {
+            number: 42,
+            title: "Old title".into(),
+            author: User { id: serde_json::json!(1), login: "author".into(), name: "".into(), avatar_url: "".into() },
+            state: PrState::Open,
+            created_at: "2026-07-16T00:00:00Z".into(),
+            updated_at: "2026-07-17T00:00:00Z".into(),
+            labels: vec!["old-label".into()],
+            status: None,
+        },
+        body: "Old body".into(),
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        mergeable: None,
+        head_sha: "head".into(),
+        base_sha: "base".into(),
+        draft: None,
+        reviewers: vec![User {
+            id: serde_json::json!(2),
+            login: "old-reviewer".into(),
+            name: "".into(),
+            avatar_url: "".into(),
+        }],
+        assignees: vec![User {
+            id: serde_json::json!(8),
+            login: "old-tester".into(),
+            name: "".into(),
+            avatar_url: "".into(),
+        }],
+        milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
+        metadata_permissions: PrMetadataPermissions::default(),
+    };
+    let update = PrMetadataUpdate {
+        title: "New title".into(),
+        body: "New body".into(),
+        draft: Some(false),
+        reviewers: vec!["new-reviewer".into()],
+        assignees: vec!["new-tester".into()],
+        labels: vec!["new-label".into()],
+        milestone: Some("0.7.0".into()),
+        expected_updated_at: current.summary.updated_at.clone(),
+    };
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+
+    let result = adapter
+        .update_pull_request_metadata("octocat", "hello-world", 42, &current, &update)
+        .await
+        .expect("metadata update should succeed");
+
+    assert!(result.failures.is_empty());
+    assert_eq!(
+        result.updated_fields,
+        vec![
+            PrMetadataField::TitleBody,
+            PrMetadataField::Reviewers,
+            PrMetadataField::Assignees,
+            PrMetadataField::Labels,
+            PrMetadataField::Milestone,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_gitee_reports_reviewer_success_when_pull_patch_fails() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/assignees"))
+        .and(body_json(serde_json::json!({ "assignees": "new-reviewer" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42"))
+        .and(body_json(serde_json::json!({ "title": "New title", "body": "Body" })))
+        .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+            "message": "patch failed"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let current = PrDetail {
+        summary: PrSummary {
+            number: 42,
+            title: "Old title".into(),
+            author: User { id: serde_json::json!(1), login: "author".into(), name: "".into(), avatar_url: "".into() },
+            state: PrState::Open,
+            created_at: "2026-07-16T00:00:00Z".into(),
+            updated_at: "2026-07-17T00:00:00Z".into(),
+            labels: Vec::new(),
+            status: None,
+        },
+        body: "Body".into(),
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        mergeable: None,
+        head_sha: "head".into(),
+        base_sha: "base".into(),
+        draft: None,
+        reviewers: Vec::new(),
+        assignees: Vec::new(),
+        milestone: None,
+        metadata_permissions: PrMetadataPermissions::default(),
+    };
+    let update = PrMetadataUpdate {
+        title: "New title".into(),
+        body: current.body.clone(),
+        draft: None,
+        reviewers: vec!["new-reviewer".into()],
+        assignees: Vec::new(),
+        labels: Vec::new(),
+        milestone: None,
+        expected_updated_at: current.summary.updated_at.clone(),
+    };
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+
+    let result = adapter
+        .update_pull_request_metadata("octocat", "hello-world", 42, &current, &update)
+        .await
+        .expect("partial metadata update should return an outcome");
+
+    assert_eq!(result.updated_fields, vec![PrMetadataField::Reviewers]);
+    assert_eq!(result.failures.len(), 1);
+    assert_eq!(result.failures[0].field, PrMetadataField::TitleBody);
+}
+
+#[tokio::test]
+async fn test_gitee_clears_pull_request_milestone_with_zero_number() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42"))
+        .and(body_json(serde_json::json!({ "milestone_number": 0 })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let current = PrDetail {
+        summary: PrSummary {
+            number: 42,
+            title: "Title".into(),
+            author: User { id: serde_json::json!(1), login: "author".into(), name: "".into(), avatar_url: "".into() },
+            state: PrState::Open,
+            created_at: "2026-07-16T00:00:00Z".into(),
+            updated_at: "2026-07-17T00:00:00Z".into(),
+            labels: Vec::new(),
+            status: None,
+        },
+        body: "Body".into(),
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        mergeable: None,
+        head_sha: "head".into(),
+        base_sha: "base".into(),
+        draft: None,
+        reviewers: Vec::new(),
+        assignees: Vec::new(),
+        milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
+        metadata_permissions: PrMetadataPermissions::default(),
+    };
+    let update = PrMetadataUpdate {
+        title: current.summary.title.clone(),
+        body: current.body.clone(),
+        draft: None,
+        reviewers: Vec::new(),
+        assignees: Vec::new(),
+        labels: Vec::new(),
+        milestone: None,
+        expected_updated_at: current.summary.updated_at.clone(),
+    };
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+
+    let result = adapter
+        .update_pull_request_metadata("octocat", "hello-world", 42, &current, &update)
+        .await
+        .expect("milestone removal should succeed");
+
+    assert!(result.failures.is_empty());
+    assert_eq!(result.updated_fields, vec![PrMetadataField::Milestone]);
 }

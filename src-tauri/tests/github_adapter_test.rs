@@ -1,7 +1,10 @@
 use mergebeacon_lib::http_client::HttpClient;
-use mergebeacon_lib::models::{ReadinessState, ReviewInboxCategory, ReviewInboxRelationship};
+use mergebeacon_lib::models::{
+    PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary,
+    ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
+};
 use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
-use wiremock::matchers::{body_string_contains, header, method, path, query_param};
+use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn github_search_issue(number: u64, title: &str, updated_at: &str) -> serde_json::Value {
@@ -1261,7 +1264,11 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
             "body": "",
             "head": {"ref": "feature", "sha": "head-sha"},
             "base": {"ref": "main", "sha": "base-sha"},
-            "mergeable": true
+            "mergeable": true,
+            "draft": true,
+            "requested_reviewers": [{"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}],
+            "assignees": [{"id": 3, "login": "assignee", "name": "Assignee", "avatar_url": ""}],
+            "milestone": {"id": 9, "number": 4, "title": "0.6.0"}
         })))
         .mount(&mock_server)
         .await;
@@ -1271,6 +1278,10 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
 
     assert_eq!(detail.base_sha, "base-sha");
     assert_eq!(detail.head_sha, "head-sha");
+    assert_eq!(detail.draft, Some(true));
+    assert_eq!(detail.reviewers[0].login, "reviewer");
+    assert_eq!(detail.assignees[0].login, "assignee");
+    assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
 
 #[tokio::test]
@@ -1563,4 +1574,138 @@ async fn test_github_review_inbox_fails_when_assignment_search_fails() {
     assert!(error.to_string().contains("422 Unprocessable Entity"));
     assert!(error.to_string().contains("Validation Failed"));
     assert!(!error.to_string().contains("test-token"));
+}
+
+#[tokio::test]
+async fn test_github_updates_pull_request_metadata() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/octocat/hello-world/pulls/42"))
+        .and(body_json(serde_json::json!({
+            "title": "New title",
+            "body": "New body"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query PullRequestNodeId"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "repository": { "pullRequest": { "id": "PR_node_42" } } }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("mutation MarkPullRequestReadyForReview"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "markPullRequestReadyForReview": { "pullRequest": { "id": "PR_node_42", "isDraft": false } } }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/repos/octocat/hello-world/pulls/42/requested_reviewers"))
+        .and(body_json(serde_json::json!({ "reviewers": ["old-reviewer"] })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/octocat/hello-world/pulls/42/requested_reviewers"))
+        .and(body_json(serde_json::json!({ "reviewers": ["new-reviewer"] })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/milestones"))
+        .and(query_param("state", "all"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("title", "0.7.0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 10,
+            "number": 5,
+            "title": "0.7.0"
+        }])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/octocat/hello-world/issues/42"))
+        .and(body_json(serde_json::json!({
+            "assignees": ["new-assignee"],
+            "labels": ["new-label"],
+            "milestone": 5
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let current = PrDetail {
+        summary: PrSummary {
+            number: 42,
+            title: "Old title".into(),
+            author: User { id: serde_json::json!(1), login: "author".into(), name: "".into(), avatar_url: "".into() },
+            state: PrState::Open,
+            created_at: "2026-07-16T00:00:00Z".into(),
+            updated_at: "2026-07-17T00:00:00Z".into(),
+            labels: vec!["old-label".into()],
+            status: None,
+        },
+        body: "Old body".into(),
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        mergeable: Some(true),
+        head_sha: "head".into(),
+        base_sha: "base".into(),
+        draft: Some(true),
+        reviewers: vec![User {
+            id: serde_json::json!(2),
+            login: "old-reviewer".into(),
+            name: "".into(),
+            avatar_url: "".into(),
+        }],
+        assignees: vec![User {
+            id: serde_json::json!(3),
+            login: "old-assignee".into(),
+            name: "".into(),
+            avatar_url: "".into(),
+        }],
+        milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
+        metadata_permissions: PrMetadataPermissions::default(),
+    };
+    let update = PrMetadataUpdate {
+        title: "New title".into(),
+        body: "New body".into(),
+        draft: Some(false),
+        reviewers: vec!["new-reviewer".into()],
+        assignees: vec!["new-assignee".into()],
+        labels: vec!["new-label".into()],
+        milestone: Some("0.7.0".into()),
+        expected_updated_at: current.summary.updated_at.clone(),
+    };
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+
+    let result = adapter
+        .update_pull_request_metadata("octocat", "hello-world", 42, &current, &update)
+        .await
+        .expect("metadata update should succeed");
+
+    assert!(result.failures.is_empty());
+    assert_eq!(
+        result.updated_fields,
+        vec![
+            PrMetadataField::TitleBody,
+            PrMetadataField::Draft,
+            PrMetadataField::Reviewers,
+            PrMetadataField::Assignees,
+            PrMetadataField::Labels,
+            PrMetadataField::Milestone,
+        ]
+    );
 }

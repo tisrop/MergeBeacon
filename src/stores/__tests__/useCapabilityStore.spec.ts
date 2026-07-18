@@ -15,6 +15,12 @@ const github: PlatformCapabilities = {
   supports_compare_diff: true,
   supports_review_thread_resolution: true,
   supports_remote_file_viewed_state: true,
+  supports_pr_title_body_edit: true,
+  supports_pr_draft_toggle: true,
+  supports_pr_reviewer_management: true,
+  supports_pr_assignee_management: true,
+  supports_pr_label_management: true,
+  supports_pr_milestone_management: true,
 };
 
 describe("useCapabilityStore", () => {

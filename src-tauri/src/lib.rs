@@ -125,6 +125,7 @@ pub fn run() {
             inbox::review_inbox_list,
             pr::pr_list,
             pr::pr_detail,
+            pr::pr_metadata_update,
             pr::pr_merge_readiness,
             pr::pr_diff,
             pr::pr_compare_diff,

@@ -125,6 +125,99 @@ impl GitLabAdapter {
         }
     }
 
+    fn metadata_milestone(json: &Value) -> Option<PrMilestone> {
+        (!json.is_null()).then(|| PrMilestone {
+            id: json["id"].clone(),
+            number: json["iid"].as_u64().or_else(|| json["id"].as_u64()),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+        })
+    }
+
+    fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+        match (left, right) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        }
+    }
+
+    fn access_level(project: &Value) -> Option<u64> {
+        [
+            project["permissions"]["project_access"]["access_level"].as_u64(),
+            project["permissions"]["group_access"]["access_level"].as_u64(),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+    }
+
+    async fn metadata_permissions(&self, owner: &str, repo: &str, author_login: &str) -> PrMetadataPermissions {
+        let project_id = urlencoding(owner, repo);
+        let user_url = format!("{}/user", self.base_url);
+        let project_url = format!("{}/projects/{}", self.base_url, project_id);
+        let (user, project) = tokio::join!(self.get_json::<Value>(&user_url), self.get_json::<Value>(&project_url));
+        let is_author =
+            user.ok().and_then(|user| user["username"].as_str().map(|login| login.eq_ignore_ascii_case(author_login)));
+        let can_write = project.ok().and_then(|project| Self::access_level(&project).map(|level| level >= 30));
+        let can_edit = Self::known_or(is_author, can_write);
+        PrMetadataPermissions {
+            can_edit_title_body: can_edit,
+            can_toggle_draft: can_edit,
+            can_manage_reviewers: can_write,
+            can_manage_assignees: can_write,
+            can_manage_labels: can_write,
+            can_manage_milestone: can_write,
+        }
+    }
+
+    fn title_for_draft(title: &str, draft: Option<bool>) -> String {
+        let trimmed = title.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let without_prefix = ["draft:", "wip:"]
+            .into_iter()
+            .find(|prefix| lower.starts_with(prefix))
+            .map(|prefix| trimmed[prefix.len()..].trim_start())
+            .unwrap_or(trimmed);
+        if draft == Some(true) {
+            format!("Draft: {without_prefix}")
+        } else {
+            without_prefix.to_string()
+        }
+    }
+
+    async fn resolve_user_ids(&self, logins: &[String]) -> Result<Vec<u64>, AppError> {
+        let mut ids = Vec::with_capacity(logins.len());
+        for login in logins {
+            let encoded = urlencoding::encode(login);
+            let url = format!("{}/users?username={}", self.base_url, encoded);
+            let users = self.get_json::<Value>(&url).await?;
+            let id = users
+                .as_array()
+                .and_then(|users| {
+                    users
+                        .iter()
+                        .find(|user| user["username"].as_str() == Some(login))
+                        .and_then(|user| user["id"].as_u64())
+                })
+                .ok_or_else(|| AppError::Api(format!("GitLab 中不存在用户：{login}")))?;
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
+    async fn resolve_milestone_id(&self, owner: &str, repo: &str, title: &str) -> Result<u64, AppError> {
+        let project_id = urlencoding(owner, repo);
+        let encoded = urlencoding::encode(title);
+        let url = format!("{}/projects/{}/milestones?state=all&title={}", self.base_url, project_id, encoded);
+        let milestones = self.get_json::<Value>(&url).await?;
+        milestones
+            .as_array()
+            .and_then(|items| {
+                items.iter().find(|item| item["title"].as_str() == Some(title)).and_then(|item| item["id"].as_u64())
+            })
+            .ok_or_else(|| AppError::Api(format!("GitLab 项目中不存在 Milestone：{title}")))
+    }
+
     fn required_string(json: &Value, field: &str, label: &str) -> Result<String, AppError> {
         json[field]
             .as_str()
@@ -600,6 +693,7 @@ impl GitPlatform for GitLabAdapter {
             status: None,
         };
 
+        let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
             body: json["description"].as_str().unwrap_or("").to_string(),
@@ -608,7 +702,153 @@ impl GitPlatform for GitLabAdapter {
             mergeable: None,
             head_sha: json["sha"].as_str().or_else(|| json["diff_refs"]["head_sha"].as_str()).unwrap_or("").to_string(),
             base_sha: json["diff_refs"]["base_sha"].as_str().unwrap_or("").to_string(),
+            draft: json["draft"].as_bool().or_else(|| json["work_in_progress"].as_bool()),
+            reviewers: json["reviewers"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            assignees: json["assignees"]
+                .as_array()
+                .map(|users| users.iter().map(Self::map_user).collect())
+                .unwrap_or_default(),
+            milestone: Self::metadata_milestone(&json["milestone"]),
+            metadata_permissions,
         })
+    }
+
+    async fn update_pull_request_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        current: &PrDetail,
+        update: &PrMetadataUpdate,
+    ) -> Result<PrMetadataMutationResult, AppError> {
+        let mut result = PrMetadataMutationResult::default();
+        let mut payload = serde_json::Map::new();
+        let title_body_changed = current.summary.title != update.title || current.body != update.body;
+        let draft_changed = update.draft.is_some() && current.draft != update.draft;
+        if title_body_changed || draft_changed {
+            payload.insert(
+                "title".into(),
+                Value::String(Self::title_for_draft(&update.title, update.draft.or(current.draft))),
+            );
+            payload.insert("description".into(), Value::String(update.body.clone()));
+        }
+
+        let current_reviewers =
+            current.reviewers.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_reviewers =
+            update.reviewers.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let reviewers_changed = current_reviewers != target_reviewers;
+        if reviewers_changed {
+            match self.resolve_user_ids(&update.reviewers).await {
+                Ok(ids) => {
+                    payload.insert("reviewer_ids".into(), serde_json::json!(ids));
+                }
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Reviewers, message: error.to_string() }),
+            }
+        }
+
+        let current_assignees =
+            current.assignees.iter().map(|user| user.login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let target_assignees =
+            update.assignees.iter().map(|login| login.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        let assignees_changed = current_assignees != target_assignees;
+        if assignees_changed {
+            match self.resolve_user_ids(&update.assignees).await {
+                Ok(ids) => {
+                    payload.insert("assignee_ids".into(), serde_json::json!(ids));
+                }
+                Err(error) => result
+                    .failures
+                    .push(PrMetadataUpdateFailure { field: PrMetadataField::Assignees, message: error.to_string() }),
+            }
+        }
+
+        let labels_changed =
+            current.summary.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>()
+                != update.labels.iter().map(|label| label.to_lowercase()).collect::<std::collections::BTreeSet<_>>();
+        if labels_changed {
+            payload.insert("labels".into(), Value::String(update.labels.join(",")));
+        }
+
+        let milestone_changed =
+            current.milestone.as_ref().map(|milestone| milestone.title.as_str()) != update.milestone.as_deref();
+        if milestone_changed {
+            match update.milestone.as_deref() {
+                Some(title) => match self.resolve_milestone_id(owner, repo, title).await {
+                    Ok(id) => {
+                        payload.insert("milestone_id".into(), serde_json::json!(id));
+                    }
+                    Err(error) => result.failures.push(PrMetadataUpdateFailure {
+                        field: PrMetadataField::Milestone,
+                        message: error.to_string(),
+                    }),
+                },
+                None => {
+                    payload.insert("milestone_id".into(), serde_json::json!(0));
+                }
+            }
+        }
+
+        if payload.is_empty() {
+            return Ok(result);
+        }
+        let project_id = urlencoding(owner, repo);
+        let url = format!("{}/projects/{}/merge_requests/{}", self.base_url, project_id, pr_number);
+        match self.put_json(&url, &Value::Object(payload)).await {
+            Ok(_) => {
+                if title_body_changed {
+                    result.updated_fields.push(PrMetadataField::TitleBody);
+                }
+                if draft_changed {
+                    result.updated_fields.push(PrMetadataField::Draft);
+                }
+                if reviewers_changed
+                    && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Reviewers)
+                {
+                    result.updated_fields.push(PrMetadataField::Reviewers);
+                }
+                if assignees_changed
+                    && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Assignees)
+                {
+                    result.updated_fields.push(PrMetadataField::Assignees);
+                }
+                if labels_changed {
+                    result.updated_fields.push(PrMetadataField::Labels);
+                }
+                if milestone_changed
+                    && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Milestone)
+                {
+                    result.updated_fields.push(PrMetadataField::Milestone);
+                }
+            }
+            Err(error) => {
+                for field in [
+                    title_body_changed.then_some(PrMetadataField::TitleBody),
+                    draft_changed.then_some(PrMetadataField::Draft),
+                    (reviewers_changed
+                        && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Reviewers))
+                    .then_some(PrMetadataField::Reviewers),
+                    (assignees_changed
+                        && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Assignees))
+                    .then_some(PrMetadataField::Assignees),
+                    labels_changed.then_some(PrMetadataField::Labels),
+                    (milestone_changed
+                        && !result.failures.iter().any(|failure| failure.field == PrMetadataField::Milestone))
+                    .then_some(PrMetadataField::Milestone),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    result.failures.push(PrMetadataUpdateFailure { field, message: error.to_string() });
+                }
+            }
+        }
+        Ok(result)
     }
 
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError> {

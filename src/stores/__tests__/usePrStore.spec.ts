@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { prDetail, prDiff, prList, prMerge, prMergeReadiness } from "@/api";
+import { prDetail, prDiff, prList, prMerge, prMergeReadiness, prMetadataUpdate } from "@/api";
 import { usePrStore } from "@/stores/usePrStore";
 import type { DiffResult, Paginated, PrDetail, PrSummary, PrMergeReadiness } from "@/types";
 
@@ -10,16 +10,19 @@ vi.mock("@/api", () => ({
   prDiff: vi.fn(),
   prMerge: vi.fn(),
   prMergeReadiness: vi.fn().mockResolvedValue(null),
+  prMetadataUpdate: vi.fn(),
   prClose: vi.fn(),
   prReopen: vi.fn(),
 }));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 describe("usePrStore", () => {
@@ -80,6 +83,18 @@ describe("usePrStore", () => {
       mergeable: true,
       head_sha: "abc",
       base_sha: "base-sha",
+      draft: false,
+      reviewers: [],
+      assignees: [],
+      milestone: null,
+      metadata_permissions: {
+        can_edit_title_body: true,
+        can_toggle_draft: true,
+        can_manage_reviewers: true,
+        can_manage_assignees: true,
+        can_manage_labels: true,
+        can_manage_milestone: true,
+      },
     };
     vi.mocked(prMerge).mockResolvedValue(outcome);
     vi.mocked(prDetail).mockResolvedValue(detail);
@@ -121,6 +136,127 @@ describe("usePrStore", () => {
     expect(store.mergeReadiness).toEqual(currentReadiness);
   });
 
+  it("切换 PR 后忽略迟到的元数据写入结果", async () => {
+    const oldUpdate = deferred<Awaited<ReturnType<typeof prMetadataUpdate>>>();
+    const oldDetail: PrDetail = {
+      summary: {
+        number: 1,
+        title: "旧 PR",
+        author: { id: 1, login: "old", name: "Old", avatar_url: "" },
+        state: "open",
+        created_at: "",
+        updated_at: "old-updated-at",
+        labels: [],
+      },
+      body: "",
+      source_branch: "old",
+      target_branch: "main",
+      mergeable: true,
+      head_sha: "old-sha",
+      base_sha: "base-sha",
+      draft: false,
+      reviewers: [],
+      assignees: [],
+      milestone: null,
+      metadata_permissions: {
+        can_edit_title_body: true,
+        can_toggle_draft: true,
+        can_manage_reviewers: true,
+        can_manage_assignees: true,
+        can_manage_labels: true,
+        can_manage_milestone: true,
+      },
+    };
+    const currentDetail: PrDetail = {
+      ...oldDetail,
+      summary: {
+        ...oldDetail.summary,
+        number: 2,
+        title: "当前 PR",
+        updated_at: "current-updated-at",
+      },
+      source_branch: "current",
+      head_sha: "current-sha",
+    };
+    vi.mocked(prDetail).mockResolvedValueOnce(oldDetail).mockResolvedValueOnce(currentDetail);
+    vi.mocked(prMetadataUpdate).mockReturnValueOnce(oldUpdate.promise);
+    const store = usePrStore();
+    await store.fetchPrDetail("github", "old", "repo", 1);
+
+    const pending = store.updateMetadata("github", "old", "repo", 1, {
+      title: "迟到标题",
+      body: "",
+      draft: false,
+      reviewers: [],
+      assignees: [],
+      labels: [],
+      milestone: null,
+      expected_updated_at: "old-updated-at",
+    });
+    await store.fetchPrDetail("gitlab", "new", "repo", 2);
+    oldUpdate.resolve({
+      detail: { ...oldDetail, summary: { ...oldDetail.summary, title: "迟到标题" } },
+      updated_fields: ["title_body"],
+      failures: [],
+    });
+
+    await expect(pending).resolves.toBeNull();
+    expect(store.currentPr?.summary.title).toBe("当前 PR");
+  });
+
+  it("切换 PR 后忽略迟到的元数据写入错误", async () => {
+    const oldUpdate = deferred<Awaited<ReturnType<typeof prMetadataUpdate>>>();
+    const detail: PrDetail = {
+      summary: {
+        number: 1,
+        title: "PR",
+        author: { id: 1, login: "user", name: "User", avatar_url: "" },
+        state: "open",
+        created_at: "",
+        updated_at: "updated-at",
+        labels: [],
+      },
+      body: "",
+      source_branch: "feature",
+      target_branch: "main",
+      mergeable: true,
+      head_sha: "head-sha",
+      base_sha: "base-sha",
+      draft: false,
+      reviewers: [],
+      assignees: [],
+      milestone: null,
+      metadata_permissions: {
+        can_edit_title_body: true,
+        can_toggle_draft: true,
+        can_manage_reviewers: true,
+        can_manage_assignees: true,
+        can_manage_labels: true,
+        can_manage_milestone: true,
+      },
+    };
+    vi.mocked(prDetail).mockResolvedValue(detail);
+    vi.mocked(prMetadataUpdate).mockReturnValueOnce(oldUpdate.promise);
+    const store = usePrStore();
+    await store.fetchPrDetail("github", "old", "repo", 1);
+
+    const pending = store.updateMetadata("github", "old", "repo", 1, {
+      title: "更新标题",
+      body: "",
+      draft: false,
+      reviewers: [],
+      assignees: [],
+      labels: [],
+      milestone: null,
+      expected_updated_at: "updated-at",
+    });
+    await store.fetchPrDetail("gitlab", "new", "repo", 2);
+    oldUpdate.reject(new Error("旧请求失败"));
+
+    await expect(pending).resolves.toBeNull();
+    expect(store.error).toBeNull();
+  });
+
   it("忽略同类请求中较早返回的详情和 diff", async () => {
     const oldDetail = deferred<PrDetail>();
     const oldDiff = deferred<DiffResult>();
@@ -140,6 +276,18 @@ describe("usePrStore", () => {
       mergeable: true,
       head_sha: "new-sha",
       base_sha: "base-sha",
+      draft: false,
+      reviewers: [],
+      assignees: [],
+      milestone: null,
+      metadata_permissions: {
+        can_edit_title_body: true,
+        can_toggle_draft: true,
+        can_manage_reviewers: true,
+        can_manage_assignees: true,
+        can_manage_labels: true,
+        can_manage_milestone: true,
+      },
     };
     const currentDiff: DiffResult = {
       diff: "current diff",

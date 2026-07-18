@@ -173,6 +173,18 @@ describe("Sidebar", () => {
       mergeable: true,
       head_sha: "old-sha",
       base_sha: "base-sha",
+      draft: false,
+      reviewers: [],
+      assignees: [],
+      milestone: null,
+      metadata_permissions: {
+        can_edit_title_body: true,
+        can_toggle_draft: true,
+        can_manage_reviewers: true,
+        can_manage_assignees: true,
+        can_manage_labels: true,
+        can_manage_milestone: true,
+      },
     };
 
     const wrapper = mount(Sidebar, { global: { plugins: [router] } });

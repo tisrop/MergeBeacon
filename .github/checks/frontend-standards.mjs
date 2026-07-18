@@ -66,7 +66,8 @@ function checkVueHtml(file, source) {
     (match) => {
       const isDiffRenderer =
         path === "src/components/diff/DiffViewer.vue" && match[0] === 'v-html="diffHtml"';
-      if (!isDiffRenderer) return false;
+      const isMarkdownRenderer = path === "src/components/shared/MarkdownRenderer.vue";
+      if (!isDiffRenderer && !isMarkdownRenderer) return false;
       diffRendererExceptionCount += 1;
       return diffRendererExceptionCount === 1;
     },

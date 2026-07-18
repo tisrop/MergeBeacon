@@ -10,6 +10,8 @@ import type {
   ReviewInboxCategory,
   ReviewInboxItem,
   PrDetail,
+  PrMetadataUpdate,
+  PrMetadataUpdateOutcome,
   PrMergeReadiness,
   DiffResult,
   PrFileContent,
@@ -139,6 +141,16 @@ export async function prDetail(
   number: number,
 ): Promise<PrDetail> {
   return invoke("pr_detail", { platform, owner, repo, number });
+}
+
+export async function prMetadataUpdate(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+  update: PrMetadataUpdate,
+): Promise<PrMetadataUpdateOutcome> {
+  return invoke("pr_metadata_update", { platform, owner, repo, number, update });
 }
 
 export async function prMergeReadiness(
