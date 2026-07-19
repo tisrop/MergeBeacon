@@ -96,6 +96,13 @@ export interface PrStatusSummary {
 
 export type ReviewInboxStatusSummary = PrStatusSummary;
 
+export interface ReviewInboxLocalState {
+  unread: boolean;
+  new_commits: boolean;
+  new_comments: boolean;
+  status_changed: boolean;
+}
+
 export interface ReviewInboxItem {
   platform: Platform;
   owner: string;
@@ -104,6 +111,9 @@ export interface ReviewInboxItem {
   categories: ReviewInboxCategory[];
   relationships: ReviewInboxRelationship[];
   status: ReviewInboxStatusSummary;
+  head_sha?: string | null;
+  comments_count?: number | null;
+  local_state?: ReviewInboxLocalState;
   summary: PrSummary;
 }
 
@@ -334,6 +344,8 @@ export interface PrComment {
   reply_to_id: string | null;
   resolved: boolean | null;
   resolvable: boolean;
+  can_edit?: boolean;
+  can_delete?: boolean;
 }
 
 export interface ReviewThreadFileSummary {

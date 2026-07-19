@@ -12,6 +12,13 @@ pub struct GitHubAdapter {
     base_url: String,
 }
 
+#[derive(Debug, Clone)]
+struct GithubInboxSupplement {
+    status: ReviewInboxStatusSummary,
+    head_sha: Option<String>,
+    comments_count: Option<u64>,
+}
+
 impl GitHubAdapter {
     pub fn new(client: HttpClient, token: String) -> Self {
         Self { client, token, base_url: "https://api.github.com".to_string() }
@@ -542,7 +549,7 @@ impl GitHubAdapter {
     async fn inbox_statuses(
         &self,
         node_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, ReviewInboxStatusSummary>, AppError> {
+    ) -> Result<std::collections::HashMap<String, GithubInboxSupplement>, AppError> {
         if node_ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
@@ -552,6 +559,7 @@ impl GitHubAdapter {
                 nodes(ids: $ids) {
                     ... on PullRequest {
                         id
+                        headRefOid
                         isDraft
                         mergeable
                         mergeStateStatus
@@ -562,6 +570,10 @@ impl GitHubAdapter {
                                     statusCheckRollup { state }
                                 }
                             }
+                        }
+                        comments(first: 1) { totalCount }
+                        reviewThreads(first: 100) {
+                            nodes { comments(first: 1) { totalCount } }
                         }
                     }
                 }
@@ -578,7 +590,26 @@ impl GitHubAdapter {
         let mut statuses = std::collections::HashMap::new();
         for node in nodes {
             if let Some(id) = node["id"].as_str() {
-                statuses.insert(id.to_string(), Self::inbox_status(node));
+                let issue_comments = node["comments"]["totalCount"].as_u64();
+                let thread_comments = node["reviewThreads"]["nodes"].as_array().map(|threads| {
+                    threads
+                        .iter()
+                        .filter_map(|thread| thread["comments"]["totalCount"].as_u64())
+                        .fold(0_u64, u64::saturating_add)
+                });
+                let comments_count = if issue_comments.is_none() && thread_comments.is_none() {
+                    None
+                } else {
+                    Some(issue_comments.unwrap_or_default().saturating_add(thread_comments.unwrap_or_default()))
+                };
+                statuses.insert(
+                    id.to_string(),
+                    GithubInboxSupplement {
+                        status: Self::inbox_status(node),
+                        head_sha: node["headRefOid"].as_str().map(str::to_string),
+                        comments_count,
+                    },
+                );
             }
         }
         Ok(statuses)
@@ -656,6 +687,8 @@ impl GitHubAdapter {
             reply_to_id,
             resolved: Some(resolved),
             resolvable,
+            can_edit: false,
+            can_delete: false,
         })
     }
 
@@ -973,8 +1006,8 @@ impl GitPlatform for GitHubAdapter {
             .collect::<Vec<_>>();
         if let Ok(statuses) = self.inbox_statuses(&requested_ids).await {
             for pr in &mut prs {
-                if let Some(status) = node_ids.get(&pr.number).and_then(|node_id| statuses.get(node_id)) {
-                    pr.status = Some(status.clone());
+                if let Some(supplement) = node_ids.get(&pr.number).and_then(|node_id| statuses.get(node_id)) {
+                    pr.status = Some(supplement.status.clone());
                 }
             }
         }
@@ -1033,6 +1066,8 @@ impl GitPlatform for GitHubAdapter {
                 categories: vec![*category],
                 relationships: vec![relationship],
                 status: ReviewInboxStatusSummary::default(),
+                head_sha: None,
+                comments_count: None,
                 summary: PrSummary {
                     number,
                     title: pr["title"].as_str().unwrap_or("").to_string(),
@@ -1064,8 +1099,10 @@ impl GitPlatform for GitHubAdapter {
         if let Ok(statuses) = self.inbox_statuses(&requested_ids).await {
             for item in &mut page_items {
                 let key = (item.repository_full_name.clone(), item.summary.number);
-                if let Some(status) = node_ids.get(&key).and_then(|node_id| statuses.get(node_id)) {
-                    item.status = status.clone();
+                if let Some(supplement) = node_ids.get(&key).and_then(|node_id| statuses.get(node_id)) {
+                    item.status = supplement.status.clone();
+                    item.head_sha = supplement.head_sha.clone();
+                    item.comments_count = supplement.comments_count;
                 }
             }
         }
@@ -1609,6 +1646,8 @@ impl GitPlatform for GitHubAdapter {
             reply_to_id: None,
             resolved: None,
             resolvable: false,
+            can_edit: true,
+            can_delete: true,
         })
     }
 
@@ -1709,6 +1748,48 @@ impl GitPlatform for GitHubAdapter {
             );
         }
         Ok(comments)
+    }
+
+    async fn reply_to_review_thread(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        _thread_id: &str,
+        reply_to_id: &str,
+        body: &str,
+    ) -> Result<(), AppError> {
+        let url =
+            format!("{}/repos/{}/{}/pulls/{}/comments/{}/replies", self.base_url, owner, repo, pr_number, reply_to_id);
+        self.post_json(&url, &serde_json::json!({ "body": body })).await?;
+        Ok(())
+    }
+
+    async fn update_review_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        _pr_number: u64,
+        _thread_id: &str,
+        comment_id: &str,
+        body: &str,
+    ) -> Result<(), AppError> {
+        let url = format!("{}/repos/{}/{}/pulls/comments/{}", self.base_url, owner, repo, comment_id);
+        self.patch_json(&url, &serde_json::json!({ "body": body })).await?;
+        Ok(())
+    }
+
+    async fn delete_review_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        _pr_number: u64,
+        _thread_id: &str,
+        comment_id: &str,
+    ) -> Result<(), AppError> {
+        let url = format!("{}/repos/{}/{}/pulls/comments/{}", self.base_url, owner, repo, comment_id);
+        self.delete_json(&url, &Value::Null).await?;
+        Ok(())
     }
 
     async fn set_review_thread_resolved(

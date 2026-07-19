@@ -67,6 +67,18 @@ impl GitLabAdapter {
         Ok(resp.json().await?)
     }
 
+    async fn delete_empty(&self, url: &str) -> Result<(), AppError> {
+        self.client
+            .raw_client()
+            .delete(url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .header("User-Agent", "mergebeacon")
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
     async fn list_all_inbox_merge_requests(&self, filter_name: &str, user_id: u64) -> Result<Vec<Value>, AppError> {
         const REMOTE_PAGE_SIZE: u64 = 100;
         let url = format!("{}/merge_requests", self.base_url);
@@ -443,6 +455,8 @@ impl GitLabAdapter {
             reply_to_id,
             resolved,
             resolvable,
+            can_edit: false,
+            can_delete: false,
         })
     }
 }
@@ -644,6 +658,8 @@ impl GitPlatform for GitLabAdapter {
                 categories: vec![*category],
                 relationships: vec![relationship],
                 status: Self::inbox_status(&mr),
+                head_sha: mr["sha"].as_str().or_else(|| mr["diff_refs"]["head_sha"].as_str()).map(str::to_string),
+                comments_count: mr["user_notes_count"].as_u64(),
                 summary: PrSummary {
                     number: mr["iid"].as_u64().unwrap_or(0),
                     title: mr["title"].as_str().unwrap_or("").to_string(),
@@ -1286,6 +1302,56 @@ impl GitPlatform for GitLabAdapter {
             }
         }
         Ok(comments)
+    }
+
+    async fn reply_to_review_thread(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        thread_id: &str,
+        _reply_to_id: &str,
+        body: &str,
+    ) -> Result<(), AppError> {
+        let project_id = urlencoding(owner, repo);
+        let url =
+            format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}/notes", self.base_url);
+        self.post_json(&url, &serde_json::json!({ "body": body })).await?;
+        Ok(())
+    }
+
+    async fn update_review_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        thread_id: &str,
+        comment_id: &str,
+        body: &str,
+    ) -> Result<(), AppError> {
+        let project_id = urlencoding(owner, repo);
+        let url = format!(
+            "{}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}/notes/{comment_id}",
+            self.base_url
+        );
+        self.put_json(&url, &serde_json::json!({ "body": body })).await?;
+        Ok(())
+    }
+
+    async fn delete_review_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        thread_id: &str,
+        comment_id: &str,
+    ) -> Result<(), AppError> {
+        let project_id = urlencoding(owner, repo);
+        let url = format!(
+            "{}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}/notes/{comment_id}",
+            self.base_url
+        );
+        self.delete_empty(&url).await
     }
 
     async fn set_review_thread_resolved(

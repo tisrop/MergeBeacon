@@ -1,6 +1,14 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-shell";
+import {
+  Visibility,
+  isPermissionGranted,
+  onAction,
+  registerActionTypes,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import type {
   Platform,
   PlatformCapabilities,
@@ -37,6 +45,57 @@ import type {
 // ============================================================
 // Tauri IPC 封装 —— 所有后端调用统一入口
 // ============================================================
+
+export interface DesktopNotificationPayload {
+  id: number;
+  title: string;
+  body: string;
+  group: string;
+  private: boolean;
+  extra: Record<string, unknown>;
+}
+
+export function isDesktopRuntime(): boolean {
+  return isTauri();
+}
+
+export function desktopNotificationPermissionGranted(): Promise<boolean> {
+  return isPermissionGranted();
+}
+
+export function requestDesktopNotificationPermission(): Promise<NotificationPermission> {
+  return requestPermission();
+}
+
+export function sendDesktopNotification(payload: DesktopNotificationPayload): void {
+  sendNotification({
+    id: payload.id,
+    title: payload.title,
+    body: payload.body,
+    group: payload.group,
+    actionTypeId: "mergebeacon-open-pr",
+    autoCancel: true,
+    visibility: payload.private ? Visibility.Private : Visibility.Public,
+    extra: payload.extra,
+  });
+}
+
+export async function listenDesktopNotificationActions(
+  callback: (extra: Record<string, unknown>) => void,
+): Promise<UnlistenFn> {
+  try {
+    await registerActionTypes([
+      {
+        id: "mergebeacon-open-pr",
+        actions: [{ id: "open", title: "打开 Pull Request", foreground: true }],
+      },
+    ]);
+  } catch {
+    // Desktop platforms may not expose explicit action buttons; click handling still works.
+  }
+  const listener = await onAction((notification) => callback(notification.extra ?? {}));
+  return () => listener.unregister();
+}
 
 // ── Auth ──
 export async function authLogin(
@@ -277,6 +336,64 @@ export async function reviewThreadSetResolved(
     prNumber,
     threadId,
     resolved,
+  });
+}
+
+export async function reviewThreadReply(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  threadId: string,
+  replyToId: string,
+  body: string,
+): Promise<void> {
+  return invoke("review_thread_reply", {
+    platform,
+    owner,
+    repo,
+    prNumber,
+    threadId,
+    replyToId,
+    body,
+  });
+}
+
+export async function reviewCommentUpdate(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  threadId: string,
+  commentId: string,
+  body: string,
+): Promise<void> {
+  return invoke("review_comment_update", {
+    platform,
+    owner,
+    repo,
+    prNumber,
+    threadId,
+    commentId,
+    body,
+  });
+}
+
+export async function reviewCommentDelete(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  threadId: string,
+  commentId: string,
+): Promise<void> {
+  return invoke("review_comment_delete", {
+    platform,
+    owner,
+    repo,
+    prNumber,
+    threadId,
+    commentId,
   });
 }
 

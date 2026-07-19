@@ -159,6 +159,14 @@ pub(crate) fn merge_review_inbox_items(items: Vec<ReviewInboxItem>) -> Vec<Revie
                 }
             }
             merge_inbox_status(&mut existing.status, item.status);
+            if existing.head_sha.is_none() {
+                existing.head_sha = item.head_sha;
+            }
+            existing.comments_count = match (existing.comments_count, item.comments_count) {
+                (Some(left), Some(right)) => Some(left.max(right)),
+                (left @ Some(_), None) => left,
+                (None, right) => right,
+            };
         } else {
             indexes.insert(key, merged.len());
             merged.push(item);
@@ -253,6 +261,41 @@ pub trait GitPlatform: Send + Sync {
     ) -> Result<PrComment, AppError>;
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError>;
+
+    async fn reply_to_review_thread(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+        _thread_id: &str,
+        _reply_to_id: &str,
+        _body: &str,
+    ) -> Result<(), AppError> {
+        Err(AppError::Api(format!("{} 不支持回复评审线程", self.name())))
+    }
+
+    async fn update_review_comment(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+        _thread_id: &str,
+        _comment_id: &str,
+        _body: &str,
+    ) -> Result<(), AppError> {
+        Err(AppError::Api(format!("{} 不支持编辑评审评论", self.name())))
+    }
+
+    async fn delete_review_comment(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+        _thread_id: &str,
+        _comment_id: &str,
+    ) -> Result<(), AppError> {
+        Err(AppError::Api(format!("{} 不支持删除评审评论", self.name())))
+    }
 
     async fn set_review_thread_resolved(
         &self,

@@ -410,6 +410,9 @@ impl GiteeAdapter {
             .send()
             .await?
             .error_for_status()?;
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(Value::Null);
+        }
         Ok(resp.json().await?)
     }
 
@@ -442,6 +445,9 @@ impl GiteeAdapter {
             .send()
             .await?
             .error_for_status()?;
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(Value::Null);
+        }
         Ok(resp.json().await?)
     }
 
@@ -608,6 +614,11 @@ impl GiteeAdapter {
                     categories: vec![category],
                     relationships: vec![Self::inbox_relationship(filter_name)],
                     status: Self::inbox_status(pr),
+                    head_sha: pr["head"]["sha"]
+                        .as_str()
+                        .or_else(|| pr["head"]["commit_id"].as_str())
+                        .map(str::to_string),
+                    comments_count: pr["comments_count"].as_u64().or_else(|| pr["comments"].as_u64()),
                     summary: PrSummary {
                         number: pr["number"].as_u64().unwrap_or(0),
                         title: pr["title"].as_str().unwrap_or("").to_string(),
@@ -1421,6 +1432,8 @@ impl GitPlatform for GiteeAdapter {
                 .or_else(|| c["in_reply_to_id"].as_u64().map(|id| id.to_string())),
             resolved: None,
             resolvable: false,
+            can_edit: true,
+            can_delete: true,
         })
     }
 
@@ -1454,10 +1467,56 @@ impl GitPlatform for GiteeAdapter {
                     reply_to_id,
                     resolved: None,
                     resolvable: false,
+                    can_edit: false,
+                    can_delete: false,
                 }
             })
             .collect();
         Ok(comments)
+    }
+
+    async fn reply_to_review_thread(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+        _thread_id: &str,
+        reply_to_id: &str,
+        body: &str,
+    ) -> Result<(), AppError> {
+        let url = format!("{}/repos/{}/{}/pulls/{}/comments", self.base_url, owner, repo, pr_number);
+        let in_reply_to = reply_to_id
+            .parse::<u64>()
+            .map_or_else(|_| Value::String(reply_to_id.to_string()), |id| Value::Number(id.into()));
+        self.post_json(&url, &serde_json::json!({ "body": body, "in_reply_to": in_reply_to })).await?;
+        Ok(())
+    }
+
+    async fn update_review_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        _pr_number: u64,
+        _thread_id: &str,
+        comment_id: &str,
+        body: &str,
+    ) -> Result<(), AppError> {
+        let url = format!("{}/repos/{}/{}/pulls/comments/{}", self.base_url, owner, repo, comment_id);
+        self.patch_json(&url, &serde_json::json!({ "body": body })).await?;
+        Ok(())
+    }
+
+    async fn delete_review_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        _pr_number: u64,
+        _thread_id: &str,
+        comment_id: &str,
+    ) -> Result<(), AppError> {
+        let url = format!("{}/repos/{}/{}/pulls/comments/{}", self.base_url, owner, repo, comment_id);
+        self.delete_json(&url, &Value::Null).await?;
+        Ok(())
     }
 
     async fn list_reviews(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<Review>, AppError> {

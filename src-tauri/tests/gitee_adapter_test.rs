@@ -1185,6 +1185,8 @@ async fn test_gitee_review_inbox_filters_pending_reviewers_and_testers() {
                 "title": "Pending test",
                 "created_at": "2025-01-01T00:00:00Z",
                 "updated_at": "2025-01-04T00:00:00Z",
+                "head": { "sha": "head-13" },
+                "comments_count": 6,
                 "user": { "id": 3, "login": "dev3", "name": "Dev 3", "avatar_url": "" },
                 "labels": [],
                 "mergeable": true,
@@ -1221,6 +1223,8 @@ async fn test_gitee_review_inbox_filters_pending_reviewers_and_testers() {
     assert_eq!(result.items[0].platform, "gitee");
     assert_eq!(result.items[0].relationships, vec![ReviewInboxRelationship::Tester]);
     assert_eq!(result.items[0].status.status, ReadinessState::Pending);
+    assert_eq!(result.items[0].head_sha.as_deref(), Some("head-13"));
+    assert_eq!(result.items[0].comments_count, Some(6));
     let combined = result.items.iter().find(|item| item.summary.number == 11).expect("combined PR");
     assert_eq!(combined.relationships, vec![ReviewInboxRelationship::Reviewer, ReviewInboxRelationship::Tester]);
     assert_eq!(combined.status.status, ReadinessState::Blocked);
@@ -1317,6 +1321,43 @@ async fn test_gitee_review_inbox_sanitizes_html_errors() {
     assert!(message.contains("非 JSON 错误页面"));
     assert!(!message.contains("<html>"));
     assert!(!message.contains("test-token"));
+}
+
+#[tokio::test]
+async fn test_gitee_replies_edits_and_deletes_review_comment() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .and(body_json(serde_json::json!({ "body": "回复", "in_reply_to": 100 })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/comments/100"))
+        .and(body_json(serde_json::json!({ "body": "编辑后" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/comments/100"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".into())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    adapter
+        .reply_to_review_thread("octocat", "hello-world", 42, "100", "100", "回复")
+        .await
+        .expect("reply should succeed");
+    adapter
+        .update_review_comment("octocat", "hello-world", 42, "100", "100", "编辑后")
+        .await
+        .expect("edit should succeed");
+    adapter.delete_review_comment("octocat", "hello-world", 42, "100", "100").await.expect("delete should succeed");
 }
 
 #[tokio::test]

@@ -43,14 +43,21 @@ describe("App", () => {
     await router.push("/pr");
     await router.isReady();
 
-    const wrapper = mount(App, { global: { plugins: [pinia, router] } });
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
     await flushPromises();
 
     expect(router.currentRoute.value.path).toBe("/pr");
     expect(checkForUpdates).toHaveBeenCalledOnce();
     expect(useUpdateStore(pinia).updateResult?.version).toBe("0.4.0");
     expect(window.__goToSettings).toBeTypeOf("function");
+    expect(window.__openCommandPalette).toBeTypeOf("function");
     wrapper.unmount();
     expect(window.__goToSettings).toBeUndefined();
+    expect(window.__openCommandPalette).toBeUndefined();
   });
 });

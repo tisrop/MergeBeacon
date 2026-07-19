@@ -8,6 +8,7 @@ import { useUpdateStore } from "@/stores/useUpdateStore";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import AiSettings from "@/components/ai/AiSettings.vue";
+import NotificationSettings from "@/components/notification/NotificationSettings.vue";
 import type { Platform } from "@/types";
 
 const auth = useAuthStore();
@@ -178,6 +179,22 @@ async function copySupportInfo() {
             <span class="toggle-slider" />
           </label>
         </div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-icon notification" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+              <path d="M10 21h4" />
+            </svg>
+          </span>
+          <div>
+            <h3>桌面通知</h3>
+            <p>按平台和事件类型控制提醒，并保护私有仓库内容。</p>
+          </div>
+        </div>
+        <NotificationSettings />
       </section>
 
       <section class="section">
@@ -406,6 +423,11 @@ async function copySupportInfo() {
 .section-icon.ai {
   color: var(--color-success);
   background: var(--color-success-light);
+}
+
+.section-icon.notification {
+  color: var(--color-warning);
+  background: var(--color-warning-light);
 }
 
 .section-icon svg {

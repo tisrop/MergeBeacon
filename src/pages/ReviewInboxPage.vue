@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import ReviewInboxCard from "@/components/inbox/ReviewInboxCard.vue";
@@ -7,7 +7,7 @@ import AppSelect from "@/components/shared/AppSelect.vue";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
 import { useRepoStore } from "@/stores/useRepoStore";
-import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
+import { INBOX_BACKGROUND_REFRESH_MS, useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import type { Platform, ReviewInboxItem } from "@/types";
 
 const router = useRouter();
@@ -37,6 +37,28 @@ const readinessOptions = [
   { value: "blocked", label: "被阻塞" },
   { value: "pending", label: "检查中" },
   { value: "unknown", label: "状态未知" },
+];
+const readOptions = [
+  { value: "all", label: "全部阅读状态" },
+  { value: "unread", label: "未读" },
+  { value: "read", label: "已读" },
+];
+const blockerOptions = [
+  { value: "all", label: "全部阻塞原因" },
+  { value: "checks_failed", label: "CI 失败" },
+  { value: "checks_pending", label: "CI 进行中" },
+  { value: "changes_requested", label: "请求修改" },
+  { value: "approvals_required", label: "审批不足" },
+  { value: "draft", label: "Draft" },
+  { value: "conflicts", label: "存在冲突" },
+  { value: "branch_behind", label: "分支落后" },
+  { value: "discussions_unresolved", label: "讨论未解决" },
+];
+const sortOptions = [
+  { value: "updated", label: "最近更新" },
+  { value: "blocked", label: "阻塞优先" },
+  { value: "mergeable", label: "可合并优先" },
+  { value: "checks_failed", label: "检查失败优先" },
 ];
 const loggedInPlatforms = computed<Platform[]>(() =>
   (Object.keys(auth.platforms) as Platform[]).filter(
@@ -101,6 +123,7 @@ function refresh(): void {
 }
 
 function openItem(item: ReviewInboxItem): void {
+  inbox.markRead(item);
   auth.setActivePlatform(item.platform);
   repo.setActiveRepo(item.owner, item.repo);
   repo.setForkContext(null);
@@ -115,6 +138,26 @@ function openItem(item: ReviewInboxItem): void {
     },
   });
 }
+
+function toggleRead(item: ReviewInboxItem): void {
+  if (item.local_state?.unread) inbox.markRead(item);
+  else inbox.markUnread(item);
+}
+
+function backgroundRefresh(): void {
+  if (document.visibilityState === "hidden" || navigator.onLine === false) return;
+  void inbox.backgroundRefresh(availablePlatforms.value);
+}
+
+let backgroundTimer: ReturnType<typeof setInterval> | null = null;
+onMounted(() => {
+  backgroundTimer = setInterval(backgroundRefresh, INBOX_BACKGROUND_REFRESH_MS);
+  document.addEventListener("visibilitychange", backgroundRefresh);
+});
+onUnmounted(() => {
+  if (backgroundTimer) clearInterval(backgroundTimer);
+  document.removeEventListener("visibilitychange", backgroundRefresh);
+});
 </script>
 
 <template>
@@ -129,6 +172,14 @@ function openItem(item: ReviewInboxItem): void {
           <span v-if="inbox.items.length" class="result-count"
             >{{ inbox.items.length }} 条结果</span
           >
+          <button
+            v-if="inbox.unreadCount > 0"
+            type="button"
+            class="mark-all-read-button"
+            @click="inbox.markAllRead"
+          >
+            全部标为已读
+          </button>
           <button
             type="button"
             class="refresh-button"
@@ -192,6 +243,33 @@ function openItem(item: ReviewInboxItem): void {
             aria-label="收件箱合并状态"
           />
         </div>
+        <div class="filter-field">
+          <span>阅读</span>
+          <AppSelect
+            v-model="inbox.filters.read"
+            size="sm"
+            :options="readOptions"
+            aria-label="收件箱阅读状态"
+          />
+        </div>
+        <div class="filter-field">
+          <span>阻塞</span>
+          <AppSelect
+            v-model="inbox.filters.blocker"
+            size="sm"
+            :options="blockerOptions"
+            aria-label="收件箱阻塞原因"
+          />
+        </div>
+        <div class="filter-field">
+          <span>排序</span>
+          <AppSelect
+            v-model="inbox.filters.sort"
+            size="sm"
+            :options="sortOptions"
+            aria-label="收件箱排序方式"
+          />
+        </div>
         <label class="repository-filter">
           <span>仓库</span>
           <input
@@ -242,6 +320,7 @@ function openItem(item: ReviewInboxItem): void {
           :key="`${item.platform}:${item.repository_full_name}:${item.summary.number}`"
           :item="item"
           @click="openItem(item)"
+          @toggle-read="toggleRead(item)"
         />
       </div>
 
@@ -262,7 +341,9 @@ function openItem(item: ReviewInboxItem): void {
           v-if="
             inbox.filters.repository ||
             inbox.filters.relationship !== 'all' ||
-            inbox.filters.readiness !== 'all'
+            inbox.filters.readiness !== 'all' ||
+            inbox.filters.read !== 'all' ||
+            inbox.filters.blocker !== 'all'
           "
         >
           当前筛选条件下没有结果
@@ -318,6 +399,14 @@ function openItem(item: ReviewInboxItem): void {
 
 .result-count {
   color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.mark-all-read-button {
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
   font-size: 12px;
 }
 

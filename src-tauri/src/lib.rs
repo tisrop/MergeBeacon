@@ -36,6 +36,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -62,12 +63,19 @@ pub fn run() {
                 single_instance::activate_main_window(app.handle());
             }
 
+            let command_palette =
+                MenuItem::with_id(app, "open-command-palette", "命令面板...", true, Some("CmdOrCtrl+K"))?;
             let settings = MenuItem::with_id(app, "open-settings", "设置...", true, Some("Cmd+,"))?;
             let app_menu = Submenu::with_items(
                 app,
                 "MergeBeacon",
                 true,
-                &[&settings, &PredefinedMenuItem::separator(app)?, &PredefinedMenuItem::quit(app, None)?],
+                &[
+                    &command_palette,
+                    &settings,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::quit(app, None)?,
+                ],
             )?;
             let edit_menu = Submenu::with_items(
                 app,
@@ -95,9 +103,17 @@ pub fn run() {
             });
 
             app.on_menu_event(move |handle, event| {
-                if event.id() == "open-settings" && menu_ready.load(Ordering::SeqCst) {
+                if !menu_ready.load(Ordering::SeqCst) {
+                    return;
+                }
+                if event.id() == "open-settings" {
                     if let Some(window) = handle.get_webview_window("main") {
                         let _ = window.eval("if(typeof window.__goToSettings==='function'){window.__goToSettings()}");
+                    }
+                } else if event.id() == "open-command-palette" {
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window
+                            .eval("if(typeof window.__openCommandPalette==='function'){window.__openCommandPalette()}");
                     }
                 }
             });
@@ -136,6 +152,9 @@ pub fn run() {
             // Review
             review::review_submit,
             review::review_comment_add,
+            review::review_thread_reply,
+            review::review_comment_update,
+            review::review_comment_delete,
             review::review_list,
             review::review_comments_list,
             review::review_thread_set_resolved,

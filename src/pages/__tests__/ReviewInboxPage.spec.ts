@@ -1,12 +1,12 @@
 import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ReviewInboxPage from "@/pages/ReviewInboxPage.vue";
 import { reviewInboxList } from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useRepoStore } from "@/stores/useRepoStore";
-import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
+import { INBOX_BACKGROUND_REFRESH_MS, useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import type { Paginated, Platform, ReviewInboxItem } from "@/types";
 
 const storage = new Map<string, string>();
@@ -67,6 +67,10 @@ describe("ReviewInboxPage", () => {
     setActivePinia(createPinia());
     vi.mocked(reviewInboxList).mockReset();
     vi.mocked(reviewInboxList).mockImplementation(async (platform) => result(platform));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("展示已登录平台的聚合结果并支持仓库过滤", async () => {
@@ -134,7 +138,7 @@ describe("ReviewInboxPage", () => {
     });
     await flushPromises();
 
-    await wrapper.get(".inbox-card").trigger("click");
+    await wrapper.get(".card-open").trigger("click");
     await flushPromises();
 
     expect(auth.activePlatform).toBe("gitlab");
@@ -146,6 +150,42 @@ describe("ReviewInboxPage", () => {
       repo: "gitlab-repo",
       number: "2",
     });
+  });
+
+  it("支持标记已读/未读且不会误触发条目跳转", async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/inbox", name: "review-inbox", component: ReviewInboxPage },
+        { path: "/pr/:platform/:owner/:repo/:number", name: "pr-detail", component: {} },
+      ],
+    });
+    await router.push("/inbox");
+    await router.isReady();
+    const auth = useAuthStore();
+    auth.platforms.github.isLoggedIn = true;
+
+    const wrapper = mount(ReviewInboxPage, {
+      attachTo: document.body,
+      global: {
+        plugins: [router],
+        stubs: { AppLayout: { template: "<div><slot name='header' /><slot /></div>" } },
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.get(".inbox-card").classes()).toContain("unread");
+    expect(wrapper.get(".read-toggle").text()).toBe("已读");
+    await wrapper.get(".read-toggle").trigger("click");
+
+    expect(router.currentRoute.value.name).toBe("review-inbox");
+    expect(wrapper.get(".inbox-card").classes()).not.toContain("unread");
+    expect(wrapper.get(".read-toggle").text()).toBe("未读");
+
+    await wrapper.get('[aria-label="收件箱阅读状态"]').trigger("click");
+    await wrapper.get('.dropdown-option[data-value="read"]').trigger("click");
+    expect(wrapper.findAll(".inbox-card")).toHaveLength(1);
+    wrapper.unmount();
   });
   it("范围、平台、角色和合并状态筛选可以展开、选择并更新结果", async () => {
     const router = createRouter({
@@ -325,5 +365,45 @@ describe("ReviewInboxPage", () => {
     ).toEqual(["github", "gitlab"]);
 
     wrapper.unmount();
+  });
+
+  it("按间隔触发后台刷新，并在组件卸载后清理 timer 和可见性监听器", async () => {
+    vi.useFakeTimers();
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/inbox", name: "review-inbox", component: ReviewInboxPage },
+        { path: "/pr/:platform/:owner/:repo/:number", name: "pr-detail", component: {} },
+      ],
+    });
+    await router.push("/inbox");
+    await router.isReady();
+    const auth = useAuthStore();
+    auth.platforms.github.isLoggedIn = true;
+    const inbox = useReviewInboxStore();
+    const backgroundRefresh = vi.spyOn(inbox, "backgroundRefresh").mockResolvedValue(true);
+
+    const wrapper = mount(ReviewInboxPage, {
+      global: {
+        plugins: [router],
+        stubs: {
+          AppLayout: { template: "<div><slot name='header' /><slot /></div>" },
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(backgroundRefresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(INBOX_BACKGROUND_REFRESH_MS);
+    expect(backgroundRefresh).toHaveBeenCalledTimes(1);
+    expect(backgroundRefresh).toHaveBeenCalledWith(["github"]);
+
+    wrapper.unmount();
+    backgroundRefresh.mockClear();
+    await vi.advanceTimersByTimeAsync(INBOX_BACKGROUND_REFRESH_MS);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+
+    expect(backgroundRefresh).not.toHaveBeenCalled();
   });
 });

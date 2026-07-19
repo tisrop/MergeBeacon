@@ -118,6 +118,10 @@ pub struct ReviewInboxItem {
     pub categories: Vec<ReviewInboxCategory>,
     pub relationships: Vec<ReviewInboxRelationship>,
     pub status: ReviewInboxStatusSummary,
+    #[serde(default)]
+    pub head_sha: Option<String>,
+    #[serde(default)]
+    pub comments_count: Option<u64>,
     pub summary: PrSummary,
 }
 
@@ -382,6 +386,10 @@ pub struct PrComment {
     pub reply_to_id: Option<String>,
     pub resolved: Option<bool>,
     pub resolvable: bool,
+    #[serde(default)]
+    pub can_edit: bool,
+    #[serde(default)]
+    pub can_delete: bool,
 }
 
 // ── Issue ──
