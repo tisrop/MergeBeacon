@@ -159,6 +159,14 @@ pub(crate) fn merge_review_inbox_items(items: Vec<ReviewInboxItem>) -> Vec<Revie
                 }
             }
             merge_inbox_status(&mut existing.status, item.status);
+            if existing.head_sha.is_none() {
+                existing.head_sha = item.head_sha;
+            }
+            existing.comments_count = match (existing.comments_count, item.comments_count) {
+                (Some(left), Some(right)) => Some(left.max(right)),
+                (left @ Some(_), None) => left,
+                (None, right) => right,
+            };
         } else {
             indexes.insert(key, merged.len());
             merged.push(item);

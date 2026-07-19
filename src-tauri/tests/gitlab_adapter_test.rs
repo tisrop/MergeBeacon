@@ -929,6 +929,8 @@ async fn test_gitlab_review_inbox_combines_reviewers_and_assignees() {
                     "state": "opened",
                     "created_at": "2025-01-01T00:00:00Z",
                     "updated_at": "2025-01-03T00:00:00Z",
+                    "sha": "head-9",
+                    "user_notes_count": 4,
                     "author": { "id": 1, "username": "dev", "name": "Dev", "avatar_url": "" },
                     "labels": ["backend"],
                     "references": { "full": "group/subgroup/project!9" },
@@ -953,6 +955,8 @@ async fn test_gitlab_review_inbox_combines_reviewers_and_assignees() {
                 "state": "opened",
                 "created_at": "2025-01-01T00:00:00Z",
                 "updated_at": "2025-01-03T00:00:00Z",
+                "sha": "head-9",
+                "user_notes_count": 4,
                 "author": { "id": 1, "username": "dev", "name": "Dev", "avatar_url": "" },
                 "labels": ["backend"],
                 "references": { "full": "group/subgroup/project!9" },
@@ -998,6 +1002,8 @@ async fn test_gitlab_review_inbox_combines_reviewers_and_assignees() {
     assert_eq!(result.items[0].status.status, ReadinessState::Blocked);
     assert_eq!(result.items[0].status.checks_status, ReadinessState::Ready);
     assert_eq!(result.items[0].status.approvals_status, ReadinessState::Blocked);
+    assert_eq!(result.items[0].head_sha.as_deref(), Some("head-9"));
+    assert_eq!(result.items[0].comments_count, Some(4));
     assert_eq!(result.items[1].repository_full_name, "group/assigned");
     assert_eq!(result.items[1].relationships, vec![ReviewInboxRelationship::Assignee]);
     assert_eq!(result.items[1].status.status, ReadinessState::Ready);

@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { nextTick } from "vue";
 import { reviewInboxList } from "@/api";
 import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import type {
@@ -9,6 +10,14 @@ import type {
   ReviewInboxRelationship,
   ReviewInboxStatusSummary,
 } from "@/types";
+
+const storage = new Map<string, string>();
+vi.stubGlobal("localStorage", {
+  getItem: (key: string) => storage.get(key) ?? null,
+  setItem: (key: string, value: string) => storage.set(key, value),
+  removeItem: (key: string) => storage.delete(key),
+  clear: () => storage.clear(),
+});
 
 vi.mock("@/api", () => ({
   reviewInboxList: vi.fn(),
@@ -64,8 +73,13 @@ function deferred<T>() {
 
 describe("useReviewInboxStore", () => {
   beforeEach(() => {
+    storage.clear();
     setActivePinia(createPinia());
     vi.mocked(reviewInboxList).mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("聚合已登录平台并按更新时间排序、去重和过滤", async () => {
@@ -213,5 +227,301 @@ describe("useReviewInboxStore", () => {
     expect(store.items.map((entry) => entry.summary.number)).toEqual([2, 1]);
     expect(store.pages.github).toBe(2);
     expect(store.hasMore).toBe(false);
+  });
+
+  it("后台刷新替换首页快照，同时保留已经加载的后续分页", async () => {
+    const oldPageTwoItem = item("github", "team/page-two", 2, "2024-12-31T00:00:00Z");
+    oldPageTwoItem.head_sha = "old-head";
+    const refreshedPageTwoItem = item("github", "team/page-two", 2, "2025-01-02T00:00:00Z");
+    refreshedPageTwoItem.head_sha = "new-head";
+    vi.mocked(reviewInboxList)
+      .mockResolvedValueOnce(page([item("github", "team/old", 1, "2025-01-01T00:00:00Z")], 1, 2))
+      .mockResolvedValueOnce(
+        page([oldPageTwoItem, item("github", "team/retained", 4, "2024-12-30T00:00:00Z")], 2, 2),
+      )
+      .mockResolvedValueOnce(page([refreshedPageTwoItem], 1, 2));
+    const store = useReviewInboxStore();
+
+    await store.refresh(["github"]);
+    await store.loadMore();
+    await store.backgroundRefresh(["github"], 1_000_000);
+
+    expect(store.items.map((entry) => entry.repository_full_name)).toEqual([
+      "team/page-two",
+      "team/retained",
+    ]);
+    expect(store.items[0].head_sha).toBe("new-head");
+    expect(store.pages.github).toBe(2);
+  });
+
+  it("后台刷新失败后的重试会重新请求所有已加载分页", async () => {
+    vi.mocked(reviewInboxList)
+      .mockResolvedValueOnce(page([item("github", "team/a", 1, "2025-01-01T00:00:00Z")], 1, 2))
+      .mockResolvedValueOnce(page([item("github", "team/b", 2, "2025-01-02T00:00:00Z")], 2, 2))
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce(page([item("github", "team/a", 1, "2025-01-04T00:00:00Z")], 1, 2))
+      .mockResolvedValueOnce(page([item("github", "team/b", 2, "2025-01-03T00:00:00Z")], 2, 2));
+    const store = useReviewInboxStore();
+
+    await store.refresh(["github"]);
+    await store.loadMore();
+    await store.backgroundRefresh(["github"], 1_000_000);
+    expect(store.errors.github).toContain("network unavailable");
+
+    await store.retry("github");
+
+    expect(reviewInboxList).toHaveBeenNthCalledWith(4, "github", "review_requested", 1, 20);
+    expect(reviewInboxList).toHaveBeenNthCalledWith(5, "github", "review_requested", 2, 20);
+    expect(store.items.map((entry) => entry.summary.updated_at)).toEqual([
+      "2025-01-04T00:00:00Z",
+      "2025-01-03T00:00:00Z",
+    ]);
+    expect(store.errors.github).toBeNull();
+    expect(store.pages.github).toBe(2);
+  });
+
+  it("记录已读状态，并在远端提交、评论和状态变化后重新标记未读", async () => {
+    const initial = item("github", "team/a", 1, "2025-01-01T00:00:00Z", ["reviewer"], {
+      status: "ready",
+      draft: false,
+      has_conflicts: false,
+      checks_status: "ready",
+      approvals_status: "ready",
+      blocking_reasons: [],
+    });
+    initial.head_sha = "head-1";
+    initial.comments_count = 1;
+    vi.mocked(reviewInboxList).mockResolvedValueOnce(page([initial]));
+    const store = useReviewInboxStore();
+
+    await store.refresh(["github"]);
+    expect(store.items[0].local_state).toEqual({
+      unread: true,
+      new_commits: false,
+      new_comments: false,
+      status_changed: false,
+    });
+    store.markRead(store.items[0]);
+    expect(store.items[0].local_state?.unread).toBe(false);
+
+    const changed = item("github", "team/a", 1, "2025-01-02T00:00:00Z", ["reviewer"], {
+      status: "blocked",
+      draft: false,
+      has_conflicts: false,
+      checks_status: "blocked",
+      approvals_status: "ready",
+      blocking_reasons: [{ code: "checks_failed", message: "CI 检查未通过" }],
+    });
+    changed.head_sha = "head-2";
+    changed.comments_count = 2;
+    vi.mocked(reviewInboxList).mockResolvedValueOnce(page([changed]));
+    await store.refresh(["github"]);
+
+    expect(store.items[0].local_state).toEqual({
+      unread: true,
+      new_commits: true,
+      new_comments: true,
+      status_changed: true,
+    });
+    store.markRead(store.items[0]);
+    expect(store.items[0].local_state).toEqual({
+      unread: false,
+      new_commits: false,
+      new_comments: false,
+      status_changed: false,
+    });
+    store.markUnread(store.items[0]);
+    expect(store.items[0].local_state?.unread).toBe(true);
+  });
+
+  it("全部标为已读会处理筛选条件隐藏的已加载条目", async () => {
+    vi.mocked(reviewInboxList).mockResolvedValue(
+      page([
+        item("github", "team/visible", 1, "2025-01-02T00:00:00Z"),
+        item("github", "team/hidden", 2, "2025-01-01T00:00:00Z"),
+      ]),
+    );
+    const store = useReviewInboxStore();
+    await store.refresh(["github"]);
+
+    store.filters.repository = "visible";
+    expect(store.items).toHaveLength(1);
+    expect(store.unreadCount).toBe(2);
+    store.markAllRead();
+
+    store.filters.repository = "";
+    expect(store.items).toHaveLength(2);
+    expect(store.items.every((entry) => entry.local_state?.unread === false)).toBe(true);
+    expect(store.unreadCount).toBe(0);
+  });
+
+  it("将损坏的本地活动状态字段规范化为布尔值", async () => {
+    const persistedKey = `github\u0000team/a\u00001`;
+    const statusFingerprint = JSON.stringify({
+      status: "unknown",
+      draft: null,
+      has_conflicts: null,
+      checks_status: "unknown",
+      approvals_status: "unknown",
+      reasons: [],
+    });
+    storage.set(
+      "mergebeacon:review-inbox-item-state:v1",
+      JSON.stringify({
+        [persistedKey]: {
+          unread: "false",
+          new_commits: 1,
+          new_comments: null,
+          status_changed: {},
+          updated_at: "2025-01-01T00:00:00Z",
+          head_sha: null,
+          comments_count: null,
+          status_fingerprint: statusFingerprint,
+          touched_at: 1,
+        },
+      }),
+    );
+    vi.mocked(reviewInboxList).mockResolvedValue(
+      page([item("github", "team/a", 1, "2025-01-01T00:00:00Z")]),
+    );
+    const store = useReviewInboxStore();
+
+    await store.refresh(["github"]);
+
+    expect(store.items[0].local_state).toEqual({
+      unread: false,
+      new_commits: false,
+      new_comments: false,
+      status_changed: false,
+    });
+    const persisted = JSON.parse(storage.get("mergebeacon:review-inbox-item-state:v1") ?? "{}");
+    expect(persisted[persistedKey]).toMatchObject({
+      unread: false,
+      new_commits: false,
+      new_comments: false,
+      status_changed: false,
+    });
+  });
+
+  it("保留超过 1000 条近期状态，并淘汰长期无活动的已读记录", () => {
+    const now = 2_000_000_000_000;
+    const day = 24 * 60 * 60 * 1000;
+    const state = (touchedAt: number, unread = false) => ({
+      unread,
+      new_commits: false,
+      new_comments: false,
+      status_changed: false,
+      updated_at: "2025-01-01T00:00:00Z",
+      head_sha: null,
+      comments_count: null,
+      status_fingerprint: "status",
+      touched_at: touchedAt,
+    });
+    const persisted = Object.fromEntries(
+      Array.from({ length: 1001 }, (_, index) => [
+        `github\u0000team/repo\u0000${index}`,
+        state(now - index),
+      ]),
+    );
+    const oldReadKey = `gitlab\u0000team/old-read\u00001`;
+    const oldUnreadKey = `gitee\u0000team/old-unread\u00002`;
+    persisted[oldReadKey] = state(now - 181 * day);
+    persisted[oldUnreadKey] = state(now - 181 * day, true);
+    storage.set("mergebeacon:review-inbox-item-state:v1", JSON.stringify(persisted));
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    const store = useReviewInboxStore();
+
+    store.markRead(item("github", "team/new", 10_000, "2025-01-02T00:00:00Z"));
+
+    const saved = JSON.parse(storage.get("mergebeacon:review-inbox-item-state:v1") ?? "{}");
+    expect(Object.keys(saved)).toHaveLength(1003);
+    expect(saved[oldReadKey]).toBeUndefined();
+    expect(saved[oldUnreadKey]?.unread).toBe(true);
+    nowSpy.mockRestore();
+  });
+
+  it("支持详细阻塞筛选和阻塞、可合并、检查失败优先排序", async () => {
+    const failed = item("github", "team/failed", 1, "2025-01-01T00:00:00Z", ["reviewer"], {
+      status: "blocked",
+      draft: false,
+      has_conflicts: false,
+      checks_status: "blocked",
+      approvals_status: "ready",
+      blocking_reasons: [{ code: "checks_failed", message: "CI 失败" }],
+    });
+    const draft = item("github", "team/draft", 2, "2025-01-03T00:00:00Z", ["reviewer"], {
+      status: "blocked",
+      draft: true,
+      has_conflicts: false,
+      checks_status: "ready",
+      approvals_status: "ready",
+      blocking_reasons: [{ code: "draft", message: "Draft" }],
+    });
+    const ready = item("github", "team/ready", 3, "2025-01-02T00:00:00Z", ["reviewer"], {
+      status: "ready",
+      draft: false,
+      has_conflicts: false,
+      checks_status: "ready",
+      approvals_status: "ready",
+      blocking_reasons: [],
+    });
+    vi.mocked(reviewInboxList).mockResolvedValue(page([failed, draft, ready]));
+    const store = useReviewInboxStore();
+    await store.refresh(["github"]);
+
+    store.filters.blocker = "checks_failed";
+    expect(store.items.map((entry) => entry.summary.number)).toEqual([1]);
+    store.filters.blocker = "all";
+    store.filters.sort = "blocked";
+    expect(store.items.slice(0, 2).map((entry) => entry.summary.number)).toEqual([2, 1]);
+    store.filters.sort = "mergeable";
+    expect(store.items[0].summary.number).toBe(3);
+    store.filters.sort = "checks_failed";
+    expect(store.items[0].summary.number).toBe(1);
+  });
+
+  it("持久化筛选排序，并对后台刷新执行节流和限流退避", async () => {
+    vi.mocked(reviewInboxList).mockResolvedValue(
+      page([item("github", "team/a", 1, "2025-01-01T00:00:00Z")]),
+    );
+    const store = useReviewInboxStore();
+    await store.refresh(["github"]);
+    store.filters.read = "unread";
+    store.filters.blocker = "checks_pending";
+    store.filters.sort = "blocked";
+    await nextTick();
+
+    setActivePinia(createPinia());
+    const restored = useReviewInboxStore();
+    expect(restored.filters.read).toBe("unread");
+    expect(restored.filters.blocker).toBe("checks_pending");
+    expect(restored.filters.sort).toBe("blocked");
+
+    await restored.refresh(["github"]);
+    vi.mocked(reviewInboxList).mockClear();
+    vi.mocked(reviewInboxList).mockRejectedValueOnce(new Error("HTTP 429 rate limit"));
+    expect(await restored.backgroundRefresh(["github"], 1_000_000)).toBe(true);
+    expect(restored.rateLimitedUntil.github).toBeGreaterThan(1_000_000);
+    expect(await restored.backgroundRefresh(["github"], 1_000_001)).toBe(false);
+    expect(reviewInboxList).toHaveBeenCalledTimes(1);
+  });
+
+  it("仓库搜索停止输入后再持久化偏好", async () => {
+    vi.useFakeTimers();
+    const store = useReviewInboxStore();
+
+    store.filters.repository = "t";
+    await nextTick();
+    store.filters.repository = "team/repo";
+    await nextTick();
+
+    expect(storage.get("mergebeacon:review-inbox-preferences:v1")).toBeUndefined();
+    vi.advanceTimersByTime(399);
+    expect(storage.get("mergebeacon:review-inbox-preferences:v1")).toBeUndefined();
+    vi.advanceTimersByTime(1);
+
+    expect(
+      JSON.parse(storage.get("mergebeacon:review-inbox-preferences:v1") ?? "{}"),
+    ).toMatchObject({ repository: "team/repo" });
   });
 });

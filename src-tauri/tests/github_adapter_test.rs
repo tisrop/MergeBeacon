@@ -1412,11 +1412,17 @@ async fn test_github_review_inbox_batches_status_for_current_page() {
             "data": {
                 "nodes": [{
                     "id": "PR_node_43",
+                    "headRefOid": "head-43",
                     "isDraft": false,
                     "mergeable": "CONFLICTING",
                     "mergeStateStatus": "DIRTY",
                     "reviewDecision": "CHANGES_REQUESTED",
-                    "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE" } } }] }
+                    "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE" } } }] },
+                    "comments": { "totalCount": 2 },
+                    "reviewThreads": { "nodes": [
+                        { "comments": { "totalCount": 3 } },
+                        { "comments": { "totalCount": 1 } }
+                    ] }
                 }]
             }
         })))
@@ -1436,6 +1442,8 @@ async fn test_github_review_inbox_batches_status_for_current_page() {
     assert_eq!(result.items[0].status.checks_status, ReadinessState::Blocked);
     assert_eq!(result.items[0].status.approvals_status, ReadinessState::Blocked);
     assert_eq!(result.items[0].status.has_conflicts, Some(true));
+    assert_eq!(result.items[0].head_sha.as_deref(), Some("head-43"));
+    assert_eq!(result.items[0].comments_count, Some(6));
 
     let requests = mock_server.received_requests().await.expect("requests");
     let graphql = requests.iter().find(|request| request.url.path() == "/graphql").expect("GraphQL request");

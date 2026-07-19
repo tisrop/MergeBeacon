@@ -118,6 +118,10 @@ pub struct ReviewInboxItem {
     pub categories: Vec<ReviewInboxCategory>,
     pub relationships: Vec<ReviewInboxRelationship>,
     pub status: ReviewInboxStatusSummary,
+    #[serde(default)]
+    pub head_sha: Option<String>,
+    #[serde(default)]
+    pub comments_count: Option<u64>,
     pub summary: PrSummary,
 }
 

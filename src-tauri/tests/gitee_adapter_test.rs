@@ -1185,6 +1185,8 @@ async fn test_gitee_review_inbox_filters_pending_reviewers_and_testers() {
                 "title": "Pending test",
                 "created_at": "2025-01-01T00:00:00Z",
                 "updated_at": "2025-01-04T00:00:00Z",
+                "head": { "sha": "head-13" },
+                "comments_count": 6,
                 "user": { "id": 3, "login": "dev3", "name": "Dev 3", "avatar_url": "" },
                 "labels": [],
                 "mergeable": true,
@@ -1221,6 +1223,8 @@ async fn test_gitee_review_inbox_filters_pending_reviewers_and_testers() {
     assert_eq!(result.items[0].platform, "gitee");
     assert_eq!(result.items[0].relationships, vec![ReviewInboxRelationship::Tester]);
     assert_eq!(result.items[0].status.status, ReadinessState::Pending);
+    assert_eq!(result.items[0].head_sha.as_deref(), Some("head-13"));
+    assert_eq!(result.items[0].comments_count, Some(6));
     let combined = result.items.iter().find(|item| item.summary.number == 11).expect("combined PR");
     assert_eq!(combined.relationships, vec![ReviewInboxRelationship::Reviewer, ReviewInboxRelationship::Tester]);
     assert_eq!(combined.status.status, ReadinessState::Blocked);

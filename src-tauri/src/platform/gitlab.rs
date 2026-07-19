@@ -658,6 +658,8 @@ impl GitPlatform for GitLabAdapter {
                 categories: vec![*category],
                 relationships: vec![relationship],
                 status: Self::inbox_status(&mr),
+                head_sha: mr["sha"].as_str().or_else(|| mr["diff_refs"]["head_sha"].as_str()).map(str::to_string),
+                comments_count: mr["user_notes_count"].as_u64(),
                 summary: PrSummary {
                     number: mr["iid"].as_u64().unwrap_or(0),
                     title: mr["title"].as_str().unwrap_or("").to_string(),
