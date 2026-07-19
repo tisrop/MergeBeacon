@@ -220,6 +220,8 @@ async function startReview() {
   }
 }
 
+defineExpose({ startReview });
+
 async function startNonStreamingReview() {
   try {
     const reviewHeadSha = activeReviewHeadSha;

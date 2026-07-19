@@ -21,6 +21,7 @@ const submitting = ref(false);
 const error = ref("");
 const success = ref(false);
 const confirmingPendingWork = ref(false);
+const textareaRef = ref<HTMLTextAreaElement | null>(null);
 
 const allEvents: { value: ReviewEvent; label: string }[] = [
   { value: "comment", label: "评论" },
@@ -74,6 +75,13 @@ async function handleSubmit() {
     submitting.value = false;
   }
 }
+
+function focusComposer(): void {
+  textareaRef.value?.focus();
+  textareaRef.value?.scrollIntoView({ block: "center" });
+}
+
+defineExpose({ focusComposer });
 </script>
 
 <template>
@@ -93,7 +101,13 @@ async function handleSubmit() {
       </button>
     </div>
 
-    <textarea v-model="body" class="input" placeholder="输入你的评审意见..." rows="5" />
+    <textarea
+      ref="textareaRef"
+      v-model="body"
+      class="input"
+      placeholder="输入你的评审意见..."
+      rows="5"
+    />
 
     <div class="form-actions">
       <button

@@ -1,7 +1,8 @@
-import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
 import type { PrDetail, PrMergeReadiness, User } from "@/types";
+import { APP_COMMAND_EVENT } from "@/types/commands";
 
 const mocks = vi.hoisted(() => ({
   router: {
@@ -71,6 +72,8 @@ vi.mock("@/stores/useCapabilityStore", () => ({
   useCapabilityStore: () => mocks.capabilityStore,
 }));
 vi.mock("@/api", () => ({ reviewCommentAdd: vi.fn() }));
+
+enableAutoUnmount(afterEach);
 
 const author: User = {
   id: 7,
@@ -410,5 +413,29 @@ describe("PrDetailPage 关闭权限", () => {
 
     expect(wrapper.text()).toContain("部分元数据已更新，请检查失败项。");
     expect(wrapper.text()).toContain("部分评审者不存在");
+  });
+
+  it("响应命令面板的 AI 评审和提交评审入口", async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    window.dispatchEvent(
+      new CustomEvent(APP_COMMAND_EVENT, { detail: { type: "start_ai_review" } }),
+    );
+    await flushPromises();
+    const aiTab = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text().includes("AI 评审"));
+    expect(aiTab?.classes()).toContain("active");
+
+    window.dispatchEvent(
+      new CustomEvent(APP_COMMAND_EVENT, { detail: { type: "prepare_review" } }),
+    );
+    await flushPromises();
+    const diffTab = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text().includes("Diff"));
+    expect(diffTab?.classes()).toContain("active");
+    wrapper.unmount();
   });
 });

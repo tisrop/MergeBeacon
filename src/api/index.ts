@@ -1,6 +1,14 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-shell";
+import {
+  Visibility,
+  isPermissionGranted,
+  onAction,
+  registerActionTypes,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import type {
   Platform,
   PlatformCapabilities,
@@ -37,6 +45,57 @@ import type {
 // ============================================================
 // Tauri IPC 封装 —— 所有后端调用统一入口
 // ============================================================
+
+export interface DesktopNotificationPayload {
+  id: number;
+  title: string;
+  body: string;
+  group: string;
+  private: boolean;
+  extra: Record<string, unknown>;
+}
+
+export function isDesktopRuntime(): boolean {
+  return isTauri();
+}
+
+export function desktopNotificationPermissionGranted(): Promise<boolean> {
+  return isPermissionGranted();
+}
+
+export function requestDesktopNotificationPermission(): Promise<NotificationPermission> {
+  return requestPermission();
+}
+
+export function sendDesktopNotification(payload: DesktopNotificationPayload): void {
+  sendNotification({
+    id: payload.id,
+    title: payload.title,
+    body: payload.body,
+    group: payload.group,
+    actionTypeId: "mergebeacon-open-pr",
+    autoCancel: true,
+    visibility: payload.private ? Visibility.Private : Visibility.Public,
+    extra: payload.extra,
+  });
+}
+
+export async function listenDesktopNotificationActions(
+  callback: (extra: Record<string, unknown>) => void,
+): Promise<UnlistenFn> {
+  try {
+    await registerActionTypes([
+      {
+        id: "mergebeacon-open-pr",
+        actions: [{ id: "open", title: "打开 Pull Request", foreground: true }],
+      },
+    ]);
+  } catch {
+    // Desktop platforms may not expose explicit action buttons; click handling still works.
+  }
+  const listener = await onAction((notification) => callback(notification.extra ?? {}));
+  return () => listener.unregister();
+}
 
 // ── Auth ──
 export async function authLogin(

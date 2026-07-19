@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, watch, nextTick } from "vue";
+import { onMounted, onUnmounted, ref, computed, watch, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
@@ -14,6 +14,7 @@ import ReviewList from "@/components/review/ReviewList.vue";
 import AiReviewPanel from "@/components/ai/AiReviewPanel.vue";
 import MergeReadinessPanel from "@/components/pr/MergeReadinessPanel.vue";
 import PrMetadataPanel from "@/components/pr/PrMetadataPanel.vue";
+import { APP_COMMAND_EVENT, type AppCommandDetail } from "@/types/commands";
 import type {
   AiSuggestion,
   DiffLocationRequest,
@@ -152,6 +153,8 @@ function handleReviewCommentLocate(path: string, line: number | null): void {
 }
 
 const reviewListRef = ref<InstanceType<typeof ReviewList> | null>(null);
+const reviewFormRef = ref<InstanceType<typeof ReviewForm> | null>(null);
+const aiPanelRef = ref<InstanceType<typeof AiReviewPanel> | null>(null);
 const reviewThreadSummary = ref<ReviewThreadSummary | null>(null);
 const unviewedFileCount = ref(0);
 const commentError = ref("");
@@ -374,7 +377,35 @@ async function handleAddComment(
   }
 }
 
+function handleAppCommand(event: Event): void {
+  const detail = (event as CustomEvent<AppCommandDetail>).detail;
+  if (!detail) return;
+  if (detail.type === "open_diff_file") {
+    diffLocationError.value = "";
+    diffLocationRequest.value = {
+      id: ++diffLocationRequestId,
+      path: detail.path,
+      line: null,
+    };
+    selectTab("diff");
+    void nextTick(scrollTabBarIntoView);
+  } else if (detail.type === "start_ai_review") {
+    selectTab("ai");
+    void nextTick(() => {
+      if (typeof aiPanelRef.value?.startReview === "function") void aiPanelRef.value.startReview();
+    });
+  } else if (detail.type === "prepare_review") {
+    selectTab("diff");
+    void nextTick(() => {
+      if (typeof reviewFormRef.value?.focusComposer === "function") {
+        reviewFormRef.value.focusComposer();
+      }
+    });
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener(APP_COMMAND_EVENT, handleAppCommand);
   await Promise.all([
     pr.fetchPrDetail(platform, owner, repo, number),
     pr.fetchPrDiff(platform, owner, repo, number),
@@ -385,6 +416,7 @@ onMounted(async () => {
     selectedStrategy.value = platformCapabilities.value?.merge_strategies[0] ?? "merge";
   }
 });
+onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand));
 </script>
 
 <template>
@@ -666,6 +698,7 @@ onMounted(async () => {
           <p v-if="commentError" class="error-msg">{{ commentError }}</p>
           <p v-if="commentSuccess" class="success-msg">✓ 行内评论已提交</p>
           <ReviewForm
+            ref="reviewFormRef"
             :platform="platform"
             :owner="owner"
             :repo="repo"
@@ -691,6 +724,7 @@ onMounted(async () => {
         </div>
         <div v-if="aiPanelMounted" v-show="activeTab === 'ai'">
           <AiReviewPanel
+            ref="aiPanelRef"
             :platform="platform"
             :owner="owner"
             :repo="repo"

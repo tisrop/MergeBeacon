@@ -38,6 +38,7 @@ function mountPage() {
       stubs: {
         AppLayout: { template: "<main><slot name='header' /><slot /></main>" },
         AiSettings: true,
+        NotificationSettings: true,
       },
     },
   });

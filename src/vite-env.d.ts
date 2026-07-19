@@ -9,6 +9,7 @@ declare module "*.vue" {
 declare global {
   interface Window {
     __goToSettings?: () => void;
+    __openCommandPalette?: () => void;
   }
 }
 
