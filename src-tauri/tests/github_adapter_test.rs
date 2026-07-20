@@ -527,6 +527,7 @@ async fn test_github_list_pr_comments_uses_review_threads_with_resolution_state(
                                 "isResolved": false,
                                 "viewerCanResolve": true,
                                 "viewerCanUnresolve": false,
+                                "diffSide": "RIGHT",
                                 "comments": {
                                     "nodes": [
                                         {
@@ -536,7 +537,6 @@ async fn test_github_list_pr_comments_uses_review_threads_with_resolution_state(
                                             "path": "src/lib.rs",
                                             "line": 8,
                                             "startLine": null,
-                                            "diffSide": "RIGHT",
                                             "author": {
                                                 "id": "U_reviewer",
                                                 "login": "reviewer",
@@ -558,7 +558,6 @@ async fn test_github_list_pr_comments_uses_review_threads_with_resolution_state(
                                             "path": "src/lib.rs",
                                             "line": 8,
                                             "startLine": null,
-                                            "diffSide": "RIGHT",
                                             "author": {
                                                 "id": "U_author",
                                                 "login": "author",
@@ -605,8 +604,10 @@ async fn test_github_list_pr_comments_uses_review_threads_with_resolution_state(
 
     let requests = mock_server.received_requests().await.expect("requests");
     let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("GraphQL JSON body");
-    assert!(body["query"].as_str().unwrap_or_default().contains("reviewThreads"));
-    assert!(body["query"].as_str().unwrap_or_default().contains("diffSide"));
+    let query = body["query"].as_str().unwrap_or_default();
+    assert!(query.contains("reviewThreads"));
+    assert!(query.contains("viewerCanUnresolve\n                                        diffSide"));
+    assert!(!query.contains("startLine\n                                                diffSide"));
     assert_eq!(body["variables"]["owner"], "octocat");
     assert_eq!(body["variables"]["repo"], "hello-world");
     assert_eq!(body["variables"]["number"], 42);
@@ -629,6 +630,7 @@ async fn test_github_list_pr_comments_paginates_threads_and_comments() {
                                 "isResolved": false,
                                 "viewerCanResolve": true,
                                 "viewerCanUnresolve": false,
+                                "diffSide": "RIGHT",
                                 "comments": {
                                     "nodes": [github_review_comment(100, "first comment page")],
                                     "pageInfo": { "hasNextPage": true, "endCursor": "comment_cursor_1" }
@@ -675,6 +677,7 @@ async fn test_github_list_pr_comments_paginates_threads_and_comments() {
                                 "isResolved": true,
                                 "viewerCanResolve": false,
                                 "viewerCanUnresolve": true,
+                                "diffSide": "LEFT",
                                 "comments": {
                                     "nodes": [github_review_comment(200, "second thread page")],
                                     "pageInfo": { "hasNextPage": false, "endCursor": null }
@@ -703,6 +706,15 @@ async fn test_github_list_pr_comments_paginates_threads_and_comments() {
     assert_eq!(comments[2].thread_id, "PRRT_thread_2");
     assert_eq!(comments[2].resolved, Some(true));
     assert!(comments[2].resolvable);
+
+    let requests = mock_server.received_requests().await.expect("requests");
+    let comment_page_query = requests
+        .iter()
+        .filter_map(|request| serde_json::from_slice::<serde_json::Value>(&request.body).ok())
+        .filter_map(|body| body["query"].as_str().map(str::to_string))
+        .find(|query| query.contains("query ReviewThreadComments"))
+        .expect("paginated comment query");
+    assert!(!comment_page_query.contains("diffSide"));
 }
 
 #[tokio::test]

@@ -284,11 +284,17 @@ function beginEdit(comment: PrComment): void {
   editingBodies.value = { ...editingBodies.value, [key]: comment.body };
 }
 
-function cancelEdit(comment: PrComment): void {
-  const key = String(comment.id);
+function finishEdit(key: string): void {
   const next = new Set(editingComments.value);
   next.delete(key);
   editingComments.value = next;
+  const nextBodies = { ...editingBodies.value };
+  delete nextBodies[key];
+  editingBodies.value = nextBodies;
+}
+
+function cancelEdit(comment: PrComment): void {
+  finishEdit(String(comment.id));
 }
 
 async function saveEdit(thread: ReviewThread, comment: PrComment): Promise<void> {
@@ -311,6 +317,7 @@ async function saveEdit(thread: ReviewThread, comment: PrComment): Promise<void>
       commentId,
       body,
     );
+    if (threadContextKey() === contextKey) finishEdit(commentId);
     await reloadAfterMutation(contextKey);
   } catch (mutationError) {
     if (threadContextKey() === contextKey)
@@ -769,8 +776,9 @@ defineExpose({ refresh: loadReviews });
                 <template v-if="editingComments.has(String(comment.id))">
                   <textarea
                     v-model="editingBodies[String(comment.id)]"
-                    class="comment-editor"
+                    class="input comment-editor"
                     rows="4"
+                    aria-label="编辑评论"
                   />
                   <div class="comment-edit-actions">
                     <button
@@ -819,8 +827,10 @@ defineExpose({ refresh: loadReviews });
             <form class="thread-reply-form" @submit.prevent="replyToThread(thread)">
               <textarea
                 v-model="replyBodies[thread.id]"
+                class="input thread-reply-input"
                 rows="3"
                 placeholder="回复此线程..."
+                aria-label="回复评审线程"
                 :disabled="updatingThreads.has(`${thread.id}:reply`)"
               />
               <div class="thread-reply-actions">

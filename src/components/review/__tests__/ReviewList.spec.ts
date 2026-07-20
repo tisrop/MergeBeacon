@@ -219,6 +219,8 @@ describe("ReviewList", () => {
     mocks.reviewCommentsList.mockResolvedValue([comment({ can_edit: true, can_delete: true })]);
     const wrapper = await mountList();
 
+    expect(wrapper.get(".thread-reply-input").classes()).toContain("input");
+    expect(wrapper.get(".thread-reply-input").attributes("aria-label")).toBe("回复评审线程");
     await wrapper.get(".thread-reply-form textarea").setValue("补充一个回归测试");
     await wrapper.get(".thread-reply-form").trigger("submit");
     expect(mocks.reviewThreadReply).toHaveBeenCalledWith(
@@ -232,6 +234,8 @@ describe("ReviewList", () => {
     );
 
     await wrapper.get(".comment-actions .text-button").trigger("click");
+    expect(wrapper.get(".comment-editor").classes()).toContain("input");
+    expect(wrapper.get(".comment-editor").attributes("aria-label")).toBe("编辑评论");
     await wrapper.get(".comment-editor").setValue("修改后的评论");
     await wrapper.get(".comment-edit-actions .btn-primary").trigger("click");
     expect(mocks.reviewCommentUpdate).toHaveBeenCalledWith(
@@ -243,6 +247,8 @@ describe("ReviewList", () => {
       "100",
       "修改后的评论",
     );
+    await flushPromises();
+    expect(wrapper.find(".comment-editor").exists()).toBe(false);
 
     const deleteButton = wrapper.findAll(".comment-actions .danger")[0];
     await deleteButton.trigger("click");
@@ -256,6 +262,22 @@ describe("ReviewList", () => {
       "thread-1",
       "100",
     );
+  });
+
+  it("编辑评论失败时保留编辑内容以便重试", async () => {
+    mocks.reviewCommentsList.mockResolvedValueOnce([comment({ can_edit: true })]);
+    mocks.reviewCommentUpdate.mockRejectedValueOnce(new Error("update failed"));
+    const wrapper = await mountList();
+
+    await wrapper.get(".comment-actions .text-button").trigger("click");
+    await wrapper.get(".comment-editor").setValue("尚未保存的修改");
+    await wrapper.get(".comment-edit-actions .btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get<HTMLTextAreaElement>(".comment-editor").element.value).toBe(
+      "尚未保存的修改",
+    );
+    expect(wrapper.get(".comment-error").text()).toContain("update failed");
   });
 
   it("重命名文件显示新路径并使用评论原路径定位", async () => {

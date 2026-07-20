@@ -676,7 +676,7 @@ impl GitHubAdapter {
             path: comment["path"].as_str().unwrap_or("").to_string(),
             line: comment["line"].as_u64().map(|line| line as u32),
             start_line: comment["startLine"].as_u64().map(|line| line as u32),
-            side: match comment["diffSide"].as_str() {
+            side: match thread["diffSide"].as_str() {
                 Some("LEFT") => Some("left".into()),
                 Some("RIGHT") => Some("right".into()),
                 _ => None,
@@ -712,7 +712,6 @@ impl GitHubAdapter {
                                     path
                                     line
                                     startLine
-                                    diffSide
                                     author {
                                         login
                                         avatarUrl
@@ -1821,6 +1820,7 @@ impl GitPlatform for GitHubAdapter {
                                         isResolved
                                         viewerCanResolve
                                         viewerCanUnresolve
+                                        diffSide
                                         comments(first: 100) {
                                             nodes {
                                                 id
@@ -1829,7 +1829,6 @@ impl GitPlatform for GitHubAdapter {
                                                 path
                                                 line
                                                 startLine
-                                                diffSide
                                                 author {
                                                     login
                                                     avatarUrl
