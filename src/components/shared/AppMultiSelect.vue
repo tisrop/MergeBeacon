@@ -133,9 +133,7 @@ const {
             :style="{ backgroundColor: option.color }"
             aria-hidden="true"
           />
-          <span class="multi-select-check" aria-hidden="true">{{
-            selectedSet.has(option.value) ? "✓" : ""
-          }}</span>
+          <span class="multi-select-check" aria-hidden="true" />
           <span class="multi-select-option-copy">
             <span>{{ option.label }}</span>
             <small v-if="option.description">{{ option.description }}</small>
@@ -172,9 +170,16 @@ const {
   user-select: none;
 }
 
-.app-multi-select:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px var(--color-focus);
+.app-multi-select:hover:not(.disabled),
+.app-multi-select[aria-expanded="true"] {
+  border-color: var(--color-primary-border);
+}
+
+.app-multi-select:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  border-color: var(--color-focus);
+  box-shadow: var(--shadow-control-focus);
 }
 
 .app-multi-select.disabled {
@@ -199,7 +204,7 @@ const {
   min-width: 20px;
   padding: 1px 5px;
   border-radius: var(--radius-sm);
-  background: var(--color-primary-light);
+  background: var(--color-control-selected);
   color: var(--color-primary);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -246,10 +251,12 @@ const {
   font-size: 12px;
 }
 
-.multi-select-search:focus {
-  border-color: var(--color-primary);
-  outline: 2px solid var(--color-primary-light);
-  outline-offset: -1px;
+.multi-select-search:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  border-color: var(--color-focus);
+  background: var(--color-surface);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
 
 .multi-select-options {
@@ -292,7 +299,11 @@ const {
 
 .multi-select-option:hover,
 .multi-select-option.highlighted {
-  background: var(--color-primary-light);
+  background: var(--color-control-highlight);
+}
+
+.multi-select-option.selected {
+  background: var(--color-control-selected);
 }
 
 .multi-select-option:disabled {
@@ -308,9 +319,16 @@ const {
   place-items: center;
   border: 1px solid var(--color-border-strong, var(--color-border));
   border-radius: var(--radius-sm);
-  color: var(--color-primary);
-  font-size: 12px;
-  font-weight: 700;
+}
+
+.multi-select-check::after {
+  content: "";
+  width: 4px;
+  height: 7px;
+  border: solid #ffffff;
+  border-width: 0 1.5px 1.5px 0;
+  opacity: 0;
+  transform: translateY(-1px) rotate(45deg);
 }
 
 .multi-select-option-copy {
@@ -329,8 +347,12 @@ const {
 }
 
 .multi-select-option.selected .multi-select-check {
-  border-color: var(--color-primary);
-  background: var(--color-primary-light);
+  border-color: var(--color-focus);
+  background: var(--color-focus);
+}
+
+.multi-select-option.selected .multi-select-check::after {
+  opacity: 1;
 }
 
 .multi-select-empty {

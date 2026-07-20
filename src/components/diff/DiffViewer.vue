@@ -2953,9 +2953,11 @@ onUnmounted(() => {
     box-shadow var(--transition-fast);
 }
 
-.quick-comment-textarea:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px var(--color-primary-light);
+.quick-comment-textarea:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  border-color: var(--color-focus);
+  box-shadow: var(--shadow-control-focus);
 }
 
 .popup-category {

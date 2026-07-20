@@ -175,9 +175,16 @@ const {
   user-select: none;
 }
 
-.app-select:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px var(--color-primary-light);
+.app-select:hover,
+.app-select[aria-expanded="true"] {
+  border-color: var(--color-primary-border);
+}
+
+.app-select:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  border-color: var(--color-focus);
+  box-shadow: var(--shadow-control-focus);
 }
 
 .app-select-wrap-sm .app-select {
@@ -237,10 +244,12 @@ const {
   font-size: 12px;
 }
 
-.dropdown-search:focus {
-  border-color: var(--color-primary);
-  outline: 2px solid var(--color-primary-light);
-  outline-offset: -1px;
+.dropdown-search:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  border-color: var(--color-focus);
+  background: var(--color-surface);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
 
 .dropdown-options {
@@ -291,11 +300,12 @@ const {
 }
 
 .dropdown-option.highlighted {
-  background: var(--color-surface-hover);
+  background: var(--color-control-highlight);
 }
 
 .dropdown-option.selected {
-  background: var(--color-primary-light);
+  background: var(--color-control-selected);
+  box-shadow: inset 2px 0 0 var(--color-focus);
   color: var(--color-primary);
   font-weight: 600;
 }

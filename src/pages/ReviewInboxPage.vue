@@ -461,9 +461,11 @@ onUnmounted(() => {
   font: inherit;
 }
 
-.repository-filter input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px var(--color-primary-light);
+.repository-filter input:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  border-color: var(--color-focus);
+  box-shadow: var(--shadow-control-focus);
 }
 
 .platform-errors {

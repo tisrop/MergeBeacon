@@ -1368,10 +1368,13 @@ onUnmounted(() => {
   color: var(--color-text-tertiary);
 }
 
-.field input:focus,
-.field textarea:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px var(--color-focus);
+.field input:focus-visible,
+.field textarea:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  border-color: var(--color-focus);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-control-focus);
 }
 
 .draft-option {

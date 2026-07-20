@@ -447,7 +447,13 @@ defineExpose({ open: openPalette, close: closePalette });
 }
 
 .command-search:focus-within {
-  box-shadow: inset 0 -2px var(--color-focus);
+  background: var(--color-control-highlight);
+  box-shadow: inset 0 -1px var(--color-focus);
+}
+
+.command-search input:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 0;
 }
 
 kbd {
