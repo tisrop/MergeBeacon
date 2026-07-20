@@ -40,7 +40,10 @@ function loadDrafts(): Record<string, UnifiedReviewDraft[]> {
     let count = 0;
     for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (!Array.isArray(value) || count >= MAX_DRAFTS) continue;
-      const drafts = value.filter(isUnifiedDraft).slice(0, MAX_DRAFTS - count);
+      const drafts = value
+        .filter(isUnifiedDraft)
+        .filter((draft) => draft.body.trim())
+        .slice(0, MAX_DRAFTS - count);
       if (drafts.length > 0) sanitized[key] = drafts;
       count += drafts.length;
     }

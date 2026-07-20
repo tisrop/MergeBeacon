@@ -1,4 +1,10 @@
-import type { AiReviewHistoryEntry, AiReviewResult, AiSuggestion, Platform } from "@/types";
+import type {
+  AiReviewHistoryEntry,
+  AiReviewResult,
+  AiSuggestion,
+  AiSuggestionAction,
+  Platform,
+} from "@/types";
 
 const HISTORY_PREFIX = "mergebeacon:ai-review-history:v1";
 const RULES_PREFIX = "mergebeacon:ai-repository-rules:v1";
@@ -43,11 +49,25 @@ function writeStorage(key: string, value: unknown): void {
 function isSuggestion(value: unknown): value is AiSuggestion {
   if (!value || typeof value !== "object") return false;
   const suggestion = value as Partial<AiSuggestion>;
+  const validLine = (line: unknown): line is number | null =>
+    line === null || (typeof line === "number" && Number.isFinite(line));
+  const validAction = (action: unknown): action is AiSuggestionAction | undefined =>
+    action === undefined ||
+    action === "accept" ||
+    action === "reject" ||
+    action === "submitted" ||
+    (!!action &&
+      typeof action === "object" &&
+      typeof (action as { edit?: unknown }).edit === "string");
   return (
     typeof suggestion.file === "string" &&
+    validLine(suggestion.line_start) &&
+    validLine(suggestion.line_end) &&
     typeof suggestion.description === "string" &&
     typeof suggestion.category === "string" &&
-    ["critical", "major", "minor", "info"].includes(String(suggestion.severity))
+    ["critical", "major", "minor", "info"].includes(String(suggestion.severity)) &&
+    (suggestion.suggestion === null || typeof suggestion.suggestion === "string") &&
+    validAction(suggestion.action)
   );
 }
 

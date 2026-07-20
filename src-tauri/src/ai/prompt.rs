@@ -122,4 +122,27 @@ mod tests {
         assert!(message.contains("仓库级评审规则"));
         assert!(message.contains("禁止在异步任务中持有互斥锁"));
     }
+
+    #[test]
+    fn keeps_diff_at_exact_limit_without_truncating() {
+        let diff = "a".repeat(65_536);
+        let message = build_user_message(&diff, None);
+
+        assert!(message.contains(&diff));
+        assert!(!message.contains("已截断"));
+    }
+
+    #[test]
+    fn bounds_large_diff_output_and_preserves_rules() {
+        let context = PrContext {
+            title: "大变更".to_string(),
+            body: String::new(),
+            repository_rules: Some("必须检查资源释放".to_string()),
+        };
+        let message = build_user_message(&"x".repeat(1_024 * 1_024), Some(&context));
+
+        assert!(message.len() < 70_000);
+        assert!(message.contains("必须检查资源释放"));
+        assert!(message.contains("Diff 内容过长，已截断"));
+    }
 }

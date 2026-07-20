@@ -72,4 +72,17 @@ describe("aiReviewPersistence", () => {
     expect(history[0].result.suggestions[0].action).toBe("accept");
     expect(loadAiReviewHistory(reference)[0].result.suggestions[0].action).toBe("accept");
   });
+
+  it("过滤损坏历史并隔离平台、仓库和 PR", () => {
+    localStorage.setItem(
+      "mergebeacon:ai-review-history:v1:github:team:repo:7",
+      JSON.stringify([entry(3), { id: "broken" }, null]),
+    );
+    appendAiReviewHistory({ ...reference, platform: "gitlab" }, entry(4));
+    appendAiReviewHistory({ ...reference, prNumber: 8 }, entry(5));
+
+    expect(loadAiReviewHistory(reference).map((item) => item.id)).toEqual(["entry-3"]);
+    expect(loadAiReviewHistory({ ...reference, platform: "gitlab" })[0].id).toBe("entry-4");
+    expect(loadAiReviewHistory({ ...reference, prNumber: 8 })[0].id).toBe("entry-5");
+  });
 });
