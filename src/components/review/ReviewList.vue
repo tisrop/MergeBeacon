@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import type {
+  DiffSide,
   Platform,
   PrComment,
   PrFile,
@@ -16,50 +17,14 @@ import {
   reviewThreadReply,
   reviewThreadSetResolved,
 } from "@/api";
+import {
+  extractDiffHunk,
+  findStandardPatch,
+  inferDiffSide,
+  patchContainsLine,
+} from "@/utils/diffHunk";
 import { getErrorMessage } from "@/utils/error";
 import MiniDiffView from "./MiniDiffView.vue";
-
-type CommentSide = "left" | "right";
-
-function extractHunkFromPatchSide(
-  patch: string,
-  line: number,
-  side: CommentSide,
-): string | undefined {
-  const lines = patch.split("\n");
-  let currentLine = 0;
-  let result: string[] = [];
-  let inRange = false;
-  let trailingLines = 0;
-  for (const patchLine of lines) {
-    const match = patchLine.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (match) {
-      if (inRange) break;
-      currentLine = Number.parseInt(match[side === "left" ? 1 : 2], 10) - 1;
-      result = [patchLine];
-      continue;
-    }
-    if (result.length > 0) {
-      result.push(patchLine);
-      if (patchLine.startsWith("\\")) continue;
-      const advancesLine =
-        side === "left" ? !patchLine.startsWith("+") : !patchLine.startsWith("-");
-      if (advancesLine) currentLine++;
-      const matchesTarget = advancesLine && currentLine === line;
-      if (matchesTarget && !inRange) inRange = true;
-      else if (inRange) trailingLines++;
-      if (trailingLines >= 8) break;
-    }
-  }
-  return inRange && result.length > 0 ? result.join("\n") : undefined;
-}
-
-function extractHunkFromPatch(patch: string, line: number, side?: CommentSide): string | undefined {
-  if (side) return extractHunkFromPatchSide(patch, line, side);
-  return (
-    extractHunkFromPatchSide(patch, line, "right") ?? extractHunkFromPatchSide(patch, line, "left")
-  );
-}
 
 const props = defineProps<{
   platform: Platform;
@@ -74,7 +39,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   threadSummary: [summary: ReviewThreadSummary];
-  locateComment: [path: string, line: number | null];
+  locateComment: [path: string, line: number | null, side: DiffSide | null];
 }>();
 
 type ThreadFilter = "all" | "unresolved" | "resolved";
@@ -98,7 +63,9 @@ interface ReviewThread {
   contextLine: number | null;
   displayPath: string;
   locationPath: string;
+  side: DiffSide | null;
   canLocate: boolean;
+  canNavigate: boolean;
   outdated: boolean;
   resolved: boolean | null;
   resolvable: boolean;
@@ -171,16 +138,6 @@ function threadIsOutdated(thread: ReviewThread): boolean {
   return thread.outdated;
 }
 
-function patchContainsLine(patch: StandardPatchFile, line: number, side?: CommentSide): boolean {
-  return patch.hunks.some((hunk) =>
-    hunk.lines.some((patchLine) => {
-      if (side === "right") return patchLine.new_line === line;
-      if (side === "left") return patchLine.old_line === line;
-      return patchLine.new_line === line || patchLine.old_line === line;
-    }),
-  );
-}
-
 function reviewKind(review: Review): GeneralReviewItem["kind"] {
   return props.platform === "github" ? "overall_review" : "general_comment";
 }
@@ -206,38 +163,21 @@ function buildThreads(comments: PrComment[]): ReviewThread[] {
       const root =
         chronological.find((comment) => comment.reply_to_id === null) ?? chronological[0];
       const sorted = [root, ...chronological.filter((comment) => comment !== root)];
-      const patch = props.diffPatches?.find(
-        (candidate) =>
-          candidate.filename === root.path ||
-          candidate.old_path === root.path ||
-          candidate.new_path === root.path,
-      );
+      const patch = findStandardPatch(props.diffPatches ?? [], root.path);
       const displayPath = patch?.new_path || patch?.filename || root.path;
       const file = props.diffFiles?.find((candidate) => candidate.filename === displayPath);
       const originalContextLine = root.original_line ?? root.line;
-      const inferredSide: CommentSide | undefined =
-        root.side ??
-        (patch && patch.old_path !== patch.new_path
-          ? root.path === patch.old_path
-            ? "left"
-            : root.path === patch.new_path || root.path === patch.filename
-              ? "right"
-              : undefined
-          : undefined);
+      const inferredSide = root.side ?? (patch ? inferDiffSide(patch, root.path) : undefined);
       const latest = chronological.at(-1) ?? root;
       const hasCurrentDiff = props.diffFiles !== undefined || props.diffPatches !== undefined;
       const canLocate = !hasCurrentDiff
-        ? true
-        : Boolean(
-            file &&
-            root.line &&
-            (props.diffPatches === undefined ||
-              (patch && patchContainsLine(patch, root.line, inferredSide))),
-          );
+        ? root.line !== null
+        : Boolean(file && root.line && patch && patchContainsLine(patch, root.line, inferredSide));
+      const canNavigate = hasCurrentDiff ? Boolean(file) : Boolean(displayPath);
       const outdated = hasCurrentDiff ? !canLocate : isOutdated(root);
       let diffHunk = root.diff_hunk;
-      if (!diffHunk && canLocate && root.line && file?.patch) {
-        diffHunk = extractHunkFromPatch(file.patch, root.line, inferredSide) ?? null;
+      if (!diffHunk && canLocate && root.line && patch) {
+        diffHunk = extractDiffHunk(patch, root.line, inferredSide) ?? null;
       }
       return {
         id,
@@ -245,11 +185,13 @@ function buildThreads(comments: PrComment[]): ReviewThread[] {
         path: root.path,
         displayPath,
         locationPath: root.path || displayPath,
+        side: inferredSide ?? null,
         line: root.line,
         startLine: root.start_line,
         diffHunk,
         contextLine: outdated ? originalContextLine : root.line,
         canLocate,
+        canNavigate,
         outdated,
         resolved: root.resolved,
         resolvable: root.resolvable,
@@ -535,8 +477,8 @@ async function setThreadResolved(thread: ReviewThread, resolved: boolean): Promi
 }
 
 function locateThread(thread: ReviewThread): void {
-  if (!thread.canLocate) return;
-  emit("locateComment", thread.locationPath, thread.line);
+  if (!thread.canNavigate) return;
+  emit("locateComment", thread.locationPath, thread.canLocate ? thread.line : null, thread.side);
 }
 
 const PREVIEW_LENGTH = 180;
@@ -705,8 +647,14 @@ defineExpose({ refresh: loadReviews });
                 <button
                   type="button"
                   class="path-button"
-                  :disabled="!thread.canLocate"
-                  :title="thread.canLocate ? '跳转到当前 Diff' : '当前 Diff 无法定位此评论'"
+                  :disabled="!thread.canNavigate"
+                  :title="
+                    thread.canLocate
+                      ? '跳转到当前 Diff 行'
+                      : thread.canNavigate
+                        ? '跳转到当前 Diff 文件'
+                        : '当前 Diff 中找不到此评论对应的文件'
+                  "
                   @click="locateThread(thread)"
                 >
                   {{ thread.displayPath }}<template v-if="thread.line">:{{ thread.line }}</template>

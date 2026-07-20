@@ -4,6 +4,7 @@ import { storeToRefs } from "pinia";
 import { html } from "diff2html";
 import "diff2html/bundles/css/diff2html.min.css";
 import type {
+  DiffSide,
   DiffLocationRequest,
   DiffLocationResult,
   DiffResult,
@@ -23,6 +24,7 @@ import {
   type ReviewProgressContext,
 } from "@/stores/useReviewProgressStore";
 import { getErrorMessage } from "@/utils/error";
+import { findPatchLocation as findStandardPatchLocation } from "@/utils/diffHunk";
 
 const props = defineProps<{
   diff: DiffResult | null;
@@ -108,8 +110,6 @@ interface ContextGapAction {
   edge: "start" | "end";
   arrow: "↑" | "↓";
 }
-
-type DiffSide = "left" | "right";
 
 interface HighlightedLocation {
   path: string;
@@ -301,33 +301,6 @@ function resolveLocationFile(
   return file ? { file, patch } : null;
 }
 
-function findPatchLocation(
-  patch: StandardPatchFile,
-  line: number,
-  requestedPath: string,
-): { side: DiffSide; line: number } | null {
-  const hasLine = (side: DiffSide): boolean =>
-    patch.hunks.some((hunk) =>
-      hunk.lines.some((candidate) =>
-        side === "right" ? candidate.new_line === line : candidate.old_line === line,
-      ),
-    );
-  const isRenamed = patch.old_path !== patch.new_path;
-  const preferredSide: DiffSide | null =
-    isRenamed && requestedPath === patch.old_path
-      ? "left"
-      : requestedPath === patch.new_path || requestedPath === patch.filename
-        ? "right"
-        : null;
-  const sides: DiffSide[] = preferredSide
-    ? [preferredSide, preferredSide === "left" ? "right" : "left"]
-    : ["right", "left"];
-  for (const side of sides) {
-    if (hasLine(side)) return { side, line };
-  }
-  return null;
-}
-
 function isHighlightedLine(side: DiffSide, line: number | null | undefined): boolean {
   const location = highlightedLocation.value;
   return (
@@ -421,7 +394,7 @@ async function locateDiffRequest(request: DiffLocationRequest): Promise<void> {
     return;
   }
 
-  const target = findPatchLocation(resolved.patch, request.line, path);
+  const target = findStandardPatchLocation(resolved.patch, request.line, path, request.side);
   if (!target) {
     emitLocationFailure(
       request,

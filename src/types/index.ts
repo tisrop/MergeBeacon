@@ -344,10 +344,13 @@ export interface PrCreatePreview {
   incomplete: boolean;
 }
 
+export type DiffSide = "left" | "right";
+
 export interface DiffLocationRequest {
   id: number;
   path: string;
   line: number | null;
+  side?: DiffSide | null;
 }
 
 export interface DiffLocationResult {

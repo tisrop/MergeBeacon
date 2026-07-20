@@ -1,7 +1,7 @@
 import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
-import type { PrDetail, PrMergeReadiness, User } from "@/types";
+import type { DiffResult, PrDetail, PrMergeReadiness, User } from "@/types";
 import { APP_COMMAND_EVENT } from "@/types/commands";
 import {
   persistPrCreateWarnings,
@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   },
   prStore: {
     currentPr: null as PrDetail | null,
-    diff: null,
+    diff: null as DiffResult | null,
     mergeReadiness: null as PrMergeReadiness | null,
     readinessLoading: false,
     readinessError: null as string | null,
@@ -65,6 +65,7 @@ const mocks = vi.hoisted(() => ({
     errors: {},
     load: vi.fn().mockResolvedValue(undefined),
   },
+  reviewCommentAdd: vi.fn(),
 }));
 
 vi.mock("vue-router", () => ({
@@ -79,7 +80,7 @@ vi.mock("@/stores/useReviewInboxStore", () => ({
 vi.mock("@/stores/useCapabilityStore", () => ({
   useCapabilityStore: () => mocks.capabilityStore,
 }));
-vi.mock("@/api", () => ({ reviewCommentAdd: vi.fn() }));
+vi.mock("@/api", () => ({ reviewCommentAdd: mocks.reviewCommentAdd }));
 
 enableAutoUnmount(afterEach);
 
@@ -173,6 +174,8 @@ describe("PrDetailPage 关闭权限", () => {
     mocks.prStore.readinessLoading = false;
     mocks.prStore.readinessError = null;
     mocks.prStore.error = null;
+    mocks.prStore.diff = null;
+    mocks.reviewCommentAdd.mockResolvedValue(undefined);
     mocks.prStore.updateMetadata.mockResolvedValue({
       detail,
       updated_fields: ["title_body"],
@@ -347,6 +350,126 @@ describe("PrDetailPage 关闭权限", () => {
         .find((button) => button.text() === "AI 评审")
         ?.classes(),
     ).toContain("active");
+  });
+
+  it("无行号的评审评论跳转时传递文件级定位请求", async () => {
+    const wrapper = mountPage({
+      ReviewList: {
+        emits: ["locateComment"],
+        template: `<button data-testid="locate-review-file" @click="$emit('locateComment', 'src/old.ts', null, 'left')">定位文件</button>`,
+      },
+      DiffViewer: {
+        props: ["locationRequest"],
+        template: `<span data-testid="review-file-request">{{ locationRequest?.path }}|{{ locationRequest?.line ?? 'file' }}|{{ locationRequest?.side }}</span>`,
+      },
+    });
+
+    await wrapper.get('[data-testid="locate-review-file"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="review-file-request"]').text()).toBe("src/old.ts|file|left");
+    expect(
+      wrapper
+        .findAll(".tabs button")
+        .find((button) => button.text() === "Diff")
+        ?.classes(),
+    ).toContain("active");
+  });
+
+  it("提交行级评论时按 left/right side 提取对应 hunk", async () => {
+    const patch =
+      "@@ -1,15 +1,0 @@\n-old1\n-old2\n-old3\n-old4\n-old5\n-old6\n-old7\n-old8\n-old9\n-old10\n-old11\n-old12\n-old13\n-old14\n-old15\n@@ -20,0 +10 @@\n+newcode";
+    mocks.prStore.diff = {
+      diff: patch,
+      files: [
+        {
+          filename: "src/main.ts",
+          status: "modified",
+          patch,
+          additions: 1,
+          deletions: 15,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: "src/main.ts",
+          old_path: "src/main.ts",
+          new_path: "src/main.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 15,
+          content_kind: "text",
+          patch,
+          hunks: [
+            {
+              header: "@@ -1,15 +1,0 @@",
+              old_start: 1,
+              old_count: 15,
+              new_start: 1,
+              new_count: 0,
+              section_header: null,
+              lines: Array.from({ length: 15 }, (_, index) => ({
+                kind: "deletion",
+                content: `old${index + 1}`,
+                old_line: index + 1,
+                new_line: null,
+              })),
+            },
+            {
+              header: "@@ -20,0 +10 @@",
+              old_start: 20,
+              old_count: 0,
+              new_start: 10,
+              new_count: 1,
+              section_header: null,
+              lines: [{ kind: "addition", content: "newcode", old_line: null, new_line: 10 }],
+            },
+          ],
+          message: null,
+        },
+      ],
+    };
+    const wrapper = mountPage({
+      DiffViewer: {
+        emits: ["addComment"],
+        template: `<div>
+          <button data-testid="add-left-comment" @click="$emit('addComment', 'src/main.ts', 10, 10, 'left', 'left comment')">left</button>
+          <button data-testid="add-right-comment" @click="$emit('addComment', 'src/main.ts', 10, 10, 'right', 'right comment')">right</button>
+        </div>`,
+      },
+    });
+
+    await wrapper.get('[data-testid="add-left-comment"]').trigger("click");
+    await flushPromises();
+    expect(mocks.reviewCommentAdd).toHaveBeenLastCalledWith(
+      "github",
+      "owner",
+      "repo",
+      42,
+      "abc123",
+      "src/main.ts",
+      null,
+      10,
+      "left",
+      "left comment",
+      expect.stringContaining("-old10"),
+    );
+
+    await wrapper.get('[data-testid="add-right-comment"]').trigger("click");
+    await flushPromises();
+    expect(mocks.reviewCommentAdd).toHaveBeenLastCalledWith(
+      "github",
+      "owner",
+      "repo",
+      42,
+      "abc123",
+      "src/main.ts",
+      null,
+      10,
+      "right",
+      "right comment",
+      expect.stringContaining("+newcode"),
+    );
   });
 
   it("仅在 Diff 标签启用侧栏专注模式", async () => {

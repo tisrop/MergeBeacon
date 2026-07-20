@@ -2,6 +2,23 @@ use crate::models::{FileStatus, PatchContentKind, PatchHunk, PatchLine, PatchLin
 
 pub const PATCH_SCHEMA_VERSION: u32 = 1;
 const MAX_STANDARD_PATCH_BYTES: usize = 4 * 1024 * 1024;
+const HUNK_TRAILING_LINES: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchSide {
+    Left,
+    Right,
+}
+
+impl PatchSide {
+    pub fn from_api(value: Option<&str>) -> Option<Self> {
+        match value {
+            Some("left") => Some(Self::Left),
+            Some("right") => Some(Self::Right),
+            _ => None,
+        }
+    }
+}
 
 pub(crate) fn metadata_only_rename_patch(old_path: &str, new_path: &str) -> String {
     format!(
@@ -28,6 +45,54 @@ pub fn standardize_patches(diff: &str, files: &[PrFile]) -> Vec<StandardPatchFil
             standardize_file_patch(file, patch)
         })
         .collect()
+}
+
+pub fn patch_matches_path(patch: &StandardPatchFile, path: &str) -> bool {
+    patch.filename == path || patch.old_path.as_deref() == Some(path) || patch.new_path.as_deref() == Some(path)
+}
+
+pub fn extract_hunk_for_line(patch: &StandardPatchFile, line: u32, side: Option<PatchSide>) -> Option<String> {
+    match side {
+        Some(side) => extract_hunk_on_side(patch, line, side),
+        None => extract_hunk_on_side(patch, line, PatchSide::Right)
+            .or_else(|| extract_hunk_on_side(patch, line, PatchSide::Left)),
+    }
+}
+
+fn extract_hunk_on_side(patch: &StandardPatchFile, line: u32, side: PatchSide) -> Option<String> {
+    for hunk in &patch.hunks {
+        let Some(target_index) = hunk.lines.iter().position(|candidate| match side {
+            PatchSide::Left => candidate.old_line == Some(line),
+            PatchSide::Right => candidate.new_line == Some(line),
+        }) else {
+            continue;
+        };
+
+        let mut rendered = vec![hunk.header.clone()];
+        let mut trailing_lines = 0;
+        for (index, candidate) in hunk.lines.iter().enumerate() {
+            rendered.push(render_patch_line(candidate));
+            if index <= target_index || matches!(candidate.kind, PatchLineKind::NoNewline) {
+                continue;
+            }
+            trailing_lines += 1;
+            if trailing_lines >= HUNK_TRAILING_LINES {
+                break;
+            }
+        }
+        return Some(rendered.join("\n"));
+    }
+    None
+}
+
+fn render_patch_line(line: &PatchLine) -> String {
+    let prefix = match line.kind {
+        PatchLineKind::Context => " ",
+        PatchLineKind::Addition => "+",
+        PatchLineKind::Deletion => "-",
+        PatchLineKind::NoNewline => "\\ ",
+    };
+    format!("{prefix}{}", line.content)
 }
 
 fn standardize_file_patch(file: &PrFile, patch: &str) -> StandardPatchFile {
@@ -381,6 +446,38 @@ mod tests {
         assert!(matches!(result[0].hunks[0].lines[2].kind, PatchLineKind::NoNewline));
         assert_eq!(result[0].hunks[1].old_count, 0);
         assert_eq!(result[0].hunks[1].new_start, 21);
+    }
+
+    #[test]
+    fn extracts_hunks_by_side_without_cross_side_early_matches() {
+        let patch = "@@ -1,15 +1,0 @@\n-old1\n-old2\n-old3\n-old4\n-old5\n-old6\n-old7\n-old8\n-old9\n-old10\n-old11\n-old12\n-old13\n-old14\n-old15\n@@ -20,0 +10 @@\n+newcode";
+        let patches = standardize_patches("", &[file("src/lib.rs", FileStatus::Modified, patch)]);
+
+        let right = extract_hunk_for_line(&patches[0], 10, Some(PatchSide::Right)).unwrap();
+        assert!(right.contains("@@ -20,0 +10 @@"));
+        assert!(right.contains("+newcode"));
+        assert!(!right.contains("-old10"));
+
+        let left = extract_hunk_for_line(&patches[0], 10, Some(PatchSide::Left)).unwrap();
+        assert!(left.contains("@@ -1,15 +1,0 @@"));
+        assert!(left.contains("-old10"));
+        assert!(!left.contains("+newcode"));
+
+        assert_eq!(extract_hunk_for_line(&patches[0], 10, None), Some(right));
+        assert!(extract_hunk_for_line(&patches[0], 99, None).is_none());
+    }
+
+    #[test]
+    fn matches_renamed_patch_by_old_and_new_paths() {
+        let renamed = file(
+            "src/new.rs",
+            FileStatus::Renamed,
+            "diff --git a/src/old.rs b/src/new.rs\n--- a/src/old.rs\n+++ b/src/new.rs\n@@ -4 +4 @@\n-old\n+new",
+        );
+        let patches = standardize_patches("", &[renamed]);
+
+        assert!(patch_matches_path(&patches[0], "src/old.rs"));
+        assert!(patch_matches_path(&patches[0], "src/new.rs"));
     }
 
     #[test]

@@ -7,6 +7,7 @@ import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import { reviewCommentAdd } from "@/api";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { getErrorMessage } from "@/utils/error";
+import { extractDiffHunk, findStandardPatch } from "@/utils/diffHunk";
 import {
   clearPrCreateWarnings,
   PR_CREATE_WARNING_QUERY,
@@ -22,53 +23,14 @@ import PrMetadataPanel from "@/components/pr/PrMetadataPanel.vue";
 import { APP_COMMAND_EVENT, type AppCommandDetail } from "@/types/commands";
 import type {
   AiSuggestion,
+  DiffSide,
   DiffLocationRequest,
   DiffLocationResult,
   MergeStrategy,
   Platform,
   PrMetadataUpdate,
-  PrFile,
   ReviewThreadSummary,
 } from "@/types";
-
-function extractDiffHunk(files: PrFile[], path: string, line: number): string | undefined {
-  const file = files.find((f) => f.filename === path);
-  if (!file?.patch) return undefined;
-  const patchLines = file.patch.split("\n");
-  let currentLine = 0;
-  let inHunk = false;
-  let result: string[] = [];
-  for (const pl of patchLines) {
-    const hunkMatch = pl.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (hunkMatch) {
-      if (inHunk && result.length > 0) {
-        const rangeStart = parseInt(hunkMatch[1], 10);
-        if (rangeStart > line + 5) break;
-      }
-      currentLine = parseInt(hunkMatch[1], 10) - 1;
-      inHunk = false;
-      result = [pl];
-      continue;
-    }
-    if (result.length > 0) {
-      if (pl.startsWith("+")) {
-        currentLine += 1;
-      } else if (pl.startsWith("-")) {
-        // skip old content line counting
-      } else if (pl.startsWith("\\")) {
-        // no-op for no newline markers
-      } else {
-        currentLine += 1;
-      }
-      result.push(pl);
-      if (currentLine >= line && !inHunk) {
-        inHunk = true;
-      }
-      if (inHunk && currentLine > line + 5) break;
-    }
-  }
-  return result.length > 0 ? result.join("\n") : undefined;
-}
 
 const route = useRoute();
 const router = useRouter();
@@ -146,12 +108,13 @@ function handleDiffLocationResult(result: DiffLocationResult): void {
   diffLocationError.value = result.success ? "" : (result.message ?? "无法定位该 AI 建议");
 }
 
-function handleReviewCommentLocate(path: string, line: number | null): void {
+function handleReviewCommentLocate(path: string, line: number | null, side: DiffSide | null): void {
   diffLocationError.value = "";
   diffLocationRequest.value = {
     id: ++diffLocationRequestId,
     path,
     line,
+    side,
   };
   selectTab("diff");
   void nextTick(scrollTabBarIntoView);
@@ -343,7 +306,7 @@ async function handleAddComment(
   path: string,
   startLine: number,
   endLine: number,
-  side: string,
+  side: DiffSide,
   body?: string,
 ) {
   if (!body?.trim()) return;
@@ -356,7 +319,8 @@ async function handleAddComment(
   try {
     const sl = startLine !== endLine ? startLine : null;
     const targetLine = endLine;
-    const diffHunk = pr.diff?.files ? extractDiffHunk(pr.diff.files, path, targetLine) : undefined;
+    const patch = findStandardPatch(pr.diff?.patches ?? [], path);
+    const diffHunk = patch ? extractDiffHunk(patch, targetLine, side) : undefined;
     await reviewCommentAdd(
       platform,
       owner,
