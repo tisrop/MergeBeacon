@@ -8,6 +8,7 @@ import {
 import {
   initializeNotificationActions,
   notificationPermissionGranted,
+  showDesktopTestNotification,
   showInboxNotification,
 } from "@/services/desktopNotifications";
 
@@ -51,6 +52,20 @@ describe("desktopNotifications", () => {
     const payload = vi.mocked(sendDesktopNotification).mock.calls[0][0];
     expect(payload.body).not.toContain("private-team");
     expect(payload.body).not.toContain("Do not expose");
+  });
+
+  it("系统测试通知不注册 PR 点击动作或携带仓库信息", () => {
+    showDesktopTestNotification();
+
+    expect(sendDesktopNotification).toHaveBeenCalledWith({
+      id: expect.any(Number),
+      title: "MergeBeacon 测试通知",
+      body: "系统通知已连接。退出 MergeBeacon 后不会继续检查 PR / MR 动态。",
+      private: false,
+      group: "mergebeacon:test",
+      actionable: false,
+      extra: {},
+    });
   });
 
   it("通知点击只接受完整合法的 PR 定位信息", async () => {

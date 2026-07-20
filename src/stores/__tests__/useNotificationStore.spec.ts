@@ -117,6 +117,16 @@ describe("useNotificationStore", () => {
     expect(store.errors.gitlab).toBeNull();
     expect(store.rateLimitedUntil.github).toBeGreaterThan(1_000_000);
     expect(store.retryCountdown.github).toBe(15 * 60);
+    expect(store.pollObservations.github).toMatchObject({
+      last_attempt_at: 1_000_000,
+      last_success_at: null,
+      outcome: "rate_limited",
+      successful_categories: [],
+      failed_categories: ["review_requested", "authored"],
+      rate_limited_categories: ["review_requested", "authored"],
+      consecutive_degraded_polls: 1,
+      rate_limited_polls: 1,
+    });
 
     store.updateClock(1_001_000);
     expect(store.retryCountdown.github).toBe(15 * 60 - 1);
@@ -134,9 +144,51 @@ describe("useNotificationStore", () => {
     expect(store.errors.github).toContain("429");
     expect(store.rateLimitedUntil.github).toBe(0);
     expect(store.retryCountdown.github).toBe(0);
+    expect(store.pollObservations.github).toMatchObject({
+      last_attempt_at: 1_000_000,
+      last_success_at: 1_000_000,
+      outcome: "partial",
+      successful_categories: ["authored"],
+      failed_categories: ["review_requested"],
+      rate_limited_categories: ["review_requested"],
+      consecutive_degraded_polls: 1,
+      rate_limited_polls: 1,
+    });
 
     await store.poll(["github"], 1_001_000);
     expect(reviewInboxList).toHaveBeenCalledTimes(4);
+    expect(store.pollObservations.github.consecutive_degraded_polls).toBe(2);
+    expect(store.pollObservations.github.rate_limited_polls).toBe(2);
+  });
+
+  it("完整限流期间跳过请求，并在退避到期后恢复成功状态", async () => {
+    const start = 1_000_000;
+    vi.mocked(reviewInboxList).mockRejectedValue(new Error("HTTP 429 rate limit"));
+    const store = useNotificationStore();
+    store.setEnabled(true);
+
+    await store.poll(["github"], start);
+    expect(reviewInboxList).toHaveBeenCalledTimes(2);
+
+    await store.poll(["github"], start + 15 * 60 * 1000 - 1);
+    expect(reviewInboxList).toHaveBeenCalledTimes(2);
+    expect(store.pollObservations.github.last_attempt_at).toBe(start);
+
+    vi.mocked(reviewInboxList).mockResolvedValue(page([]));
+    await store.poll(["github"], start + 15 * 60 * 1000);
+
+    expect(reviewInboxList).toHaveBeenCalledTimes(4);
+    expect(store.pollObservations.github).toMatchObject({
+      last_attempt_at: start + 15 * 60 * 1000,
+      last_success_at: start + 15 * 60 * 1000,
+      outcome: "success",
+      successful_categories: ["review_requested", "authored"],
+      failed_categories: [],
+      rate_limited_categories: [],
+      consecutive_degraded_polls: 0,
+      rate_limited_polls: 1,
+    });
+    expect(store.rateLimitedUntil.github).toBe(0);
   });
 
   it("组合管理器错误和平台轮询错误供全局提示展示", () => {

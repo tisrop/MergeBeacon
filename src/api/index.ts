@@ -59,6 +59,7 @@ export interface DesktopNotificationPayload {
   group: string;
   private: boolean;
   extra: Record<string, unknown>;
+  actionable?: boolean;
 }
 
 export function isDesktopRuntime(): boolean {
@@ -79,7 +80,7 @@ export function sendDesktopNotification(payload: DesktopNotificationPayload): vo
     title: payload.title,
     body: payload.body,
     group: payload.group,
-    actionTypeId: "mergebeacon-open-pr",
+    actionTypeId: payload.actionable === false ? undefined : "mergebeacon-open-pr",
     autoCancel: true,
     visibility: payload.private ? Visibility.Private : Visibility.Public,
     extra: payload.extra,
