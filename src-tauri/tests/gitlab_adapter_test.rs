@@ -753,6 +753,22 @@ fn gitlab_position() -> serde_json::Value {
     })
 }
 
+fn gitlab_inline_discussion(id: u64) -> serde_json::Value {
+    serde_json::json!({
+        "id": format!("thread-{id}"),
+        "notes": [{
+            "id": id,
+            "body": format!("comment-{id}"),
+            "system": false,
+            "resolvable": true,
+            "resolved": false,
+            "author": gitlab_user(),
+            "created_at": "2026-07-15T10:00:00Z",
+            "position": gitlab_position()
+        }]
+    })
+}
+
 #[tokio::test]
 async fn test_gitlab_create_single_line_comment() {
     use wiremock::matchers::body_json;
@@ -971,6 +987,52 @@ async fn test_gitlab_list_inline_comments_filters_regular_and_system_notes() {
     assert_eq!(comments[1].id, serde_json::json!(53));
     assert_eq!(comments[1].reply_to_id.as_deref(), Some("50"));
     assert_eq!(comments[1].line, Some(12));
+}
+
+#[tokio::test]
+async fn test_gitlab_list_inline_comments_fetches_the_page_after_a_full_boundary() {
+    let mock_server = MockServer::start().await;
+    let first_page: Vec<_> = (1..=100).map(gitlab_inline_discussion).collect();
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/9/discussions"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(first_page))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/9/discussions"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(vec![gitlab_inline_discussion(101)]))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let comments = adapter.list_pr_comments("group", "repo", 9).await.expect("should fetch every discussion page");
+
+    assert_eq!(comments.len(), 101);
+    assert_eq!(comments.first().map(|comment| &comment.id), Some(&serde_json::json!(1)));
+    assert_eq!(comments.last().map(|comment| &comment.id), Some(&serde_json::json!(101)));
+}
+
+#[tokio::test]
+async fn test_gitlab_list_inline_comments_reports_platform_errors() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/9/discussions"))
+        .respond_with(ResponseTemplate::new(503).set_body_string(r#"{"message":"temporarily unavailable"}"#))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let error = adapter.list_pr_comments("group", "repo", 9).await.expect_err("platform errors must be returned");
+
+    assert!(error.to_string().contains("GitLab API 503 Service Unavailable"));
+    assert!(error.to_string().contains("temporarily unavailable"));
 }
 
 #[tokio::test]

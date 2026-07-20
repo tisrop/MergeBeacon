@@ -7,6 +7,19 @@ use mergebeacon_lib::platform::{gitee::GiteeAdapter, GitPlatform};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+fn gitee_inline_comment(id: u64) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "body": format!("comment-{id}"),
+        "path": "src/main.rs",
+        "position": id,
+        "new_line": id,
+        "commit_id": "abc123",
+        "user": { "id": 1, "login": "dev1", "name": "Dev One", "avatar_url": "" },
+        "created_at": "2025-01-04T00:00:00Z"
+    })
+}
+
 #[tokio::test]
 async fn test_gitee_lists_branches_and_creates_from_fork() {
     let mock_server = MockServer::start().await;
@@ -661,6 +674,57 @@ async fn test_gitee_list_pr_comments_empty() {
     let comments = adapter.list_pr_comments("octocat", "hello-world", 42).await.expect("should list PR comments");
 
     assert_eq!(comments.len(), 0);
+}
+
+#[tokio::test]
+async fn test_gitee_list_pr_comments_fetches_the_page_after_a_full_boundary() {
+    let mock_server = MockServer::start().await;
+    let first_page: Vec<_> = (1..=100).map(gitee_inline_comment).collect();
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(first_page))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "2"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(vec![gitee_inline_comment(101)]))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let comments =
+        adapter.list_pr_comments("octocat", "hello-world", 42).await.expect("should fetch every comment page");
+
+    assert_eq!(comments.len(), 101);
+    assert_eq!(comments.first().map(|comment| &comment.id), Some(&serde_json::json!(1)));
+    assert_eq!(comments.last().map(|comment| &comment.id), Some(&serde_json::json!(101)));
+}
+
+#[tokio::test]
+async fn test_gitee_list_pr_comments_reports_rate_limit_errors() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .respond_with(ResponseTemplate::new(429).set_body_string(r#"{"message":"rate limit"}"#))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let error = adapter.list_pr_comments("octocat", "hello-world", 42).await.expect_err("rate limits must be returned");
+
+    assert!(error.to_string().contains("Gitee API 429 Too Many Requests"));
+    assert!(error.to_string().contains("rate limit"));
 }
 
 #[tokio::test]

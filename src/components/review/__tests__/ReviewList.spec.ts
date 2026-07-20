@@ -131,6 +131,39 @@ describe("ReviewList", () => {
     ]);
   });
 
+  it("稳定组织大量线程和评论并汇总每个文件", async () => {
+    const comments = Array.from({ length: 120 }, (_, threadIndex) =>
+      Array.from({ length: 5 }, (_, commentIndex) =>
+        comment({
+          id: threadIndex * 10 + commentIndex,
+          body: `线程 ${threadIndex + 1} 评论 ${commentIndex + 1}`,
+          path: `src/file-${threadIndex % 12}.ts`,
+          thread_id: `thread-${threadIndex + 1}`,
+          reply_to_id: commentIndex === 0 ? null : String(threadIndex * 10),
+          resolved: threadIndex % 3 === 0,
+        }),
+      ),
+    ).flat();
+    mocks.reviewCommentsList.mockResolvedValueOnce(comments);
+
+    const wrapper = await mountList();
+
+    expect(wrapper.findAll(".review-thread")).toHaveLength(120);
+    expect(wrapper.findAll(".thread-comments li")).toHaveLength(600);
+    const summary = wrapper.emitted("threadSummary")?.at(-1)?.[0] as {
+      comments: number;
+      threads: number;
+      unresolved: number;
+      by_file: Record<string, { comments: number; unresolved: number }>;
+    };
+    expect(summary.comments).toBe(600);
+    expect(summary.threads).toBe(120);
+    expect(summary.unresolved).toBe(80);
+    expect(Object.keys(summary.by_file)).toHaveLength(12);
+    expect(summary.by_file["src/file-0.ts"]).toEqual({ comments: 50, unresolved: 0 });
+    expect(summary.by_file["src/file-1.ts"]).toEqual({ comments: 50, unresolved: 10 });
+  });
+
   it("支持按解决状态筛选并通过平台 API 解决线程", async () => {
     const wrapper = await mountList();
     const unresolvedFilter = wrapper

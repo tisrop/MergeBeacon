@@ -1641,8 +1641,8 @@ impl GitPlatform for GiteeAdapter {
     }
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError> {
-        let url = format!("{}/repos/{}/{}/pulls/{}/comments?per_page=100", self.base_url, owner, repo, pr_number);
-        let items: Vec<Value> = self.get_json(&url).await?;
+        let endpoint = format!("{}/repos/{}/{}/pulls/{}/comments", self.base_url, owner, repo, pr_number);
+        let items = super::collect_json_pages(self, &endpoint).await?;
         let comments = items
             .iter()
             .filter(|c| c["path"].is_string() && !c["path"].as_str().unwrap_or("").is_empty())

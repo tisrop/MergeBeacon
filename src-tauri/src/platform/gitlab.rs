@@ -1573,9 +1573,8 @@ impl GitPlatform for GitLabAdapter {
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError> {
         let project_id = urlencoding(owner, repo);
-        let url =
-            format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions?per_page=100", self.base_url);
-        let discussions: Vec<Value> = self.get_json(&url).await?;
+        let endpoint = format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions", self.base_url);
+        let discussions = super::collect_json_pages(self, &endpoint).await?;
         let mut comments = Vec::new();
         for discussion in &discussions {
             let Some(notes) = discussion["notes"].as_array() else {
