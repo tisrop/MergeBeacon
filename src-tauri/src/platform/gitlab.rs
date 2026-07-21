@@ -204,6 +204,65 @@ impl GitLabAdapter {
         })
     }
 
+    fn map_merge_train_entry(entry: &Value, position: Option<u32>, total: Option<u32>) -> PrMergeQueueStatus {
+        let raw_status = entry["status"].as_str().unwrap_or("");
+        let pipeline_status = entry["pipeline"]["status"].as_str().map(str::to_string);
+        let (state, failure_reason) = match pipeline_status.as_deref() {
+            Some("failed" | "canceled" | "skipped") => (
+                MergeQueueState::Failed,
+                Some(format!("Merge Train Pipeline 状态为 {}", pipeline_status.as_deref().unwrap_or("unknown"))),
+            ),
+            Some("manual") => (MergeQueueState::Blocked, Some("Merge Train Pipeline 正在等待手动操作".into())),
+            Some("running" | "pending" | "created" | "preparing" | "scheduled" | "waiting_for_resource") => {
+                (MergeQueueState::Waiting, None)
+            }
+            Some("success") if raw_status == "merging" => (MergeQueueState::Merging, None),
+            Some("success") if matches!(raw_status, "merged" | "skip_merged") => (MergeQueueState::Merged, None),
+            Some("success") => (MergeQueueState::Ready, None),
+            _ => match raw_status {
+                "idle" => (MergeQueueState::Queued, None),
+                "fresh" => (MergeQueueState::Waiting, None),
+                "stale" => (MergeQueueState::Blocked, Some("Merge Train 条目已过期，等待重新生成".into())),
+                "merging" => (MergeQueueState::Merging, None),
+                "merged" | "skip_merged" => (MergeQueueState::Merged, None),
+                _ => (MergeQueueState::Unknown, None),
+            },
+        };
+        PrMergeQueueStatus {
+            kind: MergeQueueKind::MergeTrain,
+            available: true,
+            state,
+            position,
+            total,
+            target_branch: entry["target_branch"].as_str().map(str::to_string),
+            enqueued_at: entry["created_at"].as_str().map(str::to_string),
+            updated_at: entry["updated_at"].as_str().map(str::to_string),
+            estimated_time_seconds: None,
+            head_sha: entry["pipeline"]["sha"].as_str().map(str::to_string),
+            pipeline_status,
+            failure_reason,
+        }
+    }
+
+    async fn merge_train_response(&self, url: &str) -> Result<Option<reqwest::Response>, AppError> {
+        let response = self
+            .client
+            .get(url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .header("User-Agent", "mergebeacon")
+            .send()
+            .await?;
+        if matches!(response.status(), reqwest::StatusCode::FORBIDDEN | reqwest::StatusCode::NOT_FOUND) {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Api(format!("GitLab Merge Train API {status}: {body}")));
+        }
+        Ok(Some(response))
+    }
+
     fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
         match (left, right) {
             (Some(true), _) | (_, Some(true)) => Some(true),
@@ -907,6 +966,123 @@ impl GitPlatform for GitLabAdapter {
             ]
         })
         .await
+    }
+
+    async fn get_pr_merge_queue_status(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+    ) -> Result<PrMergeQueueStatus, AppError> {
+        const PAGE_SIZE: usize = 100;
+        const MAX_PAGES: u32 = 1_000;
+
+        let project_id = urlencoding(owner, repo);
+        let merge_request_url = format!("{}/projects/{project_id}/merge_requests/{pr_number}", self.base_url);
+        let merge_request = self.get_json::<Value>(&merge_request_url).await?;
+        let target_branch = merge_request["target_branch"]
+            .as_str()
+            .filter(|branch| !branch.trim().is_empty())
+            .ok_or_else(|| AppError::Api("GitLab MR 响应缺少目标分支".into()))?
+            .to_string();
+        let current_head_sha = merge_request["sha"]
+            .as_str()
+            .or_else(|| merge_request["diff_refs"]["head_sha"].as_str())
+            .map(str::to_string);
+
+        let mut page = 1_u32;
+        let mut preceding = 0_u32;
+        loop {
+            let url = format!(
+                "{}/projects/{project_id}/merge_trains/{}?scope=active&sort=asc&per_page={PAGE_SIZE}&page={page}",
+                self.base_url,
+                urlencoding::encode(&target_branch)
+            );
+            let Some(response) = self.merge_train_response(&url).await? else {
+                let mut status = PrMergeQueueStatus::unavailable(
+                    MergeQueueKind::MergeTrain,
+                    "当前 GitLab 实例、许可证或 Token 权限未提供 Merge Train API",
+                );
+                status.target_branch = Some(target_branch);
+                status.head_sha = current_head_sha;
+                return Ok(status);
+            };
+            let next_page_header = response.headers().get("x-next-page");
+            let next_page = next_page_header
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| !value.is_empty())
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|next| *next > page);
+            let total_pages = response
+                .headers()
+                .get("x-total-pages")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u32>().ok());
+            let total = response
+                .headers()
+                .get("x-total")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u32>().ok());
+            let pagination_known = next_page_header.is_some() || total_pages.is_some() || total.is_some();
+            let entries: Vec<Value> = response.json().await?;
+            if let Some((index, entry)) =
+                entries.iter().enumerate().find(|(_, entry)| entry["merge_request"]["iid"].as_u64() == Some(pr_number))
+            {
+                let position = preceding
+                    .checked_add(u32::try_from(index).unwrap_or(u32::MAX))
+                    .and_then(|value| value.checked_add(1));
+                let mut status = Self::map_merge_train_entry(entry, position, total);
+                if status.target_branch.is_none() {
+                    status.target_branch = Some(target_branch);
+                }
+                if status.head_sha.is_none() {
+                    status.head_sha = current_head_sha;
+                }
+                return Ok(status);
+            }
+            let fetched = entries.len();
+            preceding = preceding.saturating_add(u32::try_from(fetched).unwrap_or(u32::MAX));
+            let header_next = next_page
+                .or_else(|| total_pages.filter(|total| page < *total).map(|_| page + 1))
+                .or_else(|| total.filter(|total| preceding < *total).map(|_| page + 1));
+            // Without any pagination metadata, a full page is ambiguous. Fetch the next page
+            // so a proxy that strips headers cannot hide a second page of merge-train entries.
+            let inferred_next = (!pagination_known && fetched == PAGE_SIZE).then(|| page.saturating_add(1));
+            let Some(next) = header_next.or(inferred_next) else {
+                break;
+            };
+            if next <= page || next > MAX_PAGES {
+                return Err(AppError::Api("GitLab Merge Train 分页超过安全上限".into()));
+            }
+            page = next;
+        }
+
+        let history_url = format!("{}/projects/{project_id}/merge_trains/merge_requests/{pr_number}", self.base_url);
+        let Some(response) = self.merge_train_response(&history_url).await? else {
+            return Ok(PrMergeQueueStatus {
+                kind: MergeQueueKind::MergeTrain,
+                available: true,
+                state: MergeQueueState::NotQueued,
+                position: None,
+                total: None,
+                target_branch: Some(target_branch),
+                enqueued_at: None,
+                updated_at: None,
+                estimated_time_seconds: None,
+                head_sha: current_head_sha,
+                pipeline_status: None,
+                failure_reason: None,
+            });
+        };
+        let entry: Value = response.json().await?;
+        let mut status = Self::map_merge_train_entry(&entry, None, None);
+        if status.target_branch.is_none() {
+            status.target_branch = Some(target_branch);
+        }
+        if status.head_sha.is_none() {
+            status.head_sha = current_head_sha;
+        }
+        Ok(status)
     }
 
     async fn list_branches(&self, owner: &str, repo: &str) -> Result<PrBranchOptions, AppError> {

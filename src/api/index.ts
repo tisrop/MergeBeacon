@@ -19,6 +19,7 @@ import type {
   ReviewInboxItem,
   PrDetail,
   PrDependencyGraph,
+  PrMergeQueueStatus,
   PrBranchOptions,
   PrLabel,
   PrCreatePreview,
@@ -217,6 +218,15 @@ export async function prDependencies(
   number: number,
 ): Promise<PrDependencyGraph> {
   return invoke("pr_dependencies", { platform, owner, repo, number });
+}
+
+export async function prMergeQueueStatus(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<PrMergeQueueStatus> {
+  return invoke("pr_merge_queue_status", { platform, owner, repo, number });
 }
 
 export async function prBranches(

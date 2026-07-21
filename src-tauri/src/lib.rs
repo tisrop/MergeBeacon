@@ -142,6 +142,7 @@ pub fn run() {
             pr::pr_list,
             pr::pr_detail,
             pr::pr_dependencies,
+            pr::pr_merge_queue_status,
             pr::pr_branches,
             pr::pr_labels,
             pr::pr_participant_suggestions,

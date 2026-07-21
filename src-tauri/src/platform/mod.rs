@@ -28,6 +28,8 @@ pub struct PlatformCapabilities {
     pub supports_pr_label_management: bool,
     pub supports_pr_milestone_management: bool,
     pub supports_pr_creation: bool,
+    /// 平台原生只读合并队列类型；None 表示平台协议不提供该能力。
+    pub merge_queue_kind: Option<MergeQueueKind>,
 }
 
 /// 平台协议能力的唯一静态定义入口。
@@ -52,6 +54,7 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_pr_label_management: true,
             supports_pr_milestone_management: true,
             supports_pr_creation: true,
+            merge_queue_kind: Some(MergeQueueKind::MergeQueue),
         },
         "gitlab" => PlatformCapabilities {
             platform: "gitlab",
@@ -69,6 +72,7 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_pr_label_management: true,
             supports_pr_milestone_management: true,
             supports_pr_creation: true,
+            merge_queue_kind: Some(MergeQueueKind::MergeTrain),
         },
         "gitee" => PlatformCapabilities {
             platform: "gitee",
@@ -86,6 +90,7 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_pr_label_management: true,
             supports_pr_milestone_management: true,
             supports_pr_creation: true,
+            merge_queue_kind: None,
         },
         _ => return None,
     };
@@ -378,6 +383,15 @@ pub trait GitPlatform: Send + Sync {
         pr_number: u64,
     ) -> Result<PrDependencyCandidates, AppError>;
 
+    async fn get_pr_merge_queue_status(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_number: u64,
+    ) -> Result<PrMergeQueueStatus, AppError> {
+        Err(AppError::NotImplemented("当前平台不支持原生合并队列状态".into()))
+    }
+
     async fn list_branches(&self, owner: &str, repo: &str) -> Result<PrBranchOptions, AppError>;
 
     async fn list_labels(&self, owner: &str, repo: &str) -> Result<Vec<PrLabel>, AppError>;
@@ -642,6 +656,9 @@ mod tests {
         assert_eq!(github["supports_pr_creation"], serde_json::json!(true));
         assert_eq!(gitlab["supports_pr_creation"], serde_json::json!(true));
         assert_eq!(gitee["supports_pr_creation"], serde_json::json!(true));
+        assert_eq!(github["merge_queue_kind"], serde_json::json!("merge_queue"));
+        assert_eq!(gitlab["merge_queue_kind"], serde_json::json!("merge_train"));
+        assert!(gitee["merge_queue_kind"].is_null());
         assert!(capabilities_for("unknown").is_none());
     }
 

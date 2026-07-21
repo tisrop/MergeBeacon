@@ -119,7 +119,26 @@ describe("PrDependenciesPanel", () => {
     const wrapper = mountPanel();
     await flushPromises();
 
+    expect(wrapper.text()).toContain("当前仅展示已发现的关系");
     expect(wrapper.text()).toContain("结果可能不完整");
+  });
+
+  it("候选遍历触顶但没有关系时不声称已展示关系", async () => {
+    vi.mocked(prDependencies).mockResolvedValueOnce({
+      ...graph,
+      nodes: [graph.nodes[1]],
+      edges: [],
+      suggested_merge_order: [2],
+      blocking_parent_numbers: [],
+      truncated: true,
+    });
+    const wrapper = mountPanel({ platform: "gitlab" });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("依赖候选扫描已达到上限");
+    expect(wrapper.text()).toContain("当前扫描范围内未发现与当前 MR 相连的分支依赖");
+    expect(wrapper.text()).toContain("结果可能不完整");
+    expect(wrapper.text()).not.toContain("当前仅展示已发现的关系");
   });
 
   it("失败后允许重新加载", async () => {

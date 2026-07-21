@@ -60,10 +60,15 @@ const mocks = vi.hoisted(() => ({
         supports_pr_assignee_management: true,
         supports_pr_label_management: true,
         supports_pr_milestone_management: true,
+        merge_queue_kind: "merge_queue",
       },
     },
     errors: {},
     load: vi.fn().mockResolvedValue(undefined),
+  },
+  uiSettingsStore: {
+    isPrDependenciesVisible: true,
+    isMergeQueueVisible: true,
   },
   reviewCommentAdd: vi.fn(),
 }));
@@ -79,6 +84,9 @@ vi.mock("@/stores/useReviewInboxStore", () => ({
 }));
 vi.mock("@/stores/useCapabilityStore", () => ({
   useCapabilityStore: () => mocks.capabilityStore,
+}));
+vi.mock("@/stores/useUiSettingsStore", () => ({
+  useUiSettingsStore: () => mocks.uiSettingsStore,
 }));
 vi.mock("@/api", () => ({ reviewCommentAdd: mocks.reviewCommentAdd }));
 
@@ -151,6 +159,7 @@ function mountPage(stubs: Record<string, unknown> = {}) {
         ReviewList: true,
         AiReviewPanel: true,
         PrDependenciesPanel: true,
+        PrMergeQueuePanel: true,
         MergeReadinessPanel: true,
         ...stubs,
       },
@@ -176,6 +185,8 @@ describe("PrDetailPage 关闭权限", () => {
     mocks.prStore.readinessError = null;
     mocks.prStore.error = null;
     mocks.prStore.diff = null;
+    mocks.uiSettingsStore.isPrDependenciesVisible = true;
+    mocks.uiSettingsStore.isMergeQueueVisible = true;
     mocks.reviewCommentAdd.mockResolvedValue(undefined);
     mocks.prStore.updateMetadata.mockResolvedValue({
       detail,
@@ -339,6 +350,71 @@ describe("PrDetailPage 关闭权限", () => {
     expect(wrapper.get<HTMLInputElement>('[data-testid="dependency-marker"]').element.value).toBe(
       "已加载",
     );
+  });
+
+  it("依赖关系页签向合并队列面板传递平台能力和当前版本", async () => {
+    const wrapper = mountPage({
+      PrMergeQueuePanel: {
+        props: ["platform", "prNumber", "revision", "queueKind"],
+        template: `<span data-testid="queue-context">
+          {{ platform }}:{{ prNumber }}:{{ revision }}:{{ queueKind }}
+        </span>`,
+      },
+    });
+    const dependenciesTab = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text() === "依赖关系");
+
+    await dependenciesTab!.trigger("click");
+
+    expect(wrapper.get('[data-testid="queue-context"]').text()).toContain("github:42::merge_queue");
+  });
+
+  it("关闭依赖关系时即使队列偏好开启也不展示合并上下文", () => {
+    mocks.uiSettingsStore.isPrDependenciesVisible = false;
+    const wrapper = mountPage({
+      PrDependenciesPanel: { template: '<span data-testid="dependency-panel" />' },
+      PrMergeQueuePanel: { template: '<span data-testid="merge-queue-panel" />' },
+    });
+
+    expect(wrapper.findAll(".tabs button").map((button) => button.text())).not.toContain(
+      "依赖关系",
+    );
+    expect(wrapper.find('[data-testid="dependency-panel"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="merge-queue-panel"]').exists()).toBe(false);
+  });
+
+  it("可以仅展示分支依赖而不挂载 Merge Queue 面板", async () => {
+    mocks.uiSettingsStore.isMergeQueueVisible = false;
+    const wrapper = mountPage({
+      PrDependenciesPanel: { template: '<span data-testid="dependency-panel" />' },
+      PrMergeQueuePanel: { template: '<span data-testid="merge-queue-panel" />' },
+    });
+    const dependenciesTab = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text() === "依赖关系");
+
+    await dependenciesTab!.trigger("click");
+
+    expect(wrapper.find('[data-testid="dependency-panel"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="merge-queue-panel"]').exists()).toBe(false);
+  });
+
+  it("两个合并上下文开关都关闭时隐藏依赖关系页签", () => {
+    mocks.uiSettingsStore.isPrDependenciesVisible = false;
+    mocks.uiSettingsStore.isMergeQueueVisible = false;
+    const wrapper = mountPage({
+      PrDependenciesPanel: { template: '<span data-testid="dependency-panel" />' },
+      PrMergeQueuePanel: { template: '<span data-testid="merge-queue-panel" />' },
+    });
+
+    expect(wrapper.findAll(".tabs button").map((button) => button.text())).toEqual([
+      "Diff",
+      "评审意见",
+      "AI 评审",
+    ]);
+    expect(wrapper.find('[data-testid="dependency-panel"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="merge-queue-panel"]').exists()).toBe(false);
   });
 
   it("从 AI 建议切换到 Diff 并传递受控定位请求", async () => {

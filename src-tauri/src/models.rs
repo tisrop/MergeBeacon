@@ -202,6 +202,62 @@ pub struct PrDependencyGraph {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeQueueKind {
+    MergeQueue,
+    MergeTrain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeQueueState {
+    NotQueued,
+    Queued,
+    Waiting,
+    Ready,
+    Blocked,
+    Merging,
+    Failed,
+    Merged,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrMergeQueueStatus {
+    pub kind: MergeQueueKind,
+    pub available: bool,
+    pub state: MergeQueueState,
+    pub position: Option<u32>,
+    pub total: Option<u32>,
+    pub target_branch: Option<String>,
+    pub enqueued_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub estimated_time_seconds: Option<u64>,
+    pub head_sha: Option<String>,
+    pub pipeline_status: Option<String>,
+    pub failure_reason: Option<String>,
+}
+
+impl PrMergeQueueStatus {
+    pub fn unavailable(kind: MergeQueueKind, reason: impl Into<String>) -> Self {
+        Self {
+            kind,
+            available: false,
+            state: MergeQueueState::Unknown,
+            position: None,
+            total: None,
+            target_branch: None,
+            enqueued_at: None,
+            updated_at: None,
+            estimated_time_seconds: None,
+            head_sha: None,
+            pipeline_status: None,
+            failure_reason: Some(reason.into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrMetadataUpdate {
     pub title: String,

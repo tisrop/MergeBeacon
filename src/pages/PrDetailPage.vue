@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
 import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
+import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import { reviewCommentAdd } from "@/api";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { getErrorMessage } from "@/utils/error";
@@ -21,6 +22,7 @@ import AiReviewPanel from "@/components/ai/AiReviewPanel.vue";
 import MergeReadinessPanel from "@/components/pr/MergeReadinessPanel.vue";
 import PrMetadataPanel from "@/components/pr/PrMetadataPanel.vue";
 import PrDependenciesPanel from "@/components/pr/PrDependenciesPanel.vue";
+import PrMergeQueuePanel from "@/components/pr/PrMergeQueuePanel.vue";
 import { APP_COMMAND_EVENT, type AppCommandDetail } from "@/types/commands";
 import type {
   AiSuggestion,
@@ -39,6 +41,7 @@ const auth = useAuthStore();
 const pr = usePrStore();
 const reviewInbox = useReviewInboxStore();
 const capabilityStore = useCapabilityStore();
+const uiSettings = useUiSettingsStore();
 
 const platform = route.params.platform as Platform;
 const owner = route.params.owner as string;
@@ -52,6 +55,7 @@ const aiPanelMounted = ref(false);
 const dependencyPanelMounted = ref(false);
 const locatingAiSuggestion = ref(false);
 const tabsRef = ref<HTMLElement | null>(null);
+const isMergeContextVisible = computed(() => uiSettings.isPrDependenciesVisible);
 let aiReviewScrollTop: number | null = null;
 
 function contentScrollContainer(): HTMLElement | null {
@@ -68,6 +72,7 @@ function scrollTabBarIntoView(): void {
 }
 
 function selectTab(tab: PrDetailTab) {
+  if (tab === "dependencies" && !isMergeContextVisible.value) return;
   const returningToAiSuggestion = tab === "ai" && locatingAiSuggestion.value;
   activeTab.value = tab;
   if (tab === "dependencies") dependencyPanelMounted.value = true;
@@ -87,6 +92,10 @@ function selectTab(tab: PrDetailTab) {
     aiReviewScrollTop = null;
   }
 }
+
+watch(isMergeContextVisible, (visible) => {
+  if (!visible && activeTab.value === "dependencies") selectTab("diff");
+});
 
 const diffLocationRequest = ref<DiffLocationRequest | null>(null);
 const diffLocationError = ref("");
@@ -629,6 +638,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
           Diff
         </button>
         <button
+          v-if="isMergeContextVisible"
           :class="{ active: activeTab === 'dependencies' }"
           @click="selectTab('dependencies')"
         >
@@ -717,8 +727,22 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             :unresolved-thread-count="reviewThreadSummary?.unresolved ?? 0"
           />
         </div>
-        <div v-if="dependencyPanelMounted" v-show="activeTab === 'dependencies'">
+        <div
+          v-if="isMergeContextVisible && dependencyPanelMounted"
+          v-show="activeTab === 'dependencies'"
+          class="merge-context-view"
+        >
+          <PrMergeQueuePanel
+            v-if="uiSettings.isPrDependenciesVisible && uiSettings.isMergeQueueVisible"
+            :platform="platform"
+            :owner="owner"
+            :repo="repo"
+            :pr-number="number"
+            :revision="pr.currentPr.summary.updated_at"
+            :queue-kind="platformCapabilities?.merge_queue_kind"
+          />
           <PrDependenciesPanel
+            v-if="uiSettings.isPrDependenciesVisible"
             :platform="platform"
             :owner="owner"
             :repo="repo"
@@ -954,6 +978,11 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.merge-context-view {
+  display: grid;
+  gap: var(--space-6);
 }
 
 .skeleton-tabs {

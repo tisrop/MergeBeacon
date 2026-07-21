@@ -76,6 +76,51 @@ describe("SettingsPage 诊断信息", () => {
     ).toBe(false);
   });
 
+  it("分别持久化依赖关系与合并队列显示设置", async () => {
+    const firstPage = mountPage();
+    const dependencyToggle = firstPage.get<HTMLInputElement>('input[aria-label="显示依赖关系"]');
+    const queueToggle = firstPage.get<HTMLInputElement>(
+      'input[aria-label="显示 Merge Queue / Merge Train"]',
+    );
+
+    expect(dependencyToggle.element.checked).toBe(true);
+    expect(queueToggle.element.checked).toBe(true);
+    await queueToggle.setValue(false);
+    await dependencyToggle.setValue(false);
+    expect(storage.get("mergebeacon:pr-dependencies-visible")).toBe("false");
+    expect(storage.get("mergebeacon:merge-queue-visible")).toBe("false");
+    firstPage.unmount();
+
+    setActivePinia(createPinia());
+    const secondPage = mountPage();
+    expect(
+      secondPage.get<HTMLInputElement>('input[aria-label="显示依赖关系"]').element.checked,
+    ).toBe(false);
+    expect(
+      secondPage.get<HTMLInputElement>('input[aria-label="显示 Merge Queue / Merge Train"]').element
+        .checked,
+    ).toBe(false);
+  });
+
+  it("关闭依赖关系后禁用合并队列开关并保留原偏好", async () => {
+    const wrapper = mountPage();
+    const dependencyToggle = wrapper.get<HTMLInputElement>('input[aria-label="显示依赖关系"]');
+    const queueToggle = wrapper.get<HTMLInputElement>(
+      'input[aria-label="显示 Merge Queue / Merge Train"]',
+    );
+
+    await dependencyToggle.setValue(false);
+
+    expect(queueToggle.element.disabled).toBe(true);
+    expect(queueToggle.element.checked).toBe(false);
+    expect(wrapper.text()).toContain("需先开启依赖关系");
+    expect(storage.get("mergebeacon:merge-queue-visible")).toBeUndefined();
+
+    await dependencyToggle.setValue(true);
+    expect(queueToggle.element.disabled).toBe(false);
+    expect(queueToggle.element.checked).toBe(true);
+  });
+
   it("使用当前平台获取后端脱敏文本并复制", async () => {
     vi.mocked(copySupportInfo).mockResolvedValue(undefined);
     const wrapper = mountPage();

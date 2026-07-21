@@ -120,7 +120,11 @@ onUnmounted(() => {
     </div>
 
     <template v-else-if="graph">
-      <div v-if="graph.truncated" class="dependency-warning" role="status">
+      <div
+        v-if="graph.truncated && orderedNodes.length > 1"
+        class="dependency-warning"
+        role="status"
+      >
         依赖候选数量较多，当前仅展示已发现的关系，结果可能不完整。
       </div>
       <div v-if="graph.has_cycle" class="dependency-warning" role="alert">
@@ -138,7 +142,11 @@ onUnmounted(() => {
       </div>
 
       <div v-if="orderedNodes.length <= 1" class="dependency-empty">
-        未发现与当前 {{ itemName }} 相连的分支依赖。
+        <template v-if="graph.truncated">
+          依赖候选扫描已达到上限；当前扫描范围内未发现与当前 {{ itemName }}
+          相连的分支依赖，结果可能不完整。
+        </template>
+        <template v-else>未发现与当前 {{ itemName }} 相连的分支依赖。</template>
       </div>
 
       <div v-else class="merge-order">

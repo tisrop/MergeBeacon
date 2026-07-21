@@ -19,6 +19,7 @@ export interface AuthLoginResult {
 
 // ── 平台 ──
 export type Platform = "github" | "gitlab" | "gitee";
+export type MergeQueueKind = "merge_queue" | "merge_train";
 
 /** 平台 API 的静态协议能力，不包含登录、Token 权限或 PR 运行时状态。 */
 export interface PlatformCapabilities {
@@ -37,6 +38,7 @@ export interface PlatformCapabilities {
   supports_pr_label_management: boolean;
   supports_pr_milestone_management: boolean;
   supports_pr_creation: boolean;
+  merge_queue_kind: MergeQueueKind | null;
 }
 
 export interface UpdateProgressEvent {
@@ -169,6 +171,32 @@ export interface PrDependencyGraph {
   blocking_parent_numbers: number[];
   has_cycle: boolean;
   truncated: boolean;
+}
+
+export type MergeQueueState =
+  | "not_queued"
+  | "queued"
+  | "waiting"
+  | "ready"
+  | "blocked"
+  | "merging"
+  | "failed"
+  | "merged"
+  | "unknown";
+
+export interface PrMergeQueueStatus {
+  kind: MergeQueueKind;
+  available: boolean;
+  state: MergeQueueState;
+  position: number | null;
+  total: number | null;
+  target_branch: string | null;
+  enqueued_at: string | null;
+  updated_at: string | null;
+  estimated_time_seconds: number | null;
+  head_sha: string | null;
+  pipeline_status: string | null;
+  failure_reason: string | null;
 }
 
 export interface PrMetadataUpdate {

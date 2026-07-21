@@ -1,7 +1,8 @@
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
-    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
-    PrMilestone, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
+    MergeQueueState, PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions,
+    PrMetadataUpdate, PrMilestone, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship,
+    User,
 };
 use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
 use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
@@ -492,6 +493,141 @@ async fn test_github_lists_pr_dependency_candidates() {
     assert_eq!(candidates.iter().map(|candidate| candidate.number).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
     assert_eq!(candidates[3].source_branch, "feature-d");
     assert_eq!(candidates[3].target_branch, "feature-c");
+}
+
+#[tokio::test]
+async fn test_github_reads_merge_queue_position_and_state() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query MergeQueueStatus"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "baseRefName": "main",
+                        "headRefOid": "head-sha",
+                        "mergeQueue": { "entries": { "totalCount": 5 } },
+                        "mergeQueueEntry": {
+                            "position": 2,
+                            "state": "AWAITING_CHECKS",
+                            "enqueuedAt": "2026-07-21T01:00:00Z",
+                            "estimatedTimeToMerge": 420,
+                            "headCommit": { "oid": "queue-sha" }
+                        }
+                    }
+                }
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(status.available);
+    assert_eq!(status.state, MergeQueueState::Waiting);
+    assert_eq!(status.position, Some(2));
+    assert_eq!(status.total, Some(5));
+    assert_eq!(status.target_branch.as_deref(), Some("main"));
+    assert_eq!(status.head_sha.as_deref(), Some("queue-sha"));
+    assert_eq!(status.estimated_time_seconds, Some(420));
+}
+
+#[tokio::test]
+async fn test_github_reports_when_target_branch_has_no_merge_queue() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "baseRefName": "main",
+                        "headRefOid": "head-sha",
+                        "mergeQueue": null,
+                        "mergeQueueEntry": null
+                    }
+                }
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(!status.available);
+    assert_eq!(status.state, MergeQueueState::Unknown);
+    assert_eq!(status.failure_reason.as_deref(), Some("目标分支未启用 GitHub Merge Queue"));
+}
+
+#[tokio::test]
+async fn test_github_reports_configured_queue_when_pr_is_not_queued() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "baseRefName": "main",
+                        "headRefOid": "head-sha",
+                        "mergeQueue": { "entries": { "totalCount": 3 } },
+                        "mergeQueueEntry": null
+                    }
+                }
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(status.available);
+    assert_eq!(status.state, MergeQueueState::NotQueued);
+    assert_eq!(status.total, Some(3));
+}
+
+#[tokio::test]
+async fn test_github_reports_older_enterprise_schema_as_unavailable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "errors": [{
+                "message": "Unknown field MERGEQUEUEENTRY on PullRequest"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(!status.available);
+    assert!(status.failure_reason.as_deref().unwrap_or_default().contains("Enterprise"));
+}
+
+#[tokio::test]
+async fn test_github_keeps_unrelated_graphql_errors_actionable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "errors": [{ "message": "Resource not accessible by integration" }]
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let error = adapter
+        .get_pr_merge_queue_status("octocat", "hello-world", 42)
+        .await
+        .expect_err("unrelated GraphQL errors must remain visible");
+
+    assert!(error.to_string().contains("Resource not accessible"));
 }
 
 #[tokio::test]

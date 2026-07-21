@@ -418,6 +418,27 @@ pub async fn pr_dependencies(
 }
 
 #[tauri::command]
+pub async fn pr_merge_queue_status(
+    state: State<'_, AppState>,
+    platform: String,
+    owner: String,
+    repo: String,
+    number: u64,
+) -> Result<PrMergeQueueStatus, String> {
+    let owner = owner.trim();
+    let repo = repo.trim();
+    if owner.is_empty() || repo.is_empty() || number == 0 {
+        return Err("仓库和 PR / MR 编号不能为空".into());
+    }
+    let capabilities = capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
+    if capabilities.merge_queue_kind.is_none() {
+        return Err("当前平台不支持原生 Merge Queue / Merge Train".into());
+    }
+    let adapter = build_platform(&platform, &state).map_err(|error| error.to_string())?;
+    adapter.get_pr_merge_queue_status(owner, repo, number).await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn pr_branches(
     state: State<'_, AppState>,
     platform: String,
