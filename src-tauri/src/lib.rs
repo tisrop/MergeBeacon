@@ -13,7 +13,7 @@ mod state;
 pub mod vault;
 mod window_state;
 
-use commands::{ai as ai_cmds, auth, capabilities, inbox, issue, pr, review, support, update};
+use commands::{ai as ai_cmds, auth, capabilities, inbox, issue, notification, pr, review, support, update};
 use local_store::CommentSnapshotStore;
 use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -135,6 +135,10 @@ pub fn run() {
             update::update_download_and_install,
             update::update_restart,
             capabilities::platform_capabilities,
+            // Desktop notification
+            notification::desktop_notification_permission_granted,
+            notification::desktop_notification_request_permission,
+            notification::desktop_notification_send,
             // Repo
             auth::repo_list,
             // PR

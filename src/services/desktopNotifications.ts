@@ -60,22 +60,21 @@ export async function notificationPermissionGranted(): Promise<boolean> {
 export async function requestNotificationPermission(): Promise<boolean> {
   if (!isDesktopRuntime()) return false;
   if (await desktopNotificationPermissionGranted()) return true;
-  return (await requestDesktopNotificationPermission()) === "granted";
+  return requestDesktopNotificationPermission();
 }
 
-export function showInboxNotification(
+export async function showInboxNotification(
   event: InboxNotificationEvent,
   revealRepositoryDetails: boolean,
-): void {
+): Promise<void> {
   if (!isDesktopRuntime()) return;
   const body = revealRepositoryDetails
     ? `${event.repository_full_name} #${event.number} · ${event.title}`
     : "某个私有仓库的 Pull Request 有新动态";
-  sendDesktopNotification({
+  await sendDesktopNotification({
     id: notificationId(event),
     title: eventTitles[event.type],
     body,
-    private: !revealRepositoryDetails,
     group: `${event.platform}:${event.repository_full_name}:${event.number}`,
     actionable: true,
     extra: {
@@ -87,13 +86,12 @@ export function showInboxNotification(
   });
 }
 
-export function showDesktopTestNotification(): void {
+export async function showDesktopTestNotification(): Promise<void> {
   if (!isDesktopRuntime()) return;
-  sendDesktopNotification({
+  await sendDesktopNotification({
     id: TEST_NOTIFICATION_ID,
     title: "MergeBeacon 测试通知",
     body: "系统通知已连接。退出 MergeBeacon 后不会继续检查 PR / MR 动态。",
-    private: false,
     group: "mergebeacon:test",
     actionable: false,
     extra: {},

@@ -177,7 +177,7 @@ async function sendTestNotification(): Promise<void> {
     permissionError.value = "";
     notifications.clearManagerError("permission");
     try {
-      showDesktopTestNotification();
+      await showDesktopTestNotification();
       notifications.clearManagerError("delivery");
       testNotificationStatus.value = "测试通知已交给系统通知服务。";
     } catch (error) {

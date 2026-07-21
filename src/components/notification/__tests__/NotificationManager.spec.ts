@@ -64,6 +64,7 @@ describe("NotificationManager", () => {
     vi.mocked(notificationPermissionGranted).mockReset();
     vi.mocked(notificationPermissionGranted).mockResolvedValue(true);
     vi.mocked(showInboxNotification).mockReset();
+    vi.mocked(showInboxNotification).mockResolvedValue(undefined);
     vi.mocked(initializeNotificationActions).mockReset();
     vi.mocked(initializeNotificationActions).mockResolvedValue(async () => undefined);
   });
@@ -165,9 +166,7 @@ describe("NotificationManager", () => {
     const { wrapper } = await mountManager(pinia);
     expect(useNotificationStore().notificationError).toContain("network poll failed");
 
-    vi.mocked(showInboxNotification).mockImplementation(() => {
-      throw new Error("system delivery failed");
-    });
+    vi.mocked(showInboxNotification).mockRejectedValue(new Error("system delivery failed"));
     await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_INTERVAL_MS);
 
     expect(useNotificationStore().notificationError).toContain("system delivery failed");

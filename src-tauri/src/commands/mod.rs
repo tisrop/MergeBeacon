@@ -3,6 +3,7 @@ pub mod auth;
 pub mod capabilities;
 pub mod inbox;
 pub mod issue;
+pub mod notification;
 pub mod pr;
 pub mod review;
 pub mod support;

@@ -30,6 +30,7 @@ describe("NotificationSettings", () => {
     vi.mocked(notificationPermissionGranted).mockReset();
     vi.mocked(requestNotificationPermission).mockReset();
     vi.mocked(showDesktopTestNotification).mockReset();
+    vi.mocked(showDesktopTestNotification).mockResolvedValue(undefined);
     vi.mocked(notificationPermissionGranted).mockResolvedValue(false);
     vi.mocked(requestNotificationPermission).mockResolvedValue(true);
   });
@@ -99,9 +100,9 @@ describe("NotificationSettings", () => {
 
   it("测试通知发送失败时写入全局通知错误", async () => {
     vi.mocked(notificationPermissionGranted).mockResolvedValue(true);
-    vi.mocked(showDesktopTestNotification).mockImplementation(() => {
-      throw new Error("notification daemon unavailable");
-    });
+    vi.mocked(showDesktopTestNotification).mockRejectedValue(
+      new Error("notification daemon unavailable"),
+    );
     const wrapper = mount(NotificationSettings);
     await flushPromises();
 

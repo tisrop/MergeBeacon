@@ -98,7 +98,7 @@ async function pollAndNotify(): Promise<void> {
     const revealDetails =
       !notifications.preferences.hide_private_content || repository?.private === false;
     try {
-      showInboxNotification(event, revealDetails);
+      await showInboxNotification(event, revealDetails);
     } catch (error) {
       deliveryFailed = true;
       notifications.setManagerError(

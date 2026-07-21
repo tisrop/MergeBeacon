@@ -1,9 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { sendNotification } from "@tauri-apps/plugin-notification";
-import { sendDesktopNotification } from "@/api";
+import { listen } from "@tauri-apps/api/event";
+import {
+  desktopNotificationPermissionGranted,
+  listenDesktopNotificationActions,
+  requestDesktopNotificationPermission,
+  sendDesktopNotification,
+} from "@/api";
+
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(),
+  invoke: invokeMock,
   isTauri: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -12,53 +19,51 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/plugin-shell", () => ({
   open: vi.fn(),
 }));
-vi.mock("@tauri-apps/plugin-notification", () => ({
-  Visibility: { Private: 0, Public: 1 },
-  isPermissionGranted: vi.fn(),
-  onAction: vi.fn(),
-  registerActionTypes: vi.fn(),
-  requestPermission: vi.fn(),
-  sendNotification: vi.fn(),
-}));
-
 describe("desktop notification API", () => {
   beforeEach(() => {
-    vi.mocked(sendNotification).mockReset();
+    invokeMock.mockReset();
+    vi.mocked(listen).mockReset();
   });
 
-  it("测试通知不注册 PR action，收件箱通知保留点击动作", () => {
-    sendDesktopNotification({
+  it("权限和发送统一通过自定义 IPC 命令调用原生实现", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await desktopNotificationPermissionGranted();
+    await requestDesktopNotificationPermission();
+    await sendDesktopNotification({
       id: 1,
       title: "Test",
       body: "Test body",
       group: "test",
-      private: false,
       actionable: false,
       extra: {},
     });
-    sendDesktopNotification({
-      id: 2,
-      title: "Review",
-      body: "Review body",
-      group: "github:team/repo:7",
-      private: true,
-      actionable: true,
-      extra: { platform: "github", owner: "team", repo: "repo", number: 7 },
-    });
 
-    expect(sendNotification).toHaveBeenNthCalledWith(
-      1,
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "desktop_notification_permission_granted");
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "desktop_notification_request_permission");
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      3,
+      "desktop_notification_send",
       expect.objectContaining({
-        actionTypeId: undefined,
-        visibility: 1,
+        payload: expect.objectContaining({ actionable: false }),
       }),
     );
-    expect(sendNotification).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        actionTypeId: "mergebeacon-open-pr",
-        visibility: 0,
-      }),
-    );
+  });
+
+  it("使用标准 Tauri 事件监听原生通知点击", async () => {
+    const unlisten = vi.fn();
+    let eventHandler: ((event: { payload: Record<string, unknown> }) => void) | undefined;
+    vi.mocked(listen).mockImplementation(async (_event, callback) => {
+      eventHandler = callback as typeof eventHandler;
+      return unlisten;
+    });
+    const callback = vi.fn();
+
+    const remove = await listenDesktopNotificationActions(callback);
+    eventHandler?.({ payload: { platform: "github", number: 7 } });
+    remove();
+
+    expect(listen).toHaveBeenCalledWith("desktop-notification-action", expect.any(Function));
+    expect(callback).toHaveBeenCalledWith({ platform: "github", number: 7 });
+    expect(unlisten).toHaveBeenCalledOnce();
   });
 });
