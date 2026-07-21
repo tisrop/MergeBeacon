@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import type {
+  DiffSide,
   Platform,
   PrComment,
   PrFile,
@@ -16,31 +17,14 @@ import {
   reviewThreadReply,
   reviewThreadSetResolved,
 } from "@/api";
+import {
+  extractDiffHunk,
+  findStandardPatch,
+  inferDiffSide,
+  patchContainsLine,
+} from "@/utils/diffHunk";
 import { getErrorMessage } from "@/utils/error";
 import MiniDiffView from "./MiniDiffView.vue";
-
-function extractHunkFromPatch(patch: string, line: number): string | undefined {
-  const lines = patch.split("\n");
-  let currentLine = 0;
-  let result: string[] = [];
-  let inRange = false;
-  for (const patchLine of lines) {
-    const match = patchLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (match) {
-      if (inRange) break;
-      currentLine = Number.parseInt(match[1], 10) - 1;
-      result = [patchLine];
-      continue;
-    }
-    if (result.length > 0) {
-      result.push(patchLine);
-      if (!patchLine.startsWith("-")) currentLine++;
-      if (currentLine >= line && !inRange) inRange = true;
-      if (inRange && currentLine > line + 8) break;
-    }
-  }
-  return result.length > 0 ? result.join("\n") : undefined;
-}
 
 const props = defineProps<{
   platform: Platform;
@@ -55,7 +39,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   threadSummary: [summary: ReviewThreadSummary];
-  locateComment: [path: string, line: number | null];
+  locateComment: [path: string, line: number | null, side: DiffSide | null];
 }>();
 
 type ThreadFilter = "all" | "unresolved" | "resolved";
@@ -78,7 +62,11 @@ interface ReviewThread {
   diffHunk: string | null;
   contextLine: number | null;
   displayPath: string;
+  locationPath: string;
+  side: DiffSide | null;
   canLocate: boolean;
+  canNavigate: boolean;
+  outdated: boolean;
   resolved: boolean | null;
   resolvable: boolean;
   updatedAt: string;
@@ -147,7 +135,7 @@ function isOutdated(comment: PrComment): boolean {
 }
 
 function threadIsOutdated(thread: ReviewThread): boolean {
-  return thread.comments.some(isOutdated);
+  return thread.outdated;
 }
 
 function reviewKind(review: Review): GeneralReviewItem["kind"] {
@@ -175,42 +163,36 @@ function buildThreads(comments: PrComment[]): ReviewThread[] {
       const root =
         chronological.find((comment) => comment.reply_to_id === null) ?? chronological[0];
       const sorted = [root, ...chronological.filter((comment) => comment !== root)];
-      const patch = props.diffPatches?.find(
-        (candidate) =>
-          candidate.filename === root.path ||
-          candidate.old_path === root.path ||
-          candidate.new_path === root.path,
-      );
-      const displayPath = patch?.filename ?? root.path;
+      const patch = findStandardPatch(props.diffPatches ?? [], root.path);
+      const displayPath = patch?.new_path || patch?.filename || root.path;
       const file = props.diffFiles?.find((candidate) => candidate.filename === displayPath);
-      let diffHunk = root.diff_hunk;
-      if (!diffHunk && displayPath && root.line && file?.patch) {
-        diffHunk = extractHunkFromPatch(file.patch, root.line) ?? null;
-      }
+      const originalContextLine = root.original_line ?? root.line;
+      const inferredSide = root.side ?? (patch ? inferDiffSide(patch, root.path) : undefined);
       const latest = chronological.at(-1) ?? root;
-      const canLocate =
-        !props.diffFiles && !props.diffPatches
-          ? true
-          : Boolean(
-              file &&
-              (!root.line ||
-                !patch ||
-                patch.hunks.some((hunk) =>
-                  hunk.lines.some(
-                    (line) => line.new_line === root.line || line.old_line === root.line,
-                  ),
-                )),
-            );
+      const hasCurrentDiff = props.diffFiles !== undefined || props.diffPatches !== undefined;
+      const canLocate = !hasCurrentDiff
+        ? root.line !== null
+        : Boolean(file && root.line && patch && patchContainsLine(patch, root.line, inferredSide));
+      const canNavigate = hasCurrentDiff ? Boolean(file) : Boolean(displayPath);
+      const outdated = hasCurrentDiff ? !canLocate : isOutdated(root);
+      let diffHunk = root.diff_hunk;
+      if (!diffHunk && canLocate && root.line && patch) {
+        diffHunk = extractDiffHunk(patch, root.line, inferredSide) ?? null;
+      }
       return {
         id,
         comments: sorted,
         path: root.path,
         displayPath,
+        locationPath: root.path || displayPath,
+        side: inferredSide ?? null,
         line: root.line,
         startLine: root.start_line,
         diffHunk,
-        contextLine: isOutdated(root) ? (root.original_line ?? root.line) : root.line,
+        contextLine: outdated ? originalContextLine : root.line,
         canLocate,
+        canNavigate,
+        outdated,
         resolved: root.resolved,
         resolvable: root.resolvable,
         updatedAt: latest.created_at,
@@ -302,11 +284,17 @@ function beginEdit(comment: PrComment): void {
   editingBodies.value = { ...editingBodies.value, [key]: comment.body };
 }
 
-function cancelEdit(comment: PrComment): void {
-  const key = String(comment.id);
+function finishEdit(key: string): void {
   const next = new Set(editingComments.value);
   next.delete(key);
   editingComments.value = next;
+  const nextBodies = { ...editingBodies.value };
+  delete nextBodies[key];
+  editingBodies.value = nextBodies;
+}
+
+function cancelEdit(comment: PrComment): void {
+  finishEdit(String(comment.id));
 }
 
 async function saveEdit(thread: ReviewThread, comment: PrComment): Promise<void> {
@@ -329,6 +317,7 @@ async function saveEdit(thread: ReviewThread, comment: PrComment): Promise<void>
       commentId,
       body,
     );
+    if (threadContextKey() === contextKey) finishEdit(commentId);
     await reloadAfterMutation(contextKey);
   } catch (mutationError) {
     if (threadContextKey() === contextKey)
@@ -495,8 +484,8 @@ async function setThreadResolved(thread: ReviewThread, resolved: boolean): Promi
 }
 
 function locateThread(thread: ReviewThread): void {
-  if (!thread.canLocate) return;
-  emit("locateComment", thread.displayPath, thread.line);
+  if (!thread.canNavigate) return;
+  emit("locateComment", thread.locationPath, thread.canLocate ? thread.line : null, thread.side);
 }
 
 const PREVIEW_LENGTH = 180;
@@ -665,8 +654,14 @@ defineExpose({ refresh: loadReviews });
                 <button
                   type="button"
                   class="path-button"
-                  :disabled="!thread.canLocate"
-                  :title="thread.canLocate ? '跳转到当前 Diff' : '当前 Diff 无法定位此评论'"
+                  :disabled="!thread.canNavigate"
+                  :title="
+                    thread.canLocate
+                      ? '跳转到当前 Diff 行'
+                      : thread.canNavigate
+                        ? '跳转到当前 Diff 文件'
+                        : '当前 Diff 中找不到此评论对应的文件'
+                  "
                   @click="locateThread(thread)"
                 >
                   {{ thread.displayPath }}<template v-if="thread.line">:{{ thread.line }}</template>
@@ -702,16 +697,25 @@ defineExpose({ refresh: loadReviews });
             <div
               v-if="thread.diffHunk"
               class="code-context"
-              :class="{ collapsed: !codeExpanded.has(thread.id) }"
+              :class="{ collapsed: thread.canLocate && !codeExpanded.has(thread.id) }"
             >
-              <button type="button" class="code-hint" @click="toggleCode(thread.id)">
+              <button
+                v-if="thread.canLocate"
+                type="button"
+                class="code-hint"
+                @click="toggleCode(thread.id)"
+              >
                 <span>{{ codeExpanded.has(thread.id) ? "▾" : "▸" }} 查看评论创建时的代码</span>
                 <span v-if="threadIsOutdated(thread)" class="outdated-hint"
                   >代码位置可能已变化</span
                 >
               </button>
+              <div v-else class="code-hint original-code-hint">
+                <span>评论创建时的代码</span>
+                <span class="outdated-hint">当前 Diff 无法定位</span>
+              </div>
               <MiniDiffView
-                v-if="codeExpanded.has(thread.id)"
+                v-if="!thread.canLocate || codeExpanded.has(thread.id)"
                 :diff-hunk="thread.diffHunk"
                 :outdated="threadIsOutdated(thread)"
                 :comment-line="thread.contextLine ?? undefined"
@@ -772,8 +776,9 @@ defineExpose({ refresh: loadReviews });
                 <template v-if="editingComments.has(String(comment.id))">
                   <textarea
                     v-model="editingBodies[String(comment.id)]"
-                    class="comment-editor"
+                    class="input comment-editor"
                     rows="4"
+                    aria-label="编辑评论"
                   />
                   <div class="comment-edit-actions">
                     <button
@@ -822,8 +827,10 @@ defineExpose({ refresh: loadReviews });
             <form class="thread-reply-form" @submit.prevent="replyToThread(thread)">
               <textarea
                 v-model="replyBodies[thread.id]"
+                class="input thread-reply-input"
                 rows="3"
                 placeholder="回复此线程..."
+                aria-label="回复评审线程"
                 :disabled="updatingThreads.has(`${thread.id}:reply`)"
               />
               <div class="thread-reply-actions">

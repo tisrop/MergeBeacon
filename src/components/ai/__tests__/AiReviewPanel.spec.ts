@@ -8,6 +8,7 @@ import {
   aiReviewCancel,
   aiGetConfig,
   aiReviewStream,
+  prFileContent,
   prCompareDiff,
   prDetail,
   prDiff,
@@ -33,6 +34,7 @@ vi.mock("@/api", () => ({
   aiReview: vi.fn(),
   aiGetConfig: vi.fn(),
   aiReviewStream: vi.fn().mockResolvedValue(undefined),
+  prFileContent: vi.fn(),
   prCompareDiff: vi.fn(),
   prDetail: vi.fn(),
   prDiff: vi.fn(),
@@ -122,6 +124,7 @@ describe("AiReviewPanel", () => {
     });
     setActivePinia(createPinia());
     vi.mocked(aiReviewStream).mockResolvedValue(undefined);
+    vi.mocked(prFileContent).mockRejectedValue(new Error("规则文件不存在"));
     vi.mocked(aiReviewCancel).mockResolvedValue(undefined);
     vi.mocked(aiGetConfig).mockResolvedValue({
       endpoint: "https://api.example.com/v1",
@@ -199,7 +202,9 @@ describe("AiReviewPanel", () => {
     expect(aiReviewStream).toHaveBeenCalledWith(
       "request-1",
       expect.objectContaining({
-        context: expect.objectContaining({ repository_rules: "重点检查异步生命周期" }),
+        context: expect.objectContaining({
+          repository_rules: expect.stringContaining("重点检查异步生命周期"),
+        }),
       }),
     );
 
@@ -215,6 +220,54 @@ describe("AiReviewPanel", () => {
     expect(history[0]).toMatchObject({ head_sha: "head-sha-1", model: "gpt-test" });
   });
 
+  it("自动发现当前提交的仓库规则文件并随评审请求发送", async () => {
+    vi.mocked(prFileContent).mockRejectedValueOnce(new Error("404")).mockResolvedValueOnce({
+      path: ".mergebeacon/rules.md",
+      revision: "head-sha-1",
+      content: "检查错误处理",
+      truncated: false,
+      binary: false,
+    });
+    const wrapper = mountPanel({ context: { title: "PR", body: "描述" } });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(".mergebeacon/rules.md");
+    await wrapper.get(".ai-toolbar button.btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(aiReviewStream).toHaveBeenCalledWith(
+      "request-1",
+      expect.objectContaining({
+        context: expect.objectContaining({
+          repository_rules: expect.stringContaining("检查错误处理"),
+        }),
+      }),
+    );
+  });
+
+  it("切换 PR 后忽略旧规则发现请求的结果", async () => {
+    let resolveOld!: (value: Awaited<ReturnType<typeof prFileContent>>) => void;
+    vi.mocked(prFileContent).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        }),
+    );
+    const wrapper = mountPanel();
+    await wrapper.setProps({ headSha: "head-sha-2" });
+    await wrapper.vm.$nextTick();
+    resolveOld({
+      path: "AGENTS.md",
+      revision: "head-sha-1",
+      content: "旧版本规则",
+      truncated: false,
+      binary: false,
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("旧版本规则");
+  });
+
   it("明确展示 AI 输入 Diff 的截断状态", async () => {
     const wrapper = mountPanel({ diff: "a".repeat(65_537) });
 
@@ -224,6 +277,17 @@ describe("AiReviewPanel", () => {
     await wrapper.vm.$nextTick();
 
     expect(wrapper.text()).toContain("Diff 已截断至 64 KiB");
+  });
+
+  it("在 64 KiB 边界内保留完整 Diff 状态", async () => {
+    const wrapper = mountPanel({ diff: "a".repeat(65_536) });
+
+    await wrapper.get(".ai-toolbar button.btn-primary").trigger("click");
+    await flushPromises();
+    finishReview([]);
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("输入状态：完整 Diff");
   });
 
   it("点击建议位置时向页面发出定位请求，并禁用旧版本建议", async () => {
@@ -761,6 +825,37 @@ describe("AiReviewPanel", () => {
       wrapper.get<HTMLTextAreaElement>("textarea[aria-label='评审草稿内容']").element.value,
     ).toBe("第二条");
     expect(wrapper.text()).toContain("已提交 1 条，1 条失败：远端拒绝评论");
+  });
+
+  it("大量行级草稿提交前只读取一次最新 Diff 并保留校验结果", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+    finishReview(
+      Array.from({ length: 100 }, (_, index) => ({
+        file: "src/main.ts",
+        line_start: 1,
+        line_end: 1,
+        severity: "minor" as const,
+        category: "性能",
+        description: `问题 ${index}`,
+        suggestion: null,
+      })),
+    );
+    await wrapper.vm.$nextTick();
+    for (const card of wrapper.findAllComponents(AiSuggestionCard)) {
+      card.vm.$emit("action", "accept");
+    }
+    await wrapper.vm.$nextTick();
+
+    await wrapper.get(".draft-panel button.btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(prDetail).toHaveBeenCalledTimes(1);
+    expect(prDiff).toHaveBeenCalledTimes(1);
+    expect(reviewCommentAdd).toHaveBeenCalledTimes(100);
+    expect(wrapper.findAll(".draft-item")).toHaveLength(0);
+    wrapper.unmount();
   });
 
   it("有未提交草稿时禁止重新评审且不丢弃内容", async () => {

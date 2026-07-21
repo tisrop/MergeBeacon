@@ -60,4 +60,38 @@ describe("useReviewDraftStore", () => {
         .sort(),
     ).toEqual(["manual", "new-ai"]);
   });
+
+  it("刷新 Pinia 后恢复同一 PR 的人工和 AI 草稿", () => {
+    const store = useReviewDraftStore();
+    store.upsert(context, draft("manual", "manual"));
+    store.upsert(context, draft("ai", "ai"));
+    store.flushPersistence();
+
+    setActivePinia(createPinia());
+    const restored = useReviewDraftStore();
+
+    expect(
+      restored
+        .list(context)
+        .map((item) => item.id)
+        .sort(),
+    ).toEqual(["ai", "manual"]);
+  });
+
+  it("恢复时丢弃损坏记录和空正文", () => {
+    localStorage.setItem(
+      "mergebeacon:review-drafts:v1",
+      JSON.stringify({
+        ["github\u0000team\u0000repo\u00009"]: [
+          draft("manual", "valid"),
+          { id: "broken", source: "manual" },
+          { ...draft("ai", "empty"), body: "   " },
+        ],
+      }),
+    );
+    setActivePinia(createPinia());
+    const restored = useReviewDraftStore();
+
+    expect(restored.list(context).map((item) => item.id)).toEqual(["valid"]);
+  });
 });

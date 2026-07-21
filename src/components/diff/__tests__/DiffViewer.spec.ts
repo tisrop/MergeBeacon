@@ -298,6 +298,25 @@ describe("DiffViewer 受控标准 patch", () => {
     ]);
   });
 
+  it("定位评审评论时遵循显式 left/right side", async () => {
+    const left = await mountViewer(standardizedDiff, {
+      locationRequest: { id: 9, path: "src/components/App.ts", line: 2, side: "left" },
+    });
+
+    expect(left.get(".controlled-side-left .diff-location-highlight").attributes("data-line")).toBe(
+      "2",
+    );
+    expect(left.find(".controlled-side-right .diff-location-highlight").exists()).toBe(false);
+
+    const right = await mountViewer(standardizedDiff, {
+      locationRequest: { id: 10, path: "src/components/App.ts", line: 2, side: "right" },
+    });
+    expect(
+      right.get(".controlled-side-right .diff-location-highlight").attributes("data-line"),
+    ).toBe("2");
+    expect(right.find(".controlled-side-left .diff-location-highlight").exists()).toBe(false);
+  });
+
   it("定位 AI 建议时只滚动 Diff 内部容器", async () => {
     const wrapper = await mountViewer(standardizedDiff);
     const scrollRegion = wrapper.get<HTMLElement>(".diff-scroll-region");
@@ -385,6 +404,15 @@ describe("DiffViewer 受控标准 patch", () => {
     });
 
     expect(wrapper.get(".selected-file-name").text()).toBe("src/new-name.ts");
+    expect(
+      wrapper.get(".controlled-side-left .diff-location-highlight").attributes("data-line"),
+    ).toBe("2");
+
+    await wrapper.setProps({
+      locationRequest: { id: 5, path: "src/new-name.ts", line: 2 },
+    });
+    await flushPromises();
+
     expect(
       wrapper.get(".controlled-side-right .diff-location-highlight").attributes("data-line"),
     ).toBe("2");

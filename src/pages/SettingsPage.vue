@@ -26,7 +26,8 @@ const {
   updateTotal,
   updatePhase,
 } = storeToRefs(updates);
-const { isDiffSyncScrollEnabled } = storeToRefs(uiSettings);
+const { isDiffSyncScrollEnabled, isPrDependenciesVisible, isMergeQueueVisible } =
+  storeToRefs(uiSettings);
 
 const platformList: { value: Platform; label: string }[] = [
   { value: "github", label: "GitHub" },
@@ -72,6 +73,14 @@ async function setAutoUpdateCheckEnabled(event: Event) {
 
 function setDiffSyncScrollEnabled(event: Event) {
   uiSettings.setDiffSyncScrollEnabled((event.target as HTMLInputElement).checked);
+}
+
+function setPrDependenciesVisible(event: Event) {
+  uiSettings.setPrDependenciesVisible((event.target as HTMLInputElement).checked);
+}
+
+function setMergeQueueVisible(event: Event) {
+  uiSettings.setMergeQueueVisible((event.target as HTMLInputElement).checked);
 }
 
 async function installUpdate() {
@@ -138,7 +147,7 @@ async function copySupportInfo() {
           </span>
           <div>
             <h3>界面设置</h3>
-            <p>选择需要在侧边栏中显示的代码托管平台。</p>
+            <p>配置评审详情与平台切换器中显示的内容。</p>
           </div>
         </div>
         <div class="setting-row">
@@ -154,6 +163,43 @@ async function copySupportInfo() {
               aria-label="同步 Diff 横向滚动"
               :checked="isDiffSyncScrollEnabled"
               @change="setDiffSyncScrollEnabled"
+            />
+            <span class="toggle-slider" />
+          </label>
+        </div>
+        <div class="setting-row">
+          <span>
+            <span class="setting-label">显示依赖关系</span>
+            <span class="setting-hint">在 PR / MR 详情中展示根据分支推导的依赖关系。</span>
+          </span>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              aria-label="显示依赖关系"
+              :checked="isPrDependenciesVisible"
+              @change="setPrDependenciesVisible"
+            />
+            <span class="toggle-slider" />
+          </label>
+        </div>
+        <div class="setting-row">
+          <span>
+            <span class="setting-label">显示 Merge Queue / Merge Train</span>
+            <span class="setting-hint">
+              {{
+                isPrDependenciesVisible
+                  ? "在 PR / MR 详情中展示平台原生合并队列状态。"
+                  : "需先开启依赖关系，才能展示平台原生合并队列状态。"
+              }}
+            </span>
+          </span>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              aria-label="显示 Merge Queue / Merge Train"
+              :checked="isPrDependenciesVisible && isMergeQueueVisible"
+              :disabled="!isPrDependenciesVisible"
+              @change="setMergeQueueVisible"
             />
             <span class="toggle-slider" />
           </label>

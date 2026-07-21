@@ -1,7 +1,7 @@
 import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
-import type { PrDetail, PrMergeReadiness, User } from "@/types";
+import type { DiffResult, PrDetail, PrMergeReadiness, User } from "@/types";
 import { APP_COMMAND_EVENT } from "@/types/commands";
 import {
   persistPrCreateWarnings,
@@ -27,12 +27,12 @@ const mocks = vi.hoisted(() => ({
   },
   prStore: {
     currentPr: null as PrDetail | null,
-    diff: null,
+    diff: null as DiffResult | null,
     mergeReadiness: null as PrMergeReadiness | null,
     readinessLoading: false,
     readinessError: null as string | null,
     error: null as string | null,
-    fetchPrDetail: vi.fn().mockResolvedValue(undefined),
+    fetchPrDetail: vi.fn().mockResolvedValue(true),
     fetchPrDiff: vi.fn().mockResolvedValue(undefined),
     fetchMergeReadiness: vi.fn().mockResolvedValue(undefined),
     mergePr: vi.fn(),
@@ -60,11 +60,17 @@ const mocks = vi.hoisted(() => ({
         supports_pr_assignee_management: true,
         supports_pr_label_management: true,
         supports_pr_milestone_management: true,
+        merge_queue_kind: "merge_queue",
       },
     },
     errors: {},
     load: vi.fn().mockResolvedValue(undefined),
   },
+  uiSettingsStore: {
+    isPrDependenciesVisible: true,
+    isMergeQueueVisible: true,
+  },
+  reviewCommentAdd: vi.fn(),
 }));
 
 vi.mock("vue-router", () => ({
@@ -79,7 +85,10 @@ vi.mock("@/stores/useReviewInboxStore", () => ({
 vi.mock("@/stores/useCapabilityStore", () => ({
   useCapabilityStore: () => mocks.capabilityStore,
 }));
-vi.mock("@/api", () => ({ reviewCommentAdd: vi.fn() }));
+vi.mock("@/stores/useUiSettingsStore", () => ({
+  useUiSettingsStore: () => mocks.uiSettingsStore,
+}));
+vi.mock("@/api", () => ({ reviewCommentAdd: mocks.reviewCommentAdd }));
 
 enableAutoUnmount(afterEach);
 
@@ -149,6 +158,8 @@ function mountPage(stubs: Record<string, unknown> = {}) {
         ReviewForm: true,
         ReviewList: true,
         AiReviewPanel: true,
+        PrDependenciesPanel: true,
+        PrMergeQueuePanel: true,
         MergeReadinessPanel: true,
         ...stubs,
       },
@@ -173,6 +184,10 @@ describe("PrDetailPage 关闭权限", () => {
     mocks.prStore.readinessLoading = false;
     mocks.prStore.readinessError = null;
     mocks.prStore.error = null;
+    mocks.prStore.diff = null;
+    mocks.uiSettingsStore.isPrDependenciesVisible = true;
+    mocks.uiSettingsStore.isMergeQueueVisible = true;
+    mocks.reviewCommentAdd.mockResolvedValue(undefined);
     mocks.prStore.updateMetadata.mockResolvedValue({
       detail,
       updated_fields: ["title_body"],
@@ -189,6 +204,29 @@ describe("PrDetailPage 关闭权限", () => {
     await button.trigger("click");
 
     expect(mocks.router.push).toHaveBeenCalledWith({ name: "pr-list" });
+  });
+
+  it("详情不存在时不再请求 Diff 和合并状态", async () => {
+    mocks.prStore.currentPr = null;
+    mocks.prStore.fetchPrDetail.mockResolvedValueOnce(false);
+
+    mountPage();
+    await flushPromises();
+
+    expect(mocks.prStore.fetchPrDetail).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.fetchPrDiff).not.toHaveBeenCalled();
+    expect(mocks.prStore.fetchMergeReadiness).not.toHaveBeenCalled();
+  });
+
+  it("详情 Action 没有返回值但已写入当前详情时仍加载 Diff", async () => {
+    mocks.prStore.currentPr = detail;
+    mocks.prStore.fetchPrDetail.mockResolvedValueOnce(undefined);
+
+    mountPage();
+    await flushPromises();
+
+    expect(mocks.prStore.fetchPrDiff).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.fetchMergeReadiness).toHaveBeenCalledWith("github", "owner", "repo", 42);
   });
 
   it("非作者且没有仓库写入权限时禁用关闭按钮", async () => {
@@ -279,6 +317,106 @@ describe("PrDetailPage 关闭权限", () => {
     );
   });
 
+  it("按 Diff、依赖关系、评审意见和 AI 评审排列页签", () => {
+    const wrapper = mountPage();
+
+    expect(wrapper.findAll(".tabs button").map((button) => button.text())).toEqual([
+      "Diff",
+      "依赖关系",
+      "评审意见",
+      "AI 评审",
+    ]);
+  });
+
+  it("依赖关系页签按需挂载且切换后保留状态", async () => {
+    const mounted = vi.fn();
+    const wrapper = mountPage({
+      PrDependenciesPanel: {
+        data: () => ({ marker: "" }),
+        mounted,
+        template: `<input data-testid="dependency-marker" v-model="marker" />`,
+      },
+    });
+    const tab = (label: string) =>
+      wrapper.findAll(".tabs button").find((button) => button.text() === label)!;
+
+    expect(wrapper.find('[data-testid="dependency-marker"]').exists()).toBe(false);
+    await tab("依赖关系").trigger("click");
+    await wrapper.get<HTMLInputElement>('[data-testid="dependency-marker"]').setValue("已加载");
+    await tab("Diff").trigger("click");
+    await tab("依赖关系").trigger("click");
+
+    expect(mounted).toHaveBeenCalledOnce();
+    expect(wrapper.get<HTMLInputElement>('[data-testid="dependency-marker"]').element.value).toBe(
+      "已加载",
+    );
+  });
+
+  it("依赖关系页签向合并队列面板传递平台能力和当前版本", async () => {
+    const wrapper = mountPage({
+      PrMergeQueuePanel: {
+        props: ["platform", "prNumber", "revision", "queueKind"],
+        template: `<span data-testid="queue-context">
+          {{ platform }}:{{ prNumber }}:{{ revision }}:{{ queueKind }}
+        </span>`,
+      },
+    });
+    const dependenciesTab = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text() === "依赖关系");
+
+    await dependenciesTab!.trigger("click");
+
+    expect(wrapper.get('[data-testid="queue-context"]').text()).toContain("github:42::merge_queue");
+  });
+
+  it("关闭依赖关系时即使队列偏好开启也不展示合并上下文", () => {
+    mocks.uiSettingsStore.isPrDependenciesVisible = false;
+    const wrapper = mountPage({
+      PrDependenciesPanel: { template: '<span data-testid="dependency-panel" />' },
+      PrMergeQueuePanel: { template: '<span data-testid="merge-queue-panel" />' },
+    });
+
+    expect(wrapper.findAll(".tabs button").map((button) => button.text())).not.toContain(
+      "依赖关系",
+    );
+    expect(wrapper.find('[data-testid="dependency-panel"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="merge-queue-panel"]').exists()).toBe(false);
+  });
+
+  it("可以仅展示分支依赖而不挂载 Merge Queue 面板", async () => {
+    mocks.uiSettingsStore.isMergeQueueVisible = false;
+    const wrapper = mountPage({
+      PrDependenciesPanel: { template: '<span data-testid="dependency-panel" />' },
+      PrMergeQueuePanel: { template: '<span data-testid="merge-queue-panel" />' },
+    });
+    const dependenciesTab = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text() === "依赖关系");
+
+    await dependenciesTab!.trigger("click");
+
+    expect(wrapper.find('[data-testid="dependency-panel"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="merge-queue-panel"]').exists()).toBe(false);
+  });
+
+  it("两个合并上下文开关都关闭时隐藏依赖关系页签", () => {
+    mocks.uiSettingsStore.isPrDependenciesVisible = false;
+    mocks.uiSettingsStore.isMergeQueueVisible = false;
+    const wrapper = mountPage({
+      PrDependenciesPanel: { template: '<span data-testid="dependency-panel" />' },
+      PrMergeQueuePanel: { template: '<span data-testid="merge-queue-panel" />' },
+    });
+
+    expect(wrapper.findAll(".tabs button").map((button) => button.text())).toEqual([
+      "Diff",
+      "评审意见",
+      "AI 评审",
+    ]);
+    expect(wrapper.find('[data-testid="dependency-panel"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="merge-queue-panel"]').exists()).toBe(false);
+  });
+
   it("从 AI 建议切换到 Diff 并传递受控定位请求", async () => {
     const wrapper = mountPage({
       AiReviewPanel: {
@@ -347,6 +485,126 @@ describe("PrDetailPage 关闭权限", () => {
         .find((button) => button.text() === "AI 评审")
         ?.classes(),
     ).toContain("active");
+  });
+
+  it("无行号的评审评论跳转时传递文件级定位请求", async () => {
+    const wrapper = mountPage({
+      ReviewList: {
+        emits: ["locateComment"],
+        template: `<button data-testid="locate-review-file" @click="$emit('locateComment', 'src/old.ts', null, 'left')">定位文件</button>`,
+      },
+      DiffViewer: {
+        props: ["locationRequest"],
+        template: `<span data-testid="review-file-request">{{ locationRequest?.path }}|{{ locationRequest?.line ?? 'file' }}|{{ locationRequest?.side }}</span>`,
+      },
+    });
+
+    await wrapper.get('[data-testid="locate-review-file"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="review-file-request"]').text()).toBe("src/old.ts|file|left");
+    expect(
+      wrapper
+        .findAll(".tabs button")
+        .find((button) => button.text() === "Diff")
+        ?.classes(),
+    ).toContain("active");
+  });
+
+  it("提交行级评论时按 left/right side 提取对应 hunk", async () => {
+    const patch =
+      "@@ -1,15 +1,0 @@\n-old1\n-old2\n-old3\n-old4\n-old5\n-old6\n-old7\n-old8\n-old9\n-old10\n-old11\n-old12\n-old13\n-old14\n-old15\n@@ -20,0 +10 @@\n+newcode";
+    mocks.prStore.diff = {
+      diff: patch,
+      files: [
+        {
+          filename: "src/main.ts",
+          status: "modified",
+          patch,
+          additions: 1,
+          deletions: 15,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: "src/main.ts",
+          old_path: "src/main.ts",
+          new_path: "src/main.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 15,
+          content_kind: "text",
+          patch,
+          hunks: [
+            {
+              header: "@@ -1,15 +1,0 @@",
+              old_start: 1,
+              old_count: 15,
+              new_start: 1,
+              new_count: 0,
+              section_header: null,
+              lines: Array.from({ length: 15 }, (_, index) => ({
+                kind: "deletion",
+                content: `old${index + 1}`,
+                old_line: index + 1,
+                new_line: null,
+              })),
+            },
+            {
+              header: "@@ -20,0 +10 @@",
+              old_start: 20,
+              old_count: 0,
+              new_start: 10,
+              new_count: 1,
+              section_header: null,
+              lines: [{ kind: "addition", content: "newcode", old_line: null, new_line: 10 }],
+            },
+          ],
+          message: null,
+        },
+      ],
+    };
+    const wrapper = mountPage({
+      DiffViewer: {
+        emits: ["addComment"],
+        template: `<div>
+          <button data-testid="add-left-comment" @click="$emit('addComment', 'src/main.ts', 10, 10, 'left', 'left comment')">left</button>
+          <button data-testid="add-right-comment" @click="$emit('addComment', 'src/main.ts', 10, 10, 'right', 'right comment')">right</button>
+        </div>`,
+      },
+    });
+
+    await wrapper.get('[data-testid="add-left-comment"]').trigger("click");
+    await flushPromises();
+    expect(mocks.reviewCommentAdd).toHaveBeenLastCalledWith(
+      "github",
+      "owner",
+      "repo",
+      42,
+      "abc123",
+      "src/main.ts",
+      null,
+      10,
+      "left",
+      "left comment",
+      expect.stringContaining("-old10"),
+    );
+
+    await wrapper.get('[data-testid="add-right-comment"]').trigger("click");
+    await flushPromises();
+    expect(mocks.reviewCommentAdd).toHaveBeenLastCalledWith(
+      "github",
+      "owner",
+      "repo",
+      42,
+      "abc123",
+      "src/main.ts",
+      null,
+      10,
+      "right",
+      "right comment",
+      expect.stringContaining("+newcode"),
+    );
   });
 
   it("仅在 Diff 标签启用侧栏专注模式", async () => {

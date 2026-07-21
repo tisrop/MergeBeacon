@@ -1,8 +1,9 @@
 use mergebeacon_lib::error::AppError;
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
-    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
-    PrMilestone, PrState, PrSummary, ReadinessState, ReviewEvent, ReviewInboxCategory, ReviewInboxRelationship, User,
+    MergeQueueState, PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions,
+    PrMetadataUpdate, PrMilestone, PrState, PrSummary, ReadinessState, ReviewEvent, ReviewInboxCategory,
+    ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{gitlab::GitLabAdapter, GitPlatform};
 use wiremock::matchers::{body_json, method, path, query_param};
@@ -108,6 +109,285 @@ async fn test_gitlab_lists_branches_and_creates_draft_from_fork() {
         .await
         .unwrap();
     assert_eq!(number, 12);
+}
+
+#[tokio::test]
+async fn test_gitlab_lists_pr_dependency_candidates() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Fsubgroup%2Frepo/merge_requests/12"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "iid": 12,
+            "title": "Stack child",
+            "state": "opened",
+            "merged_at": null,
+            "source_branch": "feature-b",
+            "target_branch": "feature-a",
+            "source_project_id": 77,
+            "target_project_id": 77
+        })))
+        .mount(&mock_server)
+        .await;
+    for (filter, value) in [("target_branch", "feature-b"), ("source_branch", "feature-a")] {
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/group%2Fsubgroup%2Frepo/merge_requests"))
+            .and(query_param("state", "all"))
+            .and(query_param(filter, value))
+            .and(query_param("per_page", "100"))
+            .and(query_param("page", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&mock_server)
+            .await;
+    }
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let result =
+        adapter.list_pr_dependency_candidates("group/subgroup", "repo", 12).await.expect("dependency candidates");
+
+    assert!(!result.truncated);
+    assert_eq!(result.current.number, 12);
+    let candidates = result.items;
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].number, 12);
+    assert_eq!(candidates[0].source_repository, "gitlab-project:77");
+    assert_eq!(candidates[0].target_repository, "gitlab-project:77");
+}
+
+#[tokio::test]
+async fn test_gitlab_reads_merge_train_position_and_failed_pipeline() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Fsubgroup%2Frepo/merge_requests/12"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "iid": 12,
+            "target_branch": "main",
+            "sha": "mr-head-sha"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Fsubgroup%2Frepo/merge_trains/main"))
+        .and(query_param("scope", "active"))
+        .and(query_param("sort", "asc"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).insert_header("x-total", "2").set_body_json(serde_json::json!([
+            {
+                "id": 100,
+                "status": "idle",
+                "target_branch": "main",
+                "merge_request": { "iid": 11 },
+                "pipeline": null,
+                "created_at": "2026-07-21T00:00:00Z",
+                "updated_at": "2026-07-21T00:01:00Z"
+            },
+            {
+                "id": 101,
+                "status": "fresh",
+                "target_branch": "main",
+                "merge_request": { "iid": 12 },
+                "pipeline": { "status": "failed", "sha": "train-sha" },
+                "created_at": "2026-07-21T00:02:00Z",
+                "updated_at": "2026-07-21T00:03:00Z"
+            }
+        ])))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("group/subgroup", "repo", 12).await.unwrap();
+
+    assert!(status.available);
+    assert_eq!(status.state, MergeQueueState::Failed);
+    assert_eq!(status.position, Some(2));
+    assert_eq!(status.total, Some(2));
+    assert_eq!(status.pipeline_status.as_deref(), Some("failed"));
+    assert_eq!(status.head_sha.as_deref(), Some("train-sha"));
+    assert_eq!(status.failure_reason.as_deref(), Some("Merge Train Pipeline 状态为 failed"));
+}
+
+#[tokio::test]
+async fn test_gitlab_reports_unavailable_merge_train_api() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/12"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "iid": 12,
+            "target_branch": "main",
+            "sha": "mr-head-sha"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_trains/main"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("group", "repo", 12).await.unwrap();
+
+    assert!(!status.available);
+    assert_eq!(status.state, MergeQueueState::Unknown);
+    assert_eq!(status.target_branch.as_deref(), Some("main"));
+    assert!(status.failure_reason.as_deref().unwrap_or_default().contains("许可证"));
+}
+
+#[tokio::test]
+async fn test_gitlab_reports_mr_not_in_merge_train() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/12"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "iid": 12,
+            "target_branch": "main",
+            "sha": "mr-head-sha"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_trains/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_trains/merge_requests/12"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("group", "repo", 12).await.unwrap();
+
+    assert!(status.available);
+    assert_eq!(status.state, MergeQueueState::NotQueued);
+    assert_eq!(status.target_branch.as_deref(), Some("main"));
+    assert_eq!(status.head_sha.as_deref(), Some("mr-head-sha"));
+}
+
+#[tokio::test]
+async fn test_gitlab_does_not_fetch_an_extra_page_when_total_is_exactly_page_size() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/999"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "iid": 999,
+            "target_branch": "main",
+            "sha": "mr-head-sha"
+        })))
+        .mount(&mock_server)
+        .await;
+    let entries = (1..=100)
+        .map(|iid| {
+            serde_json::json!({
+                "id": iid,
+                "status": "idle",
+                "target_branch": "main",
+                "merge_request": { "iid": iid },
+                "pipeline": null
+            })
+        })
+        .collect::<Vec<_>>();
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_trains/main"))
+        .and(query_param("scope", "active"))
+        .and(query_param("sort", "asc"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).insert_header("x-total", "100").set_body_json(entries))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_trains/main"))
+        .and(query_param("page", "2"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_trains/merge_requests/999"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("group", "repo", 999).await.unwrap();
+
+    assert!(status.available);
+    assert_eq!(status.state, MergeQueueState::NotQueued);
+}
+
+#[tokio::test]
+async fn test_gitlab_reads_merge_train_position_across_pages() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/101"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "iid": 101,
+            "target_branch": "main",
+            "sha": "mr-head-sha"
+        })))
+        .mount(&mock_server)
+        .await;
+    let first_page = (1..=100)
+        .map(|iid| {
+            serde_json::json!({
+                "id": iid,
+                "status": "idle",
+                "target_branch": "main",
+                "merge_request": { "iid": iid },
+                "pipeline": null
+            })
+        })
+        .collect::<Vec<_>>();
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_trains/main"))
+        .and(query_param("scope", "active"))
+        .and(query_param("sort", "asc"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-next-page", "2")
+                .insert_header("x-total-pages", "2")
+                .insert_header("x-total", "101")
+                .set_body_json(first_page),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_trains/main"))
+        .and(query_param("scope", "active"))
+        .and(query_param("sort", "asc"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "2"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-next-page", "")
+                .insert_header("x-total-pages", "2")
+                .insert_header("x-total", "101")
+                .set_body_json(serde_json::json!([{
+                    "id": 101,
+                    "status": "fresh",
+                    "target_branch": "main",
+                    "merge_request": { "iid": 101 },
+                    "pipeline": { "status": "running", "sha": "train-sha" },
+                    "created_at": "2026-07-21T00:00:00Z",
+                    "updated_at": "2026-07-21T00:01:00Z"
+                }])),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("group", "repo", 101).await.unwrap();
+
+    assert!(status.available);
+    assert_eq!(status.state, MergeQueueState::Waiting);
+    assert_eq!(status.position, Some(101));
+    assert_eq!(status.total, Some(101));
+    assert_eq!(status.head_sha.as_deref(), Some("train-sha"));
 }
 
 #[tokio::test]
@@ -753,6 +1033,22 @@ fn gitlab_position() -> serde_json::Value {
     })
 }
 
+fn gitlab_inline_discussion(id: u64) -> serde_json::Value {
+    serde_json::json!({
+        "id": format!("thread-{id}"),
+        "notes": [{
+            "id": id,
+            "body": format!("comment-{id}"),
+            "system": false,
+            "resolvable": true,
+            "resolved": false,
+            "author": gitlab_user(),
+            "created_at": "2026-07-15T10:00:00Z",
+            "position": gitlab_position()
+        }]
+    })
+}
+
 #[tokio::test]
 async fn test_gitlab_create_single_line_comment() {
     use wiremock::matchers::body_json;
@@ -801,6 +1097,7 @@ async fn test_gitlab_create_single_line_comment() {
     assert_eq!(comment.id, serde_json::json!(42));
     assert_eq!(comment.path, "src/lib.rs");
     assert_eq!(comment.line, Some(12));
+    assert_eq!(comment.side.as_deref(), Some("right"));
     assert_eq!(comment.commit_id.as_deref(), Some("head-sha"));
 }
 
@@ -870,6 +1167,7 @@ async fn test_gitlab_create_multiline_old_side_comment() {
 
     assert_eq!(comment.line, Some(9));
     assert_eq!(comment.start_line, Some(7));
+    assert_eq!(comment.side.as_deref(), Some("left"));
 }
 
 #[tokio::test]
@@ -961,6 +1259,7 @@ async fn test_gitlab_list_inline_comments_filters_regular_and_system_notes() {
     assert_eq!(comments.len(), 2);
     assert_eq!(comments[0].id, serde_json::json!(50));
     assert_eq!(comments[0].line, Some(12));
+    assert_eq!(comments[0].side.as_deref(), Some("right"));
     assert_eq!(comments[0].original_line, Some(10));
     assert_eq!(comments[0].thread_id, "inline");
     assert_eq!(comments[0].resolved, Some(false));
@@ -968,6 +1267,52 @@ async fn test_gitlab_list_inline_comments_filters_regular_and_system_notes() {
     assert_eq!(comments[1].id, serde_json::json!(53));
     assert_eq!(comments[1].reply_to_id.as_deref(), Some("50"));
     assert_eq!(comments[1].line, Some(12));
+}
+
+#[tokio::test]
+async fn test_gitlab_list_inline_comments_fetches_the_page_after_a_full_boundary() {
+    let mock_server = MockServer::start().await;
+    let first_page: Vec<_> = (1..=100).map(gitlab_inline_discussion).collect();
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/9/discussions"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(first_page))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/9/discussions"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(vec![gitlab_inline_discussion(101)]))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let comments = adapter.list_pr_comments("group", "repo", 9).await.expect("should fetch every discussion page");
+
+    assert_eq!(comments.len(), 101);
+    assert_eq!(comments.first().map(|comment| &comment.id), Some(&serde_json::json!(1)));
+    assert_eq!(comments.last().map(|comment| &comment.id), Some(&serde_json::json!(101)));
+}
+
+#[tokio::test]
+async fn test_gitlab_list_inline_comments_reports_platform_errors() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/9/discussions"))
+        .respond_with(ResponseTemplate::new(503).set_body_string(r#"{"message":"temporarily unavailable"}"#))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let error = adapter.list_pr_comments("group", "repo", 9).await.expect_err("platform errors must be returned");
+
+    assert!(error.to_string().contains("GitLab API 503 Service Unavailable"));
+    assert!(error.to_string().contains("temporarily unavailable"));
 }
 
 #[tokio::test]

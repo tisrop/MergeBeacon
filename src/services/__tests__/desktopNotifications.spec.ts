@@ -8,6 +8,7 @@ import {
 import {
   initializeNotificationActions,
   notificationPermissionGranted,
+  showDesktopTestNotification,
   showInboxNotification,
 } from "@/services/desktopNotifications";
 
@@ -33,24 +34,37 @@ describe("desktopNotifications", () => {
   beforeEach(() => {
     vi.mocked(isDesktopRuntime).mockReturnValue(true);
     vi.mocked(sendDesktopNotification).mockReset();
+    vi.mocked(sendDesktopNotification).mockResolvedValue(undefined);
     vi.mocked(listenDesktopNotificationActions).mockReset();
     vi.mocked(desktopNotificationPermissionGranted).mockReset();
   });
 
-  it("私有仓库通知不包含仓库名和标题", () => {
-    showInboxNotification(event, false);
+  it("私有仓库通知不包含仓库名和标题", async () => {
+    await showInboxNotification(event, false);
 
     expect(sendDesktopNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         title: "Pull Request 有新评论",
         body: "某个私有仓库的 Pull Request 有新动态",
-        private: true,
         extra: { platform: "github", owner: "private-team", repo: "secret", number: 7 },
       }),
     );
     const payload = vi.mocked(sendDesktopNotification).mock.calls[0][0];
     expect(payload.body).not.toContain("private-team");
     expect(payload.body).not.toContain("Do not expose");
+  });
+
+  it("系统测试通知不注册 PR 点击动作或携带仓库信息", async () => {
+    await showDesktopTestNotification();
+
+    expect(sendDesktopNotification).toHaveBeenCalledWith({
+      id: expect.any(Number),
+      title: "MergeBeacon 测试通知",
+      body: "系统通知已连接。退出 MergeBeacon 后不会继续检查 PR / MR 动态。",
+      group: "mergebeacon:test",
+      actionable: false,
+      extra: {},
+    });
   });
 
   it("通知点击只接受完整合法的 PR 定位信息", async () => {

@@ -33,6 +33,12 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 eventsource-stream = "0.2"
 urlencoding = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-usernotifications = "0.3.1"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify-rust = "4.18.0"
+
 [dev-dependencies]
 wiremock = "0.6"
 

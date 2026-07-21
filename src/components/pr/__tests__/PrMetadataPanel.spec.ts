@@ -54,6 +54,7 @@ function capabilities(overrides: Partial<PlatformCapabilities> = {}): PlatformCa
     supports_pr_label_management: true,
     supports_pr_milestone_management: true,
     supports_pr_creation: true,
+    merge_queue_kind: "merge_queue",
     ...overrides,
   };
 }

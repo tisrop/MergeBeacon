@@ -22,6 +22,7 @@ import {
   reviewCommentAdd,
   reviewSubmit,
 } from "@/api";
+import { discoverAiRepositoryRules, type DiscoveredAiRules } from "@/services/aiRepositoryRules";
 import { getErrorMessage } from "@/utils/error";
 import { draftPositionIsCurrent } from "@/utils/aiReviewDraft";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -85,6 +86,7 @@ const lastSuccessfulHeadSha = ref(loadLastSuccessfulHeadSha());
 const repositoryRules = ref(
   loadRepositoryRules({ platform: props.platform, owner: props.owner, repo: props.repo }),
 );
+const discoveredRules = ref<DiscoveredAiRules | null>(null);
 const rulesStatus = ref("");
 const history = ref<AiReviewHistoryEntry[]>(
   loadAiReviewHistory({
@@ -165,6 +167,7 @@ let historySequence = 0;
 let reviewSequence = 0;
 let disposed = false;
 let resultPersistenceTimer: ReturnType<typeof setTimeout> | null = null;
+let rulesRequestSequence = 0;
 
 const foci: { value: AiReviewFocus; label: string }[] = [
   { value: "all", label: "全部" },
@@ -195,13 +198,43 @@ watch(
   },
 );
 
+watch(
+  () => `${props.platform}:${props.owner}:${props.repo}:${props.prNumber}:${props.headSha}`,
+  async () => {
+    const sequence = ++rulesRequestSequence;
+    discoveredRules.value = null;
+    if (!props.headSha) return;
+    try {
+      const discovered = await discoverAiRepositoryRules({
+        platform: props.platform,
+        owner: props.owner,
+        repo: props.repo,
+        revision: props.headSha,
+      });
+      if (sequence === rulesRequestSequence && !disposed) discoveredRules.value = discovered;
+    } catch (cause) {
+      if (sequence === rulesRequestSequence && !disposed) {
+        rulesStatus.value = `自动读取仓库规则失败：${getErrorMessage(cause, "未知错误")}`;
+      }
+    }
+  },
+  { immediate: true },
+);
+
 function saveRules(): void {
   repositoryRules.value = saveRepositoryRules(reviewReference.value, repositoryRules.value);
   rulesStatus.value = repositoryRules.value ? "仓库级规则已保存" : "仓库级规则已清除";
 }
 
 function reviewContextWithRules(context: PrContext | null): PrContext | null {
-  const rules = repositoryRules.value.trim();
+  const rules = [
+    discoveredRules.value
+      ? `仓库规则文件（${discoveredRules.value.path}）：\n${discoveredRules.value.content}`
+      : "",
+    repositoryRules.value.trim() ? `本地评审规则：\n${repositoryRules.value.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   if (!context && !rules) return null;
   return {
     title: context?.title ?? "",
@@ -667,7 +700,12 @@ async function submitDrafts() {
     <div class="ai-context-tools">
       <details class="repository-rules">
         <summary>仓库级 AI 规则</summary>
-        <p>规则按平台和仓库保存在本机，并随每次 AI 评审发送给当前模型。</p>
+        <p>本地规则按平台和仓库保存在本机；仓库规则文件按当前提交版本自动读取。</p>
+        <div v-if="discoveredRules" class="discovered-rules" role="status">
+          <span>已发现规则文件：</span>
+          <code>{{ discoveredRules.path }}</code>
+          <pre>{{ discoveredRules.content }}</pre>
+        </div>
         <textarea
           v-model="repositoryRules"
           class="input"
@@ -888,6 +926,30 @@ async function submitDrafts() {
   margin: var(--space-2) 0;
   color: var(--color-text-tertiary);
   font-size: 12px;
+  line-height: 1.5;
+}
+
+.discovered-rules {
+  margin-bottom: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.discovered-rules code {
+  color: var(--color-text);
+}
+
+.discovered-rules pre {
+  max-height: 160px;
+  margin: var(--space-2) 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-text-tertiary);
+  font: inherit;
   line-height: 1.5;
 }
 

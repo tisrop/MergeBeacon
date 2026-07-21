@@ -158,6 +158,106 @@ pub struct PrDetail {
     pub metadata_permissions: PrMetadataPermissions,
 }
 
+#[derive(Debug, Clone)]
+pub struct PrDependencyCandidate {
+    pub number: u64,
+    pub title: String,
+    pub state: PrState,
+    pub source_branch: String,
+    pub target_branch: String,
+    pub source_repository: String,
+    pub target_repository: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrDependencyCandidates {
+    pub current: PrDependencyCandidate,
+    pub items: Vec<PrDependencyCandidate>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrDependencyNode {
+    pub number: u64,
+    pub title: String,
+    pub state: PrState,
+    pub source_branch: String,
+    pub target_branch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrDependencyEdge {
+    pub parent_number: u64,
+    pub child_number: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrDependencyGraph {
+    pub current_number: u64,
+    pub nodes: Vec<PrDependencyNode>,
+    pub edges: Vec<PrDependencyEdge>,
+    pub suggested_merge_order: Vec<u64>,
+    pub blocking_parent_numbers: Vec<u64>,
+    pub has_cycle: bool,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeQueueKind {
+    MergeQueue,
+    MergeTrain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeQueueState {
+    NotQueued,
+    Queued,
+    Waiting,
+    Ready,
+    Blocked,
+    Merging,
+    Failed,
+    Merged,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrMergeQueueStatus {
+    pub kind: MergeQueueKind,
+    pub available: bool,
+    pub state: MergeQueueState,
+    pub position: Option<u32>,
+    pub total: Option<u32>,
+    pub target_branch: Option<String>,
+    pub enqueued_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub estimated_time_seconds: Option<u64>,
+    pub head_sha: Option<String>,
+    pub pipeline_status: Option<String>,
+    pub failure_reason: Option<String>,
+}
+
+impl PrMergeQueueStatus {
+    pub fn unavailable(kind: MergeQueueKind, reason: impl Into<String>) -> Self {
+        Self {
+            kind,
+            available: false,
+            state: MergeQueueState::Unknown,
+            position: None,
+            total: None,
+            target_branch: None,
+            enqueued_at: None,
+            updated_at: None,
+            estimated_time_seconds: None,
+            head_sha: None,
+            pipeline_status: None,
+            failure_reason: Some(reason.into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrMetadataUpdate {
     pub title: String,
@@ -442,6 +542,8 @@ pub struct PrComment {
     pub path: String,
     pub line: Option<u32>,
     pub start_line: Option<u32>,
+    #[serde(default)]
+    pub side: Option<String>,
     pub author: User,
     pub created_at: String,
     pub commit_id: Option<String>,

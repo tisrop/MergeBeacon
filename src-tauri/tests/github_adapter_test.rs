@@ -1,7 +1,8 @@
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
-    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
-    PrMilestone, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
+    MergeQueueState, PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions,
+    PrMetadataUpdate, PrMilestone, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship,
+    User,
 };
 use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
 use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
@@ -444,6 +445,192 @@ async fn test_github_list_prs() {
 }
 
 #[tokio::test]
+async fn test_github_lists_pr_dependency_candidates() {
+    let mock_server = MockServer::start().await;
+    let pull = |number: u64, source: &str, target: &str| {
+        serde_json::json!({
+            "number": number,
+            "title": format!("Stack PR {number}"),
+            "state": "open",
+            "merged_at": null,
+            "head": { "ref": source, "repo": { "full_name": "octocat/hello-world" } },
+            "base": { "ref": target, "repo": { "full_name": "octocat/hello-world" } }
+        })
+    };
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/pulls/2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(pull(2, "feature-b", "feature-a")))
+        .mount(&mock_server)
+        .await;
+    let neighbors = [
+        ("base", "feature-b", vec![pull(3, "feature-c", "feature-b")]),
+        ("head", "octocat:feature-a", vec![pull(1, "feature-a", "main")]),
+        ("base", "feature-c", vec![pull(4, "feature-d", "feature-c")]),
+        ("head", "octocat:feature-b", vec![pull(2, "feature-b", "feature-a")]),
+        ("base", "feature-a", vec![pull(2, "feature-b", "feature-a")]),
+        ("head", "octocat:main", Vec::new()),
+        ("base", "feature-d", Vec::new()),
+        ("head", "octocat:feature-c", vec![pull(3, "feature-c", "feature-b")]),
+    ];
+    for (filter, value, response) in neighbors {
+        Mock::given(method("GET"))
+            .and(path("/repos/octocat/hello-world/pulls"))
+            .and(query_param("state", "all"))
+            .and(query_param(filter, value))
+            .and(query_param("per_page", "100"))
+            .and(query_param("page", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&mock_server)
+            .await;
+    }
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let result =
+        adapter.list_pr_dependency_candidates("octocat", "hello-world", 2).await.expect("dependency candidates");
+    assert!(!result.truncated);
+    assert_eq!(result.current.number, 2);
+    let candidates = result.items;
+    assert_eq!(candidates.iter().map(|candidate| candidate.number).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+    assert_eq!(candidates[3].source_branch, "feature-d");
+    assert_eq!(candidates[3].target_branch, "feature-c");
+}
+
+#[tokio::test]
+async fn test_github_reads_merge_queue_position_and_state() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("query MergeQueueStatus"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "baseRefName": "main",
+                        "headRefOid": "head-sha",
+                        "mergeQueue": { "entries": { "totalCount": 5 } },
+                        "mergeQueueEntry": {
+                            "position": 2,
+                            "state": "AWAITING_CHECKS",
+                            "enqueuedAt": "2026-07-21T01:00:00Z",
+                            "estimatedTimeToMerge": 420,
+                            "headCommit": { "oid": "queue-sha" }
+                        }
+                    }
+                }
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(status.available);
+    assert_eq!(status.state, MergeQueueState::Waiting);
+    assert_eq!(status.position, Some(2));
+    assert_eq!(status.total, Some(5));
+    assert_eq!(status.target_branch.as_deref(), Some("main"));
+    assert_eq!(status.head_sha.as_deref(), Some("queue-sha"));
+    assert_eq!(status.estimated_time_seconds, Some(420));
+}
+
+#[tokio::test]
+async fn test_github_reports_when_target_branch_has_no_merge_queue() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "baseRefName": "main",
+                        "headRefOid": "head-sha",
+                        "mergeQueue": null,
+                        "mergeQueueEntry": null
+                    }
+                }
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(!status.available);
+    assert_eq!(status.state, MergeQueueState::Unknown);
+    assert_eq!(status.failure_reason.as_deref(), Some("目标分支未启用 GitHub Merge Queue"));
+}
+
+#[tokio::test]
+async fn test_github_reports_configured_queue_when_pr_is_not_queued() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "baseRefName": "main",
+                        "headRefOid": "head-sha",
+                        "mergeQueue": { "entries": { "totalCount": 3 } },
+                        "mergeQueueEntry": null
+                    }
+                }
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(status.available);
+    assert_eq!(status.state, MergeQueueState::NotQueued);
+    assert_eq!(status.total, Some(3));
+}
+
+#[tokio::test]
+async fn test_github_reports_older_enterprise_schema_as_unavailable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "errors": [{
+                "message": "Unknown field MERGEQUEUEENTRY on PullRequest"
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let status = adapter.get_pr_merge_queue_status("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(!status.available);
+    assert!(status.failure_reason.as_deref().unwrap_or_default().contains("Enterprise"));
+}
+
+#[tokio::test]
+async fn test_github_keeps_unrelated_graphql_errors_actionable() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "errors": [{ "message": "Resource not accessible by integration" }]
+        })))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let error = adapter
+        .get_pr_merge_queue_status("octocat", "hello-world", 42)
+        .await
+        .expect_err("unrelated GraphQL errors must remain visible");
+
+    assert!(error.to_string().contains("Resource not accessible"));
+}
+
+#[tokio::test]
 async fn test_github_list_prs_keeps_open_items_when_status_batch_fails() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -527,6 +714,7 @@ async fn test_github_list_pr_comments_uses_review_threads_with_resolution_state(
                                 "isResolved": false,
                                 "viewerCanResolve": true,
                                 "viewerCanUnresolve": false,
+                                "diffSide": "RIGHT",
                                 "comments": {
                                     "nodes": [
                                         {
@@ -594,6 +782,7 @@ async fn test_github_list_pr_comments_uses_review_threads_with_resolution_state(
     assert_eq!(comments.len(), 2);
     assert_eq!(comments[0].id, serde_json::json!(100));
     assert_eq!(comments[0].thread_id, "PRRT_thread_1");
+    assert_eq!(comments[0].side.as_deref(), Some("right"));
     assert_eq!(comments[0].resolved, Some(false));
     assert!(comments[0].resolvable);
     assert_eq!(comments[1].thread_id, "PRRT_thread_1");
@@ -602,7 +791,10 @@ async fn test_github_list_pr_comments_uses_review_threads_with_resolution_state(
 
     let requests = mock_server.received_requests().await.expect("requests");
     let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("GraphQL JSON body");
-    assert!(body["query"].as_str().unwrap_or_default().contains("reviewThreads"));
+    let query = body["query"].as_str().unwrap_or_default();
+    assert!(query.contains("reviewThreads"));
+    assert!(query.contains("viewerCanUnresolve\n                                        diffSide"));
+    assert!(!query.contains("startLine\n                                                diffSide"));
     assert_eq!(body["variables"]["owner"], "octocat");
     assert_eq!(body["variables"]["repo"], "hello-world");
     assert_eq!(body["variables"]["number"], 42);
@@ -625,6 +817,7 @@ async fn test_github_list_pr_comments_paginates_threads_and_comments() {
                                 "isResolved": false,
                                 "viewerCanResolve": true,
                                 "viewerCanUnresolve": false,
+                                "diffSide": "RIGHT",
                                 "comments": {
                                     "nodes": [github_review_comment(100, "first comment page")],
                                     "pageInfo": { "hasNextPage": true, "endCursor": "comment_cursor_1" }
@@ -671,6 +864,7 @@ async fn test_github_list_pr_comments_paginates_threads_and_comments() {
                                 "isResolved": true,
                                 "viewerCanResolve": false,
                                 "viewerCanUnresolve": true,
+                                "diffSide": "LEFT",
                                 "comments": {
                                     "nodes": [github_review_comment(200, "second thread page")],
                                     "pageInfo": { "hasNextPage": false, "endCursor": null }
@@ -699,6 +893,15 @@ async fn test_github_list_pr_comments_paginates_threads_and_comments() {
     assert_eq!(comments[2].thread_id, "PRRT_thread_2");
     assert_eq!(comments[2].resolved, Some(true));
     assert!(comments[2].resolvable);
+
+    let requests = mock_server.received_requests().await.expect("requests");
+    let comment_page_query = requests
+        .iter()
+        .filter_map(|request| serde_json::from_slice::<serde_json::Value>(&request.body).ok())
+        .filter_map(|body| body["query"].as_str().map(str::to_string))
+        .find(|query| query.contains("query ReviewThreadComments"))
+        .expect("paginated comment query");
+    assert!(!comment_page_query.contains("diffSide"));
 }
 
 #[tokio::test]

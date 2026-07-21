@@ -92,6 +92,8 @@ function platformCapabilities(platform: Platform): PlatformCapabilities {
     supports_pr_label_management: true,
     supports_pr_milestone_management: true,
     supports_pr_creation: true,
+    merge_queue_kind:
+      platform === "github" ? "merge_queue" : platform === "gitlab" ? "merge_train" : null,
   };
 }
 

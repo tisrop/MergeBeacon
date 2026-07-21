@@ -229,6 +229,63 @@ describe("useReviewInboxStore", () => {
     expect(store.hasMore).toBe(false);
   });
 
+  it("连续加载超大账号分页时保留中断前数据并从失败页恢复", async () => {
+    const totalPages = 125;
+    const perPage = 20;
+    let page73Failed = false;
+    vi.mocked(reviewInboxList).mockImplementation(
+      async (platform, _category, requestedPage = 1) => {
+        if (requestedPage === 73 && !page73Failed) {
+          page73Failed = true;
+          throw new Error("page 73 unavailable");
+        }
+        const firstNumber = (requestedPage - 1) * perPage + 1;
+        const items = Array.from({ length: perPage }, (_, index) => {
+          const number = firstNumber + index;
+          return item(
+            platform,
+            `large-account/repo-${number}`,
+            number,
+            new Date(Date.UTC(2025, 0, 1, 0, 0, number)).toISOString(),
+          );
+        });
+        return {
+          items,
+          page: requestedPage,
+          total_pages: totalPages,
+          total_count: totalPages * perPage,
+        };
+      },
+    );
+    const store = useReviewInboxStore();
+
+    await store.refresh(["github"]);
+    for (let requestedPage = 2; requestedPage <= 73; requestedPage += 1) {
+      await store.loadMore();
+    }
+
+    expect(store.items).toHaveLength(72 * perPage);
+    expect(store.pages.github).toBe(72);
+    expect(store.errors.github).toContain("page 73 unavailable");
+
+    await store.retry("github");
+    for (let requestedPage = 74; requestedPage <= totalPages; requestedPage += 1) {
+      await store.loadMore();
+    }
+
+    expect(store.items).toHaveLength(totalPages * perPage);
+    expect(new Set(store.items.map((entry) => entry.summary.number)).size).toBe(
+      totalPages * perPage,
+    );
+    expect(store.pages.github).toBe(totalPages);
+    expect(store.hasMore).toBe(false);
+    expect(store.errors.github).toBeNull();
+    expect(reviewInboxList).toHaveBeenCalledTimes(totalPages + 1);
+    expect(
+      vi.mocked(reviewInboxList).mock.calls.filter(([, , requestedPage]) => requestedPage === 73),
+    ).toHaveLength(2);
+  });
+
   it("后台刷新替换首页快照，同时保留已经加载的后续分页", async () => {
     const oldPageTwoItem = item("github", "team/page-two", 2, "2024-12-31T00:00:00Z");
     oldPageTwoItem.head_sha = "old-head";
@@ -440,6 +497,47 @@ describe("useReviewInboxStore", () => {
     nowSpy.mockRestore();
   });
 
+  it("超过 5000 条本地状态时优先保留活动记录并淘汰最旧已读记录", () => {
+    const now = 2_000_000_000_000;
+    const day = 24 * 60 * 60 * 1000;
+    const state = (touchedAt: number, unread: boolean) => ({
+      unread,
+      new_commits: false,
+      new_comments: false,
+      status_changed: false,
+      updated_at: "2025-01-01T00:00:00Z",
+      head_sha: null,
+      comments_count: null,
+      status_fingerprint: "status",
+      touched_at: touchedAt,
+    });
+    const pendingEntries = Array.from({ length: 100 }, (_, index) => [
+      `gitee\u0000team/pending\u0000${index}`,
+      state(now - 181 * day - index, true),
+    ]);
+    const readEntries = Array.from({ length: 5100 }, (_, index) => [
+      `gitlab\u0000team/read\u0000${index}`,
+      state(now - index - 1, false),
+    ]);
+    storage.set(
+      "mergebeacon:review-inbox-item-state:v1",
+      JSON.stringify(Object.fromEntries([...pendingEntries, ...readEntries])),
+    );
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    const store = useReviewInboxStore();
+
+    store.markRead(item("github", "team/new", 10_000, "2025-01-02T00:00:00Z"));
+
+    const saved = JSON.parse(storage.get("mergebeacon:review-inbox-item-state:v1") ?? "{}");
+    expect(Object.keys(saved)).toHaveLength(5000);
+    expect(pendingEntries.every(([key]) => saved[key as string]?.unread === true)).toBe(true);
+    expect(saved[`github\u0000team/new\u000010000`]?.unread).toBe(false);
+    expect(saved[`gitlab\u0000team/read\u00004898`]).toBeDefined();
+    expect(saved[`gitlab\u0000team/read\u00004899`]).toBeUndefined();
+    expect(saved[`gitlab\u0000team/read\u00005099`]).toBeUndefined();
+    nowSpy.mockRestore();
+  });
+
   it("支持详细阻塞筛选和阻塞、可合并、检查失败优先排序", async () => {
     const failed = item("github", "team/failed", 1, "2025-01-01T00:00:00Z", ["reviewer"], {
       status: "blocked",
@@ -504,6 +602,61 @@ describe("useReviewInboxStore", () => {
     expect(restored.rateLimitedUntil.github).toBeGreaterThan(1_000_000);
     expect(await restored.backgroundRefresh(["github"], 1_000_001)).toBe(false);
     expect(reviewInboxList).toHaveBeenCalledTimes(1);
+  });
+
+  it("连续每分钟刷新时执行五分钟节流并在限流到期后恢复平台轮询", async () => {
+    vi.useFakeTimers();
+    const start = 2_000_000_000_000;
+    vi.setSystemTime(start);
+    vi.mocked(reviewInboxList).mockImplementation(async (platform) =>
+      page([item(platform, `team/${platform}`, 1, "2025-01-01T00:00:00Z")]),
+    );
+    const store = useReviewInboxStore();
+    await store.refresh(["github", "gitlab", "gitee"]);
+
+    const attempts: Record<Platform, number> = { github: 0, gitlab: 0, gitee: 0 };
+    vi.mocked(reviewInboxList).mockClear();
+    vi.mocked(reviewInboxList).mockImplementation(async (platform) => {
+      attempts[platform] += 1;
+      if (platform === "github" && attempts.github === 1) {
+        throw new Error("HTTP 429 rate limit");
+      }
+      return page([item(platform, `team/${platform}`, 1, "2025-01-02T00:00:00Z")]);
+    });
+
+    const refreshResults: boolean[] = [];
+    for (let minute = 0; minute <= 20; minute += 1) {
+      const now = start + minute * 60 * 1000;
+      vi.setSystemTime(now);
+      refreshResults.push(await store.backgroundRefresh(["github", "gitlab", "gitee"], now));
+    }
+
+    expect(refreshResults.map((refreshed, minute) => (refreshed ? minute : null))).toEqual([
+      0,
+      null,
+      null,
+      null,
+      null,
+      5,
+      null,
+      null,
+      null,
+      null,
+      10,
+      null,
+      null,
+      null,
+      null,
+      15,
+      null,
+      null,
+      null,
+      null,
+      20,
+    ]);
+    expect(attempts).toEqual({ github: 3, gitlab: 5, gitee: 5 });
+    expect(store.rateLimitedUntil.github).toBe(0);
+    expect(reviewInboxList).toHaveBeenCalledTimes(13);
   });
 
   it("仓库搜索停止输入后再持久化偏好", async () => {

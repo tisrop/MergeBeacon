@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import {
   notificationPermissionGranted,
   requestNotificationPermission,
+  showDesktopTestNotification,
 } from "@/services/desktopNotifications";
 import { useNotificationStore, type NotificationEventType } from "@/stores/useNotificationStore";
 import type { Platform } from "@/types";
@@ -12,6 +13,9 @@ const notifications = useNotificationStore();
 const permissionGranted = ref(false);
 const requestingPermission = ref(false);
 const permissionError = ref("");
+const sendingTestNotification = ref(false);
+const testNotificationStatus = ref("");
+const testNotificationFailed = ref(false);
 
 const platforms: Array<{ value: Platform; label: string }> = [
   { value: "github", label: "GitHub" },
@@ -25,6 +29,77 @@ const events: Array<{ value: NotificationEventType; label: string; hint: string 
   { value: "new_comments", label: "新评论", hint: "已跟踪的 PR/MR 评论数量增加时通知" },
   { value: "mergeable", label: "可合并", hint: "PR/MR 从阻塞状态变为可合并时通知" },
 ];
+const categoryLabels = {
+  review_requested: "评审请求",
+  authored: "我创建的",
+} as const;
+
+function formatCountdown(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function formatTime(timestamp: number | null): string {
+  if (timestamp == null) return "尚无";
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function platformStatus(platform: Platform): string {
+  const observation = notifications.pollObservations[platform];
+  const retrySeconds = notifications.retryCountdown[platform];
+  if (!notifications.preferences.platforms[platform]) return "已停用";
+  if (retrySeconds > 0) return `限流退避 · ${formatCountdown(retrySeconds)} 后重试`;
+  if (observation.outcome === "success") return "检查正常";
+  if (observation.outcome === "partial") return "部分检查成功";
+  if (observation.outcome === "rate_limited") return "平台限流";
+  if (observation.outcome === "failed") return "检查失败";
+  return "等待首次检查";
+}
+
+function platformStatusDetail(platform: Platform): string {
+  const observation = notifications.pollObservations[platform];
+  if (observation.last_attempt_at == null) return "尚未请求代码平台 API";
+  const detail = [`最近检查 ${formatTime(observation.last_attempt_at)}`];
+  if (
+    observation.last_success_at != null &&
+    observation.last_success_at !== observation.last_attempt_at
+  ) {
+    detail.push(`最近成功 ${formatTime(observation.last_success_at)}`);
+  }
+  if (observation.rate_limited_categories.length > 0) {
+    detail.push(
+      `${observation.rate_limited_categories.map((category) => categoryLabels[category]).join("、")}限流`,
+    );
+  }
+  const failedCategories = observation.failed_categories.filter(
+    (category) => !observation.rate_limited_categories.includes(category),
+  );
+  if (failedCategories.length > 0) {
+    detail.push(`${failedCategories.map((category) => categoryLabels[category]).join("、")}失败`);
+  }
+  if (observation.consecutive_degraded_polls > 1) {
+    detail.push(`连续异常 ${observation.consecutive_degraded_polls} 次`);
+  }
+  if (observation.rate_limited_polls > 0) {
+    detail.push(`本次运行限流 ${observation.rate_limited_polls} 次`);
+  }
+  return detail.join(" · ");
+}
+
+function platformStatusDegraded(platform: Platform): boolean {
+  const outcome = notifications.pollObservations[platform].outcome;
+  return (
+    notifications.retryCountdown[platform] > 0 ||
+    outcome === "partial" ||
+    outcome === "rate_limited" ||
+    outcome === "failed"
+  );
+}
 
 onMounted(async () => {
   try {
@@ -74,6 +149,50 @@ async function setEnabled(event: Event): Promise<void> {
   }
 }
 
+async function sendTestNotification(): Promise<void> {
+  if (sendingTestNotification.value) return;
+  sendingTestNotification.value = true;
+  testNotificationStatus.value = "";
+  testNotificationFailed.value = false;
+  try {
+    try {
+      permissionGranted.value = await notificationPermissionGranted();
+    } catch (error) {
+      const message = `检查桌面通知权限失败：${getErrorMessage(error, "系统通知服务暂不可用")}`;
+      permissionError.value = message;
+      testNotificationFailed.value = true;
+      testNotificationStatus.value = message;
+      notifications.setManagerError("permission", message);
+      return;
+    }
+    if (!permissionGranted.value) {
+      const message = "系统通知权限不可用或已被撤销，请重新授权后再发送测试通知。";
+      notifications.setEnabled(false);
+      permissionError.value = message;
+      testNotificationFailed.value = true;
+      testNotificationStatus.value = message;
+      notifications.setManagerError("permission", message);
+      return;
+    }
+    permissionError.value = "";
+    notifications.clearManagerError("permission");
+    try {
+      await showDesktopTestNotification();
+      notifications.clearManagerError("delivery");
+      testNotificationStatus.value = "测试通知已交给系统通知服务。";
+    } catch (error) {
+      testNotificationFailed.value = true;
+      testNotificationStatus.value = `发送测试通知失败：${getErrorMessage(
+        error,
+        "系统通知服务暂不可用",
+      )}`;
+      notifications.setManagerError("delivery", testNotificationStatus.value);
+    }
+  } finally {
+    sendingTestNotification.value = false;
+  }
+}
+
 function setPlatform(platform: Platform, event: Event): void {
   notifications.setPlatformEnabled(platform, (event.target as HTMLInputElement).checked);
 }
@@ -89,7 +208,7 @@ function setEvent(type: NotificationEventType, event: Event): void {
       <span>
         <span class="setting-label">启用桌面通知</span>
         <span class="setting-hint"
-          >应用运行期间每 10 分钟低频检查一次，不会在首次同步时产生通知。</span
+          >应用运行期间每 10 分钟低频检查一次；退出应用后停止检查，不提供系统级后台推送。</span
         >
       </span>
       <label class="toggle">
@@ -106,11 +225,41 @@ function setEvent(type: NotificationEventType, event: Event): void {
 
     <p v-if="permissionError" class="permission-error" role="alert">{{ permissionError }}</p>
 
+    <div class="test-notification-row">
+      <span>
+        <span class="setting-label">系统通知测试</span>
+        <span class="setting-hint">直接调用当前系统通知服务，不请求代码平台 API。</span>
+      </span>
+      <button
+        type="button"
+        class="test-notification-button"
+        :disabled="sendingTestNotification || !permissionGranted"
+        @click="sendTestNotification"
+      >
+        {{ sendingTestNotification ? "正在发送..." : "发送测试通知" }}
+      </button>
+    </div>
+    <p
+      v-if="testNotificationStatus"
+      class="test-notification-status"
+      :class="{ error: testNotificationFailed }"
+      role="status"
+      aria-live="polite"
+    >
+      {{ testNotificationStatus }}
+    </p>
+
     <fieldset>
       <legend>通知平台</legend>
       <div class="setting-grid">
         <label v-for="platform in platforms" :key="platform.value" class="choice-row">
-          <span>{{ platform.label }}</span>
+          <span class="platform-copy">
+            <strong>{{ platform.label }}</strong>
+            <small :class="{ degraded: platformStatusDegraded(platform.value) }">
+              {{ platformStatus(platform.value) }}
+            </small>
+            <small>{{ platformStatusDetail(platform.value) }}</small>
+          </span>
           <input
             type="checkbox"
             :checked="notifications.preferences.platforms[platform.value]"
@@ -160,12 +309,57 @@ function setEvent(type: NotificationEventType, event: Event): void {
 }
 
 .setting-row,
+.test-notification-row,
 .choice-row,
 .privacy-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
+}
+
+.test-notification-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.test-notification-button {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.test-notification-button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+}
+
+.test-notification-button:focus-visible {
+  box-shadow: var(--shadow-control-focus);
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.test-notification-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.test-notification-status {
+  margin: calc(var(--space-2) * -1) 0 0;
+  color: var(--color-success);
+  font-size: 12px;
+}
+
+.test-notification-status.error {
+  color: var(--color-danger);
 }
 
 .primary-row {
@@ -213,10 +407,23 @@ legend {
 }
 
 .choice-row {
+  align-items: flex-start;
   padding: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
   font-size: 12px;
+}
+
+.platform-copy {
+  min-width: 0;
+}
+
+.platform-copy small {
+  overflow-wrap: anywhere;
+}
+
+.platform-copy small.degraded {
+  color: var(--color-warning);
 }
 
 .choice-row:hover,

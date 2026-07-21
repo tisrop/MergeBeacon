@@ -44,6 +44,19 @@ export type NotificationManagerErrorSource =
   | "delivery"
   | "actions";
 
+export type NotificationPollOutcome = "idle" | "success" | "partial" | "failed" | "rate_limited";
+
+export interface NotificationPollObservation {
+  last_attempt_at: number | null;
+  last_success_at: number | null;
+  outcome: NotificationPollOutcome;
+  successful_categories: ReviewInboxCategory[];
+  failed_categories: ReviewInboxCategory[];
+  rate_limited_categories: ReviewInboxCategory[];
+  consecutive_degraded_polls: number;
+  rate_limited_polls: number;
+}
+
 interface NotificationSnapshot {
   categories: ReviewInboxCategory[];
   head_sha: string | null;
@@ -186,6 +199,18 @@ export const useNotificationStore = defineStore("notifications", () => {
   const clock = ref(Date.now());
   const errors = ref<Record<Platform, string | null>>(platformRecord(() => null));
   const rateLimitedUntil = ref<Record<Platform, number>>(platformRecord(() => 0));
+  const pollObservations = ref<Record<Platform, NotificationPollObservation>>(
+    platformRecord(() => ({
+      last_attempt_at: null,
+      last_success_at: null,
+      outcome: "idle",
+      successful_categories: [],
+      failed_categories: [],
+      rate_limited_categories: [],
+      consecutive_degraded_polls: 0,
+      rate_limited_polls: 0,
+    })),
+  );
   let pollSequence = 0;
 
   const enabledPlatforms = computed(() =>
@@ -320,19 +345,44 @@ export const useNotificationStore = defineStore("notifications", () => {
     if (sequence !== pollSequence) return [];
 
     const successfulCategories = new Map<ReviewInboxCategory, ReviewInboxItem[]>();
+    const failedCategories: ReviewInboxCategory[] = [];
+    const rateLimitedCategories: ReviewInboxCategory[] = [];
     let firstError: unknown = null;
-    let rateLimited = false;
     results.forEach((result, index) => {
       const category = CATEGORIES[index];
       if (result.status === "fulfilled") successfulCategories.set(category, result.value.items);
       else {
         firstError ??= result.reason;
-        rateLimited ||= isRateLimitError(result.reason);
+        failedCategories.push(category);
+        if (isRateLimitError(result.reason)) rateLimitedCategories.push(category);
       }
     });
+    const previousObservation = pollObservations.value[platform];
+    const successfulCategoryNames = Array.from(successfulCategories.keys());
+    const hasRateLimit = rateLimitedCategories.length > 0;
+    const hasFailures = failedCategories.length > 0;
+    pollObservations.value[platform] = {
+      last_attempt_at: now,
+      last_success_at: successfulCategories.size > 0 ? now : previousObservation.last_success_at,
+      outcome:
+        successfulCategories.size === 0
+          ? hasRateLimit
+            ? "rate_limited"
+            : "failed"
+          : hasFailures
+            ? "partial"
+            : "success",
+      successful_categories: successfulCategoryNames,
+      failed_categories: failedCategories,
+      rate_limited_categories: rateLimitedCategories,
+      consecutive_degraded_polls: hasFailures
+        ? previousObservation.consecutive_degraded_polls + 1
+        : 0,
+      rate_limited_polls: previousObservation.rate_limited_polls + (hasRateLimit ? 1 : 0),
+    };
     if (successfulCategories.size === 0) {
       errors.value[platform] = String(firstError ?? "通知轮询失败");
-      if (rateLimited) rateLimitedUntil.value[platform] = now + RATE_LIMIT_BACKOFF_MS;
+      if (hasRateLimit) rateLimitedUntil.value[platform] = now + RATE_LIMIT_BACKOFF_MS;
       else rateLimitedUntil.value[platform] = 0;
       return [];
     }
@@ -420,6 +470,7 @@ export const useNotificationStore = defineStore("notifications", () => {
     retryCountdown,
     errors,
     rateLimitedUntil,
+    pollObservations,
     enabledPlatforms,
     setEnabled,
     setPlatformEnabled,

@@ -7,6 +7,19 @@ use mergebeacon_lib::platform::{gitee::GiteeAdapter, GitPlatform};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+fn gitee_inline_comment(id: u64) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "body": format!("comment-{id}"),
+        "path": "src/main.rs",
+        "position": id,
+        "new_line": id,
+        "commit_id": "abc123",
+        "user": { "id": 1, "login": "dev1", "name": "Dev One", "avatar_url": "" },
+        "created_at": "2025-01-04T00:00:00Z"
+    })
+}
+
 #[tokio::test]
 async fn test_gitee_lists_branches_and_creates_from_fork() {
     let mock_server = MockServer::start().await;
@@ -100,6 +113,48 @@ async fn test_gitee_lists_branches_and_creates_from_fork() {
         .await
         .unwrap();
     assert_eq!(number, 8);
+}
+
+#[tokio::test]
+async fn test_gitee_lists_pr_dependency_candidates() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/team/repo/pulls/8"))
+        .and(query_param("access_token", "token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "number": 8,
+            "title": "Stack child",
+            "state": "open",
+            "merged_at": null,
+            "head": { "ref": "feature-b", "repo": { "full_name": "team/repo" } },
+            "base": { "ref": "feature-a", "repo": { "full_name": "team/repo" } }
+        })))
+        .mount(&mock_server)
+        .await;
+    for (filter, value) in [("base", "feature-b"), ("head", "team:feature-a")] {
+        Mock::given(method("GET"))
+            .and(path("/api/v5/repos/team/repo/pulls"))
+            .and(query_param("state", "all"))
+            .and(query_param(filter, value))
+            .and(query_param("per_page", "100"))
+            .and(query_param("page", "1"))
+            .and(query_param("access_token", "token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&mock_server)
+            .await;
+    }
+    let adapter =
+        GiteeAdapter::new(HttpClient::new(), "token".into()).with_base_url(format!("{}/api/v5", mock_server.uri()));
+
+    let result = adapter.list_pr_dependency_candidates("team", "repo", 8).await.expect("dependency candidates");
+
+    assert!(!result.truncated);
+    assert_eq!(result.current.number, 8);
+    let candidates = result.items;
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].number, 8);
+    assert_eq!(candidates[0].source_branch, "feature-b");
+    assert_eq!(candidates[0].target_branch, "feature-a");
 }
 
 #[tokio::test]
@@ -518,11 +573,12 @@ async fn test_gitee_create_pr_comment() {
     let adapter =
         GiteeAdapter::new(client, "test-token".to_string()).with_base_url(format!("{}/api/v5", mock_server.uri()));
 
-    let result = adapter
+    let comment = adapter
         .create_pr_comment("octocat", "hello-world", 42, "abc123", "src/main.rs", None, 10, "right", "Good catch!")
-        .await;
+        .await
+        .expect("should create PR comment");
 
-    assert!(result.is_ok(), "should create PR comment");
+    assert_eq!(comment.side.as_deref(), Some("right"));
 }
 
 #[tokio::test]
@@ -572,7 +628,7 @@ async fn test_gitee_list_pr_comments() {
                 "body": "Please add tests",
                 "path": "src/lib.rs",
                 "position": 42,
-                "new_line": 42,
+                "old_line": 42,
                 "commit_id": "def456",
                 "user": { "id": 2, "login": "dev2", "name": "Dev Two", "avatar_url": "" },
                 "created_at": "2025-01-04T01:00:00Z"
@@ -620,6 +676,7 @@ async fn test_gitee_list_pr_comments() {
     assert_eq!(comments[0].body, "Nice fix!");
     assert_eq!(comments[0].path, "src/main.rs");
     assert_eq!(comments[0].line, Some(15));
+    assert_eq!(comments[0].side.as_deref(), Some("right"));
     assert_eq!(comments[0].start_line, None);
     assert_eq!(comments[0].thread_id, "100");
     assert_eq!(comments[0].reply_to_id, None);
@@ -628,6 +685,7 @@ async fn test_gitee_list_pr_comments() {
     assert_eq!(comments[1].body, "Please add tests");
     assert_eq!(comments[1].path, "src/lib.rs");
     assert_eq!(comments[1].line, Some(42));
+    assert_eq!(comments[1].side.as_deref(), Some("left"));
     assert_eq!(comments[1].start_line, None);
     assert_eq!(comments[2].body, "Multi-line review");
     assert_eq!(comments[2].path, "src/main.rs");
@@ -658,6 +716,57 @@ async fn test_gitee_list_pr_comments_empty() {
     let comments = adapter.list_pr_comments("octocat", "hello-world", 42).await.expect("should list PR comments");
 
     assert_eq!(comments.len(), 0);
+}
+
+#[tokio::test]
+async fn test_gitee_list_pr_comments_fetches_the_page_after_a_full_boundary() {
+    let mock_server = MockServer::start().await;
+    let first_page: Vec<_> = (1..=100).map(gitee_inline_comment).collect();
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(first_page))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "2"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(vec![gitee_inline_comment(101)]))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let comments =
+        adapter.list_pr_comments("octocat", "hello-world", 42).await.expect("should fetch every comment page");
+
+    assert_eq!(comments.len(), 101);
+    assert_eq!(comments.first().map(|comment| &comment.id), Some(&serde_json::json!(1)));
+    assert_eq!(comments.last().map(|comment| &comment.id), Some(&serde_json::json!(101)));
+}
+
+#[tokio::test]
+async fn test_gitee_list_pr_comments_reports_rate_limit_errors() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .respond_with(ResponseTemplate::new(429).set_body_string(r#"{"message":"rate limit"}"#))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let error = adapter.list_pr_comments("octocat", "hello-world", 42).await.expect_err("rate limits must be returned");
+
+    assert!(error.to_string().contains("Gitee API 429 Too Many Requests"));
+    assert!(error.to_string().contains("rate limit"));
 }
 
 #[tokio::test]
@@ -1064,11 +1173,12 @@ async fn test_gitee_create_pr_comment_left_side() {
     let adapter =
         GiteeAdapter::new(client, "test-token".to_string()).with_base_url(format!("{}/api/v5", mock_server.uri()));
 
-    let result = adapter
+    let comment = adapter
         .create_pr_comment("octocat", "hello-world", 42, "abc123", "src/main.rs", None, 5, "left", "Old code issue")
-        .await;
+        .await
+        .expect("should create left-side PR comment");
 
-    assert!(result.is_ok(), "should create left-side PR comment");
+    assert_eq!(comment.side.as_deref(), Some("left"));
 }
 
 #[tokio::test]

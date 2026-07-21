@@ -4,9 +4,11 @@ import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
 import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
+import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import { reviewCommentAdd } from "@/api";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { getErrorMessage } from "@/utils/error";
+import { extractDiffHunk, findStandardPatch } from "@/utils/diffHunk";
 import {
   clearPrCreateWarnings,
   PR_CREATE_WARNING_QUERY,
@@ -19,56 +21,19 @@ import ReviewList from "@/components/review/ReviewList.vue";
 import AiReviewPanel from "@/components/ai/AiReviewPanel.vue";
 import MergeReadinessPanel from "@/components/pr/MergeReadinessPanel.vue";
 import PrMetadataPanel from "@/components/pr/PrMetadataPanel.vue";
+import PrDependenciesPanel from "@/components/pr/PrDependenciesPanel.vue";
+import PrMergeQueuePanel from "@/components/pr/PrMergeQueuePanel.vue";
 import { APP_COMMAND_EVENT, type AppCommandDetail } from "@/types/commands";
 import type {
   AiSuggestion,
+  DiffSide,
   DiffLocationRequest,
   DiffLocationResult,
   MergeStrategy,
   Platform,
   PrMetadataUpdate,
-  PrFile,
   ReviewThreadSummary,
 } from "@/types";
-
-function extractDiffHunk(files: PrFile[], path: string, line: number): string | undefined {
-  const file = files.find((f) => f.filename === path);
-  if (!file?.patch) return undefined;
-  const patchLines = file.patch.split("\n");
-  let currentLine = 0;
-  let inHunk = false;
-  let result: string[] = [];
-  for (const pl of patchLines) {
-    const hunkMatch = pl.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (hunkMatch) {
-      if (inHunk && result.length > 0) {
-        const rangeStart = parseInt(hunkMatch[1], 10);
-        if (rangeStart > line + 5) break;
-      }
-      currentLine = parseInt(hunkMatch[1], 10) - 1;
-      inHunk = false;
-      result = [pl];
-      continue;
-    }
-    if (result.length > 0) {
-      if (pl.startsWith("+")) {
-        currentLine += 1;
-      } else if (pl.startsWith("-")) {
-        // skip old content line counting
-      } else if (pl.startsWith("\\")) {
-        // no-op for no newline markers
-      } else {
-        currentLine += 1;
-      }
-      result.push(pl);
-      if (currentLine >= line && !inHunk) {
-        inHunk = true;
-      }
-      if (inHunk && currentLine > line + 5) break;
-    }
-  }
-  return result.length > 0 ? result.join("\n") : undefined;
-}
 
 const route = useRoute();
 const router = useRouter();
@@ -76,18 +41,21 @@ const auth = useAuthStore();
 const pr = usePrStore();
 const reviewInbox = useReviewInboxStore();
 const capabilityStore = useCapabilityStore();
+const uiSettings = useUiSettingsStore();
 
 const platform = route.params.platform as Platform;
 const owner = route.params.owner as string;
 const repo = route.params.repo as string;
 const number = Number(route.params.number);
 
-type PrDetailTab = "diff" | "reviews" | "ai";
+type PrDetailTab = "diff" | "dependencies" | "reviews" | "ai";
 
 const activeTab = ref<PrDetailTab>("diff");
 const aiPanelMounted = ref(false);
+const dependencyPanelMounted = ref(false);
 const locatingAiSuggestion = ref(false);
 const tabsRef = ref<HTMLElement | null>(null);
+const isMergeContextVisible = computed(() => uiSettings.isPrDependenciesVisible);
 let aiReviewScrollTop: number | null = null;
 
 function contentScrollContainer(): HTMLElement | null {
@@ -104,8 +72,10 @@ function scrollTabBarIntoView(): void {
 }
 
 function selectTab(tab: PrDetailTab) {
+  if (tab === "dependencies" && !isMergeContextVisible.value) return;
   const returningToAiSuggestion = tab === "ai" && locatingAiSuggestion.value;
   activeTab.value = tab;
+  if (tab === "dependencies") dependencyPanelMounted.value = true;
   if (tab === "ai") {
     aiPanelMounted.value = true;
     locatingAiSuggestion.value = false;
@@ -122,6 +92,10 @@ function selectTab(tab: PrDetailTab) {
     aiReviewScrollTop = null;
   }
 }
+
+watch(isMergeContextVisible, (visible) => {
+  if (!visible && activeTab.value === "dependencies") selectTab("diff");
+});
 
 const diffLocationRequest = ref<DiffLocationRequest | null>(null);
 const diffLocationError = ref("");
@@ -146,12 +120,13 @@ function handleDiffLocationResult(result: DiffLocationResult): void {
   diffLocationError.value = result.success ? "" : (result.message ?? "无法定位该 AI 建议");
 }
 
-function handleReviewCommentLocate(path: string, line: number | null): void {
+function handleReviewCommentLocate(path: string, line: number | null, side: DiffSide | null): void {
   diffLocationError.value = "";
   diffLocationRequest.value = {
     id: ++diffLocationRequestId,
     path,
     line,
+    side,
   };
   selectTab("diff");
   void nextTick(scrollTabBarIntoView);
@@ -343,7 +318,7 @@ async function handleAddComment(
   path: string,
   startLine: number,
   endLine: number,
-  side: string,
+  side: DiffSide,
   body?: string,
 ) {
   if (!body?.trim()) return;
@@ -356,7 +331,8 @@ async function handleAddComment(
   try {
     const sl = startLine !== endLine ? startLine : null;
     const targetLine = endLine;
-    const diffHunk = pr.diff?.files ? extractDiffHunk(pr.diff.files, path, targetLine) : undefined;
+    const patch = findStandardPatch(pr.diff?.patches ?? [], path);
+    const diffHunk = patch ? extractDiffHunk(patch, targetLine, side) : undefined;
     await reviewCommentAdd(
       platform,
       owner,
@@ -424,12 +400,15 @@ onMounted(async () => {
       clearPrCreateWarnings(platform, owner, repo, number);
     });
   }
-  await Promise.all([
-    pr.fetchPrDetail(platform, owner, repo, number),
-    pr.fetchPrDiff(platform, owner, repo, number),
-    pr.fetchMergeReadiness(platform, owner, repo, number),
-    capabilityStore.load(platform).catch(() => null),
-  ]);
+  const capabilityRequest = capabilityStore.load(platform).catch(() => null);
+  await pr.fetchPrDetail(platform, owner, repo, number);
+  if (pr.currentPr?.summary.number === number) {
+    await Promise.all([
+      pr.fetchPrDiff(platform, owner, repo, number),
+      pr.fetchMergeReadiness(platform, owner, repo, number),
+    ]);
+  }
+  await capabilityRequest;
   if (!platformCapabilities.value?.merge_strategies.includes(selectedStrategy.value)) {
     selectedStrategy.value = platformCapabilities.value?.merge_strategies[0] ?? "merge";
   }
@@ -658,6 +637,29 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
           </svg>
           Diff
         </button>
+        <button
+          v-if="isMergeContextVisible"
+          :class="{ active: activeTab === 'dependencies' }"
+          @click="selectTab('dependencies')"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="6" cy="6" r="2" />
+            <circle cx="18" cy="18" r="2" />
+            <path d="M6 8v3a7 7 0 0 0 7 7h3" />
+            <path d="M18 16V8" />
+            <circle cx="18" cy="6" r="2" />
+          </svg>
+          依赖关系
+        </button>
         <button :class="{ active: activeTab === 'reviews' }" @click="selectTab('reviews')">
           <svg
             width="14"
@@ -723,6 +725,29 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             :pr-number="number"
             :unviewed-file-count="unviewedFileCount"
             :unresolved-thread-count="reviewThreadSummary?.unresolved ?? 0"
+          />
+        </div>
+        <div
+          v-if="isMergeContextVisible && dependencyPanelMounted"
+          v-show="activeTab === 'dependencies'"
+          class="merge-context-view"
+        >
+          <PrMergeQueuePanel
+            v-if="uiSettings.isPrDependenciesVisible && uiSettings.isMergeQueueVisible"
+            :platform="platform"
+            :owner="owner"
+            :repo="repo"
+            :pr-number="number"
+            :revision="pr.currentPr.summary.updated_at"
+            :queue-kind="platformCapabilities?.merge_queue_kind"
+          />
+          <PrDependenciesPanel
+            v-if="uiSettings.isPrDependenciesVisible"
+            :platform="platform"
+            :owner="owner"
+            :repo="repo"
+            :pr-number="number"
+            :revision="pr.currentPr.summary.updated_at"
           />
         </div>
         <div v-show="activeTab === 'reviews'">
@@ -953,6 +978,11 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.merge-context-view {
+  display: grid;
+  gap: var(--space-6);
 }
 
 .skeleton-tabs {

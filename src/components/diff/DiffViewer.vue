@@ -4,6 +4,7 @@ import { storeToRefs } from "pinia";
 import { html } from "diff2html";
 import "diff2html/bundles/css/diff2html.min.css";
 import type {
+  DiffSide,
   DiffLocationRequest,
   DiffLocationResult,
   DiffResult,
@@ -23,6 +24,7 @@ import {
   type ReviewProgressContext,
 } from "@/stores/useReviewProgressStore";
 import { getErrorMessage } from "@/utils/error";
+import { findPatchLocation as findStandardPatchLocation } from "@/utils/diffHunk";
 
 const props = defineProps<{
   diff: DiffResult | null;
@@ -108,8 +110,6 @@ interface ContextGapAction {
   edge: "start" | "end";
   arrow: "↑" | "↓";
 }
-
-type DiffSide = "left" | "right";
 
 interface HighlightedLocation {
   path: string;
@@ -301,23 +301,6 @@ function resolveLocationFile(
   return file ? { file, patch } : null;
 }
 
-function findPatchLocation(
-  patch: StandardPatchFile,
-  line: number,
-): { side: DiffSide; line: number } | null {
-  for (const hunk of patch.hunks) {
-    if (hunk.lines.some((candidate) => candidate.new_line === line)) {
-      return { side: "right", line };
-    }
-  }
-  for (const hunk of patch.hunks) {
-    if (hunk.lines.some((candidate) => candidate.old_line === line)) {
-      return { side: "left", line };
-    }
-  }
-  return null;
-}
-
 function isHighlightedLine(side: DiffSide, line: number | null | undefined): boolean {
   const location = highlightedLocation.value;
   return (
@@ -411,7 +394,7 @@ async function locateDiffRequest(request: DiffLocationRequest): Promise<void> {
     return;
   }
 
-  const target = findPatchLocation(resolved.patch, request.line);
+  const target = findStandardPatchLocation(resolved.patch, request.line, path, request.side);
   if (!target) {
     emitLocationFailure(
       request,

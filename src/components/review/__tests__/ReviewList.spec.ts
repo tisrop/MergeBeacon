@@ -28,6 +28,7 @@ function comment(overrides: Partial<PrComment>): PrComment {
     path: "src/main.ts",
     line: 12,
     start_line: null,
+    side: null,
     author,
     created_at: "2026-07-16T10:00:00Z",
     commit_id: "head-1",
@@ -130,6 +131,39 @@ describe("ReviewList", () => {
     ]);
   });
 
+  it("稳定组织大量线程和评论并汇总每个文件", async () => {
+    const comments = Array.from({ length: 120 }, (_, threadIndex) =>
+      Array.from({ length: 5 }, (_, commentIndex) =>
+        comment({
+          id: threadIndex * 10 + commentIndex,
+          body: `线程 ${threadIndex + 1} 评论 ${commentIndex + 1}`,
+          path: `src/file-${threadIndex % 12}.ts`,
+          thread_id: `thread-${threadIndex + 1}`,
+          reply_to_id: commentIndex === 0 ? null : String(threadIndex * 10),
+          resolved: threadIndex % 3 === 0,
+        }),
+      ),
+    ).flat();
+    mocks.reviewCommentsList.mockResolvedValueOnce(comments);
+
+    const wrapper = await mountList();
+
+    expect(wrapper.findAll(".review-thread")).toHaveLength(120);
+    expect(wrapper.findAll(".thread-comments li")).toHaveLength(600);
+    const summary = wrapper.emitted("threadSummary")?.at(-1)?.[0] as {
+      comments: number;
+      threads: number;
+      unresolved: number;
+      by_file: Record<string, { comments: number; unresolved: number }>;
+    };
+    expect(summary.comments).toBe(600);
+    expect(summary.threads).toBe(120);
+    expect(summary.unresolved).toBe(80);
+    expect(Object.keys(summary.by_file)).toHaveLength(12);
+    expect(summary.by_file["src/file-0.ts"]).toEqual({ comments: 50, unresolved: 0 });
+    expect(summary.by_file["src/file-1.ts"]).toEqual({ comments: 50, unresolved: 10 });
+  });
+
   it("支持按解决状态筛选并通过平台 API 解决线程", async () => {
     const wrapper = await mountList();
     const unresolvedFilter = wrapper
@@ -166,7 +200,7 @@ describe("ReviewList", () => {
 
     await wrapper.findAll(".path-button")[0].trigger("click");
 
-    expect(wrapper.emitted("locateComment")?.[0]).toEqual(["src/main.ts", 12]);
+    expect(wrapper.emitted("locateComment")?.[0]).toEqual(["src/main.ts", 12, null]);
   });
 
   it("切换 PR 后忽略旧列表请求的迟到响应", async () => {
@@ -218,6 +252,8 @@ describe("ReviewList", () => {
     mocks.reviewCommentsList.mockResolvedValue([comment({ can_edit: true, can_delete: true })]);
     const wrapper = await mountList();
 
+    expect(wrapper.get(".thread-reply-input").classes()).toContain("input");
+    expect(wrapper.get(".thread-reply-input").attributes("aria-label")).toBe("回复评审线程");
     await wrapper.get(".thread-reply-form textarea").setValue("补充一个回归测试");
     await wrapper.get(".thread-reply-form").trigger("submit");
     expect(mocks.reviewThreadReply).toHaveBeenCalledWith(
@@ -231,6 +267,8 @@ describe("ReviewList", () => {
     );
 
     await wrapper.get(".comment-actions .text-button").trigger("click");
+    expect(wrapper.get(".comment-editor").classes()).toContain("input");
+    expect(wrapper.get(".comment-editor").attributes("aria-label")).toBe("编辑评论");
     await wrapper.get(".comment-editor").setValue("修改后的评论");
     await wrapper.get(".comment-edit-actions .btn-primary").trigger("click");
     expect(mocks.reviewCommentUpdate).toHaveBeenCalledWith(
@@ -242,6 +280,8 @@ describe("ReviewList", () => {
       "100",
       "修改后的评论",
     );
+    await flushPromises();
+    expect(wrapper.find(".comment-editor").exists()).toBe(false);
 
     const deleteButton = wrapper.findAll(".comment-actions .danger")[0];
     await deleteButton.trigger("click");
@@ -257,7 +297,23 @@ describe("ReviewList", () => {
     );
   });
 
-  it("重命名文件使用新路径跳转，并在 Diff 无法定位时保留原始上下文提示", async () => {
+  it("编辑评论失败时保留编辑内容以便重试", async () => {
+    mocks.reviewCommentsList.mockResolvedValueOnce([comment({ can_edit: true })]);
+    mocks.reviewCommentUpdate.mockRejectedValueOnce(new Error("update failed"));
+    const wrapper = await mountList();
+
+    await wrapper.get(".comment-actions .text-button").trigger("click");
+    await wrapper.get(".comment-editor").setValue("尚未保存的修改");
+    await wrapper.get(".comment-edit-actions .btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get<HTMLTextAreaElement>(".comment-editor").element.value).toBe(
+      "尚未保存的修改",
+    );
+    expect(wrapper.get(".comment-error").text()).toContain("update failed");
+  });
+
+  it("重命名文件显示新路径并使用评论原路径定位", async () => {
     mocks.reviewCommentsList.mockResolvedValueOnce([
       comment({ path: "src/old.ts", original_commit_id: "old-head" }),
     ]);
@@ -301,7 +357,253 @@ describe("ReviewList", () => {
     });
 
     expect(wrapper.find(".path-button").text()).toContain("src/new.ts");
+    expect(wrapper.get(".review-thread").classes()).not.toContain("outdated");
     await wrapper.get(".path-button").trigger("click");
-    expect(wrapper.emitted("locateComment")?.at(-1)).toEqual(["src/new.ts", 12]);
+    expect(wrapper.emitted("locateComment")?.at(-1)).toEqual(["src/old.ts", 12, "left"]);
+  });
+
+  it("Diff 刷新后重新判断评论位置并自动展示原始 hunk", async () => {
+    mocks.reviewCommentsList.mockResolvedValueOnce([
+      comment({ path: "src/main.ts", original_commit_id: "old-head" }),
+    ]);
+    const diffFiles = [
+      {
+        filename: "src/main.ts",
+        status: "modified" as const,
+        patch: "@@ -12 +12 @@\n-old\n+new",
+        additions: 1,
+        deletions: 1,
+      },
+    ];
+    const currentPatch = {
+      filename: "src/main.ts",
+      old_path: "src/main.ts",
+      new_path: "src/main.ts",
+      status: "modified" as const,
+      additions: 1,
+      deletions: 1,
+      content_kind: "text" as const,
+      patch: "@@ -12 +12 @@\n-old\n+new",
+      hunks: [
+        {
+          header: "@@ -12 +12 @@",
+          old_start: 12,
+          old_count: 1,
+          new_start: 12,
+          new_count: 1,
+          section_header: null,
+          lines: [
+            { kind: "deletion" as const, content: "old", old_line: 12, new_line: null },
+            { kind: "addition" as const, content: "new", old_line: null, new_line: 12 },
+          ],
+        },
+      ],
+      message: null,
+    };
+    const wrapper = await mountList({ diffFiles, diffPatches: [currentPatch] });
+
+    expect(wrapper.get(".review-thread").classes()).not.toContain("outdated");
+    expect(wrapper.get(".path-button").attributes("disabled")).toBeUndefined();
+
+    await wrapper.setProps({
+      diffPatches: [
+        {
+          ...currentPatch,
+          hunks: [
+            {
+              ...currentPatch.hunks[0],
+              old_start: 30,
+              new_start: 30,
+              lines: [
+                { kind: "deletion", content: "other", old_line: 30, new_line: null },
+                { kind: "addition", content: "other", old_line: null, new_line: 30 },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    await flushPromises();
+
+    expect(wrapper.get(".review-thread").classes()).toContain("outdated");
+    expect(wrapper.get(".path-button").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get(".path-button").attributes("title")).toBe("跳转到当前 Diff 文件");
+    expect(wrapper.get(".original-code-hint").text()).toContain("当前 Diff 无法定位");
+    expect(wrapper.get(".mini-diff-view").text()).toContain("当时代码");
+  });
+
+  it("按评论侧提取 hunk，避免旧侧同号行抢先命中", async () => {
+    const patch =
+      "@@ -1,15 +1,0 @@\n-old1\n-old2\n-old3\n-old4\n-old5\n-old6\n-old7\n-old8\n-old9\n-old10\n-old11\n-old12\n-old13\n-old14\n-old15\n@@ -20,0 +10 @@\n+newcode";
+    mocks.reviewCommentsList.mockResolvedValueOnce([
+      comment({
+        line: 10,
+        original_line: 10,
+        side: "right",
+        diff_hunk: null,
+      }),
+    ]);
+    const wrapper = await mountList({
+      diffFiles: [
+        {
+          filename: "src/main.ts",
+          status: "modified",
+          patch,
+          additions: 1,
+          deletions: 15,
+        },
+      ],
+      diffPatches: [
+        {
+          filename: "src/main.ts",
+          old_path: "src/main.ts",
+          new_path: "src/main.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 15,
+          content_kind: "text",
+          patch,
+          hunks: [
+            {
+              header: "@@ -1,15 +1,0 @@",
+              old_start: 1,
+              old_count: 15,
+              new_start: 1,
+              new_count: 0,
+              section_header: null,
+              lines: Array.from({ length: 15 }, (_, index) => ({
+                kind: "deletion",
+                content: `old${index + 1}`,
+                old_line: index + 1,
+                new_line: null,
+              })),
+            },
+            {
+              header: "@@ -20,0 +10 @@",
+              old_start: 20,
+              old_count: 0,
+              new_start: 10,
+              new_count: 1,
+              section_header: null,
+              lines: [{ kind: "addition", content: "newcode", old_line: null, new_line: 10 }],
+            },
+          ],
+          message: null,
+        },
+      ],
+    });
+
+    await wrapper.get(".code-hint").trigger("click");
+
+    expect(wrapper.get(".mini-diff-view").text()).toContain("newcode");
+    expect(wrapper.get(".mini-diff-view").text()).not.toContain("old10");
+  });
+
+  it("缺少历史 hunk 时不使用 original_line 匹配当前 Patch", async () => {
+    mocks.reviewCommentsList.mockResolvedValueOnce([
+      comment({
+        path: "src/removed.ts",
+        line: null,
+        original_line: 27,
+        original_commit_id: "old-head",
+        diff_hunk: null,
+      }),
+    ]);
+    const wrapper = await mountList({
+      diffFiles: [
+        {
+          filename: "src/removed.ts",
+          status: "modified",
+          patch: "@@ -27 +27 @@\n-current old\n+current new",
+          additions: 1,
+          deletions: 1,
+        },
+      ],
+      diffPatches: [
+        {
+          filename: "src/removed.ts",
+          old_path: "src/removed.ts",
+          new_path: "src/removed.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          content_kind: "text",
+          patch: "@@ -27 +27 @@\n-current old\n+current new",
+          hunks: [
+            {
+              header: "@@ -27 +27 @@",
+              old_start: 27,
+              old_count: 1,
+              new_start: 27,
+              new_count: 1,
+              section_header: null,
+              lines: [
+                { kind: "deletion", content: "current old", old_line: 27, new_line: null },
+                { kind: "addition", content: "current new", old_line: null, new_line: 27 },
+              ],
+            },
+          ],
+          message: null,
+        },
+      ],
+    });
+
+    expect(wrapper.get(".path-button").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get(".path-button").attributes("title")).toBe("跳转到当前 Diff 文件");
+    await wrapper.get(".path-button").trigger("click");
+    expect(wrapper.emitted("locateComment")?.at(-1)).toEqual(["src/removed.ts", null, "right"]);
+    expect(wrapper.find(".mini-diff-view").exists()).toBe(false);
+    expect(wrapper.get(".original-context-fallback").text()).toContain("src/removed.ts :27");
+    expect(wrapper.get(".original-context-fallback").text()).toContain("old-head");
+    expect(wrapper.get(".original-context-fallback").text()).toContain("评论正文仍保留");
+  });
+
+  it("评论文件已不在当前 Diff 时禁用文件级跳转", async () => {
+    mocks.reviewCommentsList.mockResolvedValueOnce([
+      comment({ path: "src/removed.ts", line: null, original_line: 27, diff_hunk: null }),
+    ]);
+    const wrapper = await mountList({
+      diffFiles: [
+        {
+          filename: "src/current.ts",
+          status: "modified",
+          patch: "@@ -1 +1 @@\n-old\n+new",
+          additions: 1,
+          deletions: 1,
+        },
+      ],
+      diffPatches: [
+        {
+          filename: "src/current.ts",
+          old_path: "src/current.ts",
+          new_path: "src/current.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          content_kind: "text",
+          patch: "@@ -1 +1 @@\n-old\n+new",
+          hunks: [
+            {
+              header: "@@ -1 +1 @@",
+              old_start: 1,
+              old_count: 1,
+              new_start: 1,
+              new_count: 1,
+              section_header: null,
+              lines: [
+                { kind: "deletion", content: "old", old_line: 1, new_line: null },
+                { kind: "addition", content: "new", old_line: null, new_line: 1 },
+              ],
+            },
+          ],
+          message: null,
+        },
+      ],
+    });
+
+    expect(wrapper.get(".path-button").attributes("disabled")).toBeDefined();
+    expect(wrapper.get(".path-button").attributes("title")).toBe(
+      "当前 Diff 中找不到此评论对应的文件",
+    );
   });
 });

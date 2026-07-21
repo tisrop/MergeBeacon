@@ -676,6 +676,11 @@ impl GitHubAdapter {
             path: comment["path"].as_str().unwrap_or("").to_string(),
             line: comment["line"].as_u64().map(|line| line as u32),
             start_line: comment["startLine"].as_u64().map(|line| line as u32),
+            side: match thread["diffSide"].as_str() {
+                Some("LEFT") => Some("left".into()),
+                Some("RIGHT") => Some("right".into()),
+                _ => None,
+            },
             author: Self::map_graphql_user(&comment["author"]),
             created_at: comment["createdAt"].as_str().unwrap_or("").to_string(),
             commit_id: comment["commit"]["oid"].as_str().map(str::to_string),
@@ -789,6 +794,37 @@ impl GitHubAdapter {
         }
     }
 
+    fn map_merge_queue_entry(entry: &Value, total: Option<u32>) -> PrMergeQueueStatus {
+        let raw_state = entry["state"].as_str().unwrap_or("");
+        let (state, failure_reason) = match raw_state {
+            "QUEUED" => (MergeQueueState::Queued, None),
+            "AWAITING_CHECKS" => (MergeQueueState::Waiting, None),
+            "MERGEABLE" => (MergeQueueState::Ready, None),
+            "LOCKED" => (MergeQueueState::Merging, None),
+            "UNMERGEABLE" => (MergeQueueState::Blocked, Some("GitHub Merge Queue 判定当前项不可合并".into())),
+            _ => (MergeQueueState::Unknown, None),
+        };
+        PrMergeQueueStatus {
+            kind: MergeQueueKind::MergeQueue,
+            available: true,
+            state,
+            position: entry["position"].as_u64().and_then(|value| u32::try_from(value).ok()),
+            total,
+            // The target branch lives on the PR node, so the caller populates it.
+            target_branch: None,
+            enqueued_at: entry["enqueuedAt"].as_str().map(str::to_string),
+            updated_at: None,
+            estimated_time_seconds: entry["estimatedTimeToMerge"].as_u64(),
+            head_sha: entry["headCommit"]["oid"].as_str().map(str::to_string),
+            pipeline_status: None,
+            failure_reason,
+        }
+    }
+
+    fn is_merge_queue_schema_error(message: &str) -> bool {
+        message.to_ascii_lowercase().contains("mergequeue")
+    }
+
     fn metadata_milestone(json: &Value) -> Option<PrMilestone> {
         (!json.is_null()).then(|| PrMilestone {
             id: json["id"].clone(),
@@ -850,7 +886,7 @@ impl GitHubAdapter {
 #[async_trait]
 impl super::JsonPageSource for GitHubAdapter {
     async fn fetch_json_page(&self, endpoint: &str, page: u32) -> Result<super::JsonPage, AppError> {
-        let url = format!("{endpoint}?per_page={}&page={page}", super::JSON_PAGE_SIZE);
+        let url = super::json_page_url(endpoint, page);
         let response = self
             .client
             .raw_client()
@@ -1177,6 +1213,131 @@ impl GitPlatform for GitHubAdapter {
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
         })
+    }
+
+    async fn list_pr_dependency_candidates(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+    ) -> Result<PrDependencyCandidates, AppError> {
+        let repository = format!("{owner}/{repo}");
+        let map_candidate = |pr: &Value| {
+            let number = pr["number"].as_u64()?;
+            let source_branch = pr["head"]["ref"].as_str()?.trim().to_string();
+            let target_branch = pr["base"]["ref"].as_str()?.trim().to_string();
+            if source_branch.is_empty() || target_branch.is_empty() {
+                return None;
+            }
+            Some(PrDependencyCandidate {
+                number,
+                title: pr["title"].as_str().unwrap_or("").to_string(),
+                state: Self::map_pr_state(pr["state"].as_str().unwrap_or(""), !pr["merged_at"].is_null()),
+                source_branch,
+                target_branch,
+                source_repository: pr["head"]["repo"]["full_name"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("github-unknown-source:{number}")),
+                target_repository: pr["base"]["repo"]["full_name"].as_str().unwrap_or(&repository).to_string(),
+            })
+        };
+
+        let current_url = format!("{}/repos/{owner}/{repo}/pulls/{pr_number}", self.base_url);
+        let current_json = self.get_json::<Value>(&current_url).await?;
+        let current =
+            map_candidate(&current_json).ok_or_else(|| AppError::Api("当前 PR 缺少依赖分析所需的分支信息".into()))?;
+        super::walk_pr_dependency_candidates(self, current, map_candidate, |candidate| {
+            let target_owner = candidate.target_repository.split('/').next().unwrap_or(owner);
+            let parent_head = format!("{target_owner}:{}", candidate.target_branch);
+            [
+                format!(
+                    "{}/repos/{owner}/{repo}/pulls?state=all&base={}",
+                    self.base_url,
+                    urlencoding::encode(&candidate.source_branch)
+                ),
+                format!(
+                    "{}/repos/{owner}/{repo}/pulls?state=all&head={}",
+                    self.base_url,
+                    urlencoding::encode(&parent_head)
+                ),
+            ]
+        })
+        .await
+    }
+
+    async fn get_pr_merge_queue_status(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_number: u64,
+    ) -> Result<PrMergeQueueStatus, AppError> {
+        let number =
+            i32::try_from(pr_number).map_err(|_| AppError::Api("GitHub PR 编号超出 GraphQL Int 范围".into()))?;
+        let data = match self
+            .graphql(
+                "Merge Queue 状态查询",
+                r#"query MergeQueueStatus($owner: String!, $repo: String!, $number: Int!) {
+                    repository(owner: $owner, name: $repo) {
+                        pullRequest(number: $number) {
+                            baseRefName
+                            headRefOid
+                            mergeQueue {
+                                entries { totalCount }
+                            }
+                            mergeQueueEntry {
+                                position
+                                state
+                                enqueuedAt
+                                estimatedTimeToMerge
+                                headCommit { oid }
+                            }
+                        }
+                    }
+                }"#,
+                serde_json::json!({ "owner": owner, "repo": repo, "number": number }),
+            )
+            .await
+        {
+            Ok(data) => data,
+            Err(AppError::Api(message)) if Self::is_merge_queue_schema_error(&message) => {
+                return Ok(PrMergeQueueStatus::unavailable(
+                    MergeQueueKind::MergeQueue,
+                    "当前 GitHub Enterprise 版本未提供 Merge Queue GraphQL 字段",
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        let pull_request = data["repository"]["pullRequest"]
+            .as_object()
+            .ok_or_else(|| AppError::Api("GitHub Merge Queue 响应缺少 PR".into()))?;
+        let total =
+            pull_request["mergeQueue"]["entries"]["totalCount"].as_u64().and_then(|value| u32::try_from(value).ok());
+        let mut status = match pull_request.get("mergeQueueEntry") {
+            Some(entry) if !entry.is_null() => Self::map_merge_queue_entry(entry, total),
+            _ if pull_request.get("mergeQueue").is_some_and(Value::is_object) => PrMergeQueueStatus {
+                kind: MergeQueueKind::MergeQueue,
+                available: true,
+                state: MergeQueueState::NotQueued,
+                position: None,
+                total,
+                target_branch: pull_request["baseRefName"].as_str().map(str::to_string),
+                enqueued_at: None,
+                updated_at: None,
+                estimated_time_seconds: None,
+                head_sha: pull_request["headRefOid"].as_str().map(str::to_string),
+                pipeline_status: None,
+                failure_reason: None,
+            },
+            _ => PrMergeQueueStatus::unavailable(MergeQueueKind::MergeQueue, "目标分支未启用 GitHub Merge Queue"),
+        };
+        if status.target_branch.is_none() {
+            status.target_branch = pull_request["baseRefName"].as_str().map(str::to_string);
+        }
+        if status.head_sha.is_none() {
+            status.head_sha = pull_request["headRefOid"].as_str().map(str::to_string);
+        }
+        Ok(status)
     }
 
     async fn list_branches(&self, owner: &str, repo: &str) -> Result<PrBranchOptions, AppError> {
@@ -1780,6 +1941,7 @@ impl GitPlatform for GitHubAdapter {
             path: c["path"].as_str().unwrap_or("").to_string(),
             line: c["line"].as_u64().map(|n| n as u32),
             start_line: c["start_line"].as_u64().map(|n| n as u32),
+            side: Some(if gh_side == "LEFT" { "left" } else { "right" }.into()),
             author: Self::map_user(&c["user"]),
             created_at: c["created_at"].as_str().unwrap_or("").to_string(),
             commit_id: c["commit_id"].as_str().map(|s| s.to_string()),
@@ -1814,6 +1976,7 @@ impl GitPlatform for GitHubAdapter {
                                         isResolved
                                         viewerCanResolve
                                         viewerCanUnresolve
+                                        diffSide
                                         comments(first: 100) {
                                             nodes {
                                                 id

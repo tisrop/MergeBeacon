@@ -23,6 +23,8 @@ const eventTitles: Record<NotificationEventType, string> = {
   mergeable: "Pull Request 已可合并",
 };
 
+const TEST_NOTIFICATION_ID = 1_977_042_301;
+
 function notificationId(event: InboxNotificationEvent): number {
   const value = `${event.type}:${event.platform}:${event.repository_full_name}:${event.number}`;
   let hash = 0;
@@ -58,29 +60,41 @@ export async function notificationPermissionGranted(): Promise<boolean> {
 export async function requestNotificationPermission(): Promise<boolean> {
   if (!isDesktopRuntime()) return false;
   if (await desktopNotificationPermissionGranted()) return true;
-  return (await requestDesktopNotificationPermission()) === "granted";
+  return requestDesktopNotificationPermission();
 }
 
-export function showInboxNotification(
+export async function showInboxNotification(
   event: InboxNotificationEvent,
   revealRepositoryDetails: boolean,
-): void {
+): Promise<void> {
   if (!isDesktopRuntime()) return;
   const body = revealRepositoryDetails
     ? `${event.repository_full_name} #${event.number} · ${event.title}`
     : "某个私有仓库的 Pull Request 有新动态";
-  sendDesktopNotification({
+  await sendDesktopNotification({
     id: notificationId(event),
     title: eventTitles[event.type],
     body,
-    private: !revealRepositoryDetails,
     group: `${event.platform}:${event.repository_full_name}:${event.number}`,
+    actionable: true,
     extra: {
       platform: event.platform,
       owner: event.owner,
       repo: event.repo,
       number: event.number,
     },
+  });
+}
+
+export async function showDesktopTestNotification(): Promise<void> {
+  if (!isDesktopRuntime()) return;
+  await sendDesktopNotification({
+    id: TEST_NOTIFICATION_ID,
+    title: "MergeBeacon 测试通知",
+    body: "系统通知已连接。退出 MergeBeacon 后不会继续检查 PR / MR 动态。",
+    group: "mergebeacon:test",
+    actionable: false,
+    extra: {},
   });
 }
 

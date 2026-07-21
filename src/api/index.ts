@@ -1,14 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-shell";
-import {
-  Visibility,
-  isPermissionGranted,
-  onAction,
-  registerActionTypes,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
 import type {
   Platform,
   PlatformCapabilities,
@@ -18,6 +10,8 @@ import type {
   ReviewInboxCategory,
   ReviewInboxItem,
   PrDetail,
+  PrDependencyGraph,
+  PrMergeQueueStatus,
   PrBranchOptions,
   PrLabel,
   PrCreatePreview,
@@ -57,8 +51,8 @@ export interface DesktopNotificationPayload {
   title: string;
   body: string;
   group: string;
-  private: boolean;
   extra: Record<string, unknown>;
+  actionable?: boolean;
 }
 
 export function isDesktopRuntime(): boolean {
@@ -66,41 +60,23 @@ export function isDesktopRuntime(): boolean {
 }
 
 export function desktopNotificationPermissionGranted(): Promise<boolean> {
-  return isPermissionGranted();
+  return invoke("desktop_notification_permission_granted");
 }
 
-export function requestDesktopNotificationPermission(): Promise<NotificationPermission> {
-  return requestPermission();
+export function requestDesktopNotificationPermission(): Promise<boolean> {
+  return invoke("desktop_notification_request_permission");
 }
 
-export function sendDesktopNotification(payload: DesktopNotificationPayload): void {
-  sendNotification({
-    id: payload.id,
-    title: payload.title,
-    body: payload.body,
-    group: payload.group,
-    actionTypeId: "mergebeacon-open-pr",
-    autoCancel: true,
-    visibility: payload.private ? Visibility.Private : Visibility.Public,
-    extra: payload.extra,
-  });
+export function sendDesktopNotification(payload: DesktopNotificationPayload): Promise<void> {
+  return invoke("desktop_notification_send", { payload });
 }
 
 export async function listenDesktopNotificationActions(
   callback: (extra: Record<string, unknown>) => void,
 ): Promise<UnlistenFn> {
-  try {
-    await registerActionTypes([
-      {
-        id: "mergebeacon-open-pr",
-        actions: [{ id: "open", title: "打开 Pull Request", foreground: true }],
-      },
-    ]);
-  } catch {
-    // Desktop platforms may not expose explicit action buttons; click handling still works.
-  }
-  const listener = await onAction((notification) => callback(notification.extra ?? {}));
-  return () => listener.unregister();
+  return listen<Record<string, unknown>>("desktop-notification-action", (event) =>
+    callback(event.payload),
+  );
 }
 
 // ── Auth ──
@@ -206,6 +182,24 @@ export async function prDetail(
   number: number,
 ): Promise<PrDetail> {
   return invoke("pr_detail", { platform, owner, repo, number });
+}
+
+export async function prDependencies(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<PrDependencyGraph> {
+  return invoke("pr_dependencies", { platform, owner, repo, number });
+}
+
+export async function prMergeQueueStatus(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<PrMergeQueueStatus> {
+  return invoke("pr_merge_queue_status", { platform, owner, repo, number });
 }
 
 export async function prBranches(
