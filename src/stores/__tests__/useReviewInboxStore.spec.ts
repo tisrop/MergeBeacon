@@ -215,6 +215,30 @@ describe("useReviewInboxStore", () => {
     expect(reviewInboxList).toHaveBeenNthCalledWith(2, "github", "authored", 1, 20);
   });
 
+  it("登录平台集合变化后忽略已登出平台的迟到响应", async () => {
+    const oldGithubRequest = deferred<Paginated<ReviewInboxItem>>();
+    vi.mocked(reviewInboxList).mockImplementation(async (platform) => {
+      if (platform === "github") return oldGithubRequest.promise;
+      return page([item("gitlab", "team/current", 2, "2025-01-02T00:00:00Z")]);
+    });
+    const store = useReviewInboxStore();
+
+    const previousRefresh = store.refresh(["github"]);
+    await Promise.resolve();
+    await store.refresh(["gitlab"]);
+
+    expect(store.loggedInPlatforms).toEqual(["gitlab"]);
+    expect(store.items.map((entry) => entry.repository_full_name)).toEqual(["team/current"]);
+
+    oldGithubRequest.resolve(page([item("github", "team/signed-out", 1, "2025-01-03T00:00:00Z")]));
+    await previousRefresh;
+
+    expect(store.loggedInPlatforms).toEqual(["gitlab"]);
+    expect(store.itemsByPlatform.github).toEqual([]);
+    expect(store.items.map((entry) => entry.repository_full_name)).toEqual(["team/current"]);
+    expect(store.errors.github).toBeNull();
+  });
+
   it("按平台独立追加分页且不覆盖已加载条目", async () => {
     vi.mocked(reviewInboxList)
       .mockResolvedValueOnce(page([item("github", "team/a", 1, "2025-01-01T00:00:00Z")], 1, 2))
