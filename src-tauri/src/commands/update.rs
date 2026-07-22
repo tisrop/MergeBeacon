@@ -266,8 +266,17 @@ pub async fn update_download_and_install(
 
 #[tauri::command]
 pub async fn update_restart(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    restart_app(app, &state).await
+}
+
+async fn restart_app(app: AppHandle, state: &AppState) -> Result<(), String> {
     let _operation = state.operations.begin_update().await?;
     app.restart()
+}
+
+#[cfg(feature = "restart-timing-test")]
+pub(crate) async fn restart_for_timing_test(app: AppHandle, state: &AppState) -> Result<(), String> {
+    restart_app(app, state).await
 }
 
 #[cfg(test)]

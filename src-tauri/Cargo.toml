@@ -6,6 +6,9 @@ edition = "2021"
 description = "Cross-platform PR review and issue management desktop client"
 license = "Apache-2.0"
 
+[features]
+restart-timing-test = []
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
