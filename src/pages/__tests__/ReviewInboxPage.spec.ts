@@ -61,6 +61,14 @@ function result(platform: Platform): Paginated<ReviewInboxItem> {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe("ReviewInboxPage", () => {
   beforeEach(() => {
     storage.clear();
@@ -363,6 +371,56 @@ describe("ReviewInboxPage", () => {
         .mock.calls.map(([platform]) => platform)
         .sort(),
     ).toEqual(["github", "gitlab"]);
+
+    wrapper.unmount();
+  });
+
+  it("登录状态快速变化时仅保留当前平台并忽略旧请求结果", async () => {
+    const oldGithubRequest = deferred<Paginated<ReviewInboxItem>>();
+    vi.mocked(reviewInboxList).mockImplementation(async (platform) =>
+      platform === "github" ? oldGithubRequest.promise : result(platform),
+    );
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/inbox", name: "review-inbox", component: ReviewInboxPage },
+        { path: "/pr/:platform/:owner/:repo/:number", name: "pr-detail", component: {} },
+      ],
+    });
+    await router.push("/inbox");
+    await router.isReady();
+    const auth = useAuthStore();
+    auth.platforms.github.isLoggedIn = true;
+
+    const wrapper = mount(ReviewInboxPage, {
+      global: {
+        plugins: [router],
+        stubs: {
+          AppLayout: { template: "<div><slot name='header' /><slot /></div>" },
+        },
+      },
+    });
+    await Promise.resolve();
+    expect(reviewInboxList).toHaveBeenCalledWith("github", "review_requested", 1, 20);
+
+    auth.platforms.github.isLoggedIn = false;
+    auth.platforms.gitlab.isLoggedIn = true;
+    await flushPromises();
+
+    expect(useReviewInboxStore().loggedInPlatforms).toEqual(["gitlab"]);
+    expect(wrapper.findAll(".repository-name").map((node) => node.text())).toEqual([
+      "team/gitlab-repo",
+    ]);
+
+    oldGithubRequest.resolve(result("github"));
+    await flushPromises();
+
+    expect(useReviewInboxStore().loggedInPlatforms).toEqual(["gitlab"]);
+    expect(useReviewInboxStore().itemsByPlatform.github).toEqual([]);
+    expect(wrapper.findAll(".repository-name").map((node) => node.text())).toEqual([
+      "team/gitlab-repo",
+    ]);
+    expect(wrapper.text()).not.toContain("team/github-repo");
 
     wrapper.unmount();
   });
