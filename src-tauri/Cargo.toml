@@ -21,6 +21,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
+# tauri-plugin-updater disables reqwest's default system-proxy feature. Feature-unify its
+# reqwest 0.13 client so Windows/macOS system settings and Linux proxy env vars are honored.
+reqwest-updater-system-proxy = { package = "reqwest", version = "0.13", default-features = false, features = ["system-proxy"] }
 async-trait = "0.1"
 thiserror = "2"
 directories = "6"

@@ -1,7 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assertUpdaterConfig, readUpdaterConfig } from "../updater-config.mjs";
+import {
+  assertUpdaterConfig,
+  assertUpdaterSystemProxy,
+  readCargoMetadata,
+  readUpdaterConfig,
+} from "../updater-config.mjs";
 
 function validConfig() {
   const keyBytes = Buffer.concat([
@@ -75,6 +80,60 @@ describe("updater 配置安全检查", () => {
 
     expect(() => assertUpdaterConfig(config)).toThrow(
       "minisign 公钥注释中的 Key ID 与公钥数据不一致",
+    );
+  });
+
+  it("三平台 updater 启用系统代理", async () => {
+    const metadata = await readCargoMetadata();
+
+    expect(() => assertUpdaterSystemProxy(metadata)).not.toThrow();
+  });
+
+  it("拒绝缺少 system-proxy 的 updater 依赖", () => {
+    const metadata = {
+      packages: [
+        {
+          name: "mergebeacon",
+          dependencies: [
+            {
+              name: "reqwest",
+              rename: "reqwest-updater-system-proxy",
+              req: "^0.13",
+              target: null,
+              uses_default_features: false,
+              features: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(() => assertUpdaterSystemProxy(metadata)).toThrow(
+      "三平台 updater 必须为 reqwest 0.13 全局启用 system-proxy",
+    );
+  });
+
+  it("拒绝将 updater system-proxy 限制到单一平台", () => {
+    const metadata = {
+      packages: [
+        {
+          name: "mergebeacon",
+          dependencies: [
+            {
+              name: "reqwest",
+              rename: "reqwest-updater-system-proxy",
+              req: "^0.13",
+              target: 'cfg(target_os = "macos")',
+              uses_default_features: false,
+              features: ["system-proxy"],
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(() => assertUpdaterSystemProxy(metadata)).toThrow(
+      "三平台 updater 必须为 reqwest 0.13 全局启用 system-proxy",
     );
   });
 

@@ -2496,6 +2496,7 @@ dependencies = [
  "notify-rust",
  "rand 0.8.6",
  "reqwest 0.12.28",
+ "reqwest 0.13.4",
  "rusqlite",
  "serde",
  "serde_json",
