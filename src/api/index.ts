@@ -1,6 +1,8 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-shell";
+import { normalizeApiError } from "@/api/errors";
+export { ApiError, commandErrorCode, normalizeApiError } from "@/api/errors";
 import type {
   Platform,
   PlatformCapabilities,
@@ -45,6 +47,14 @@ import type {
 // ============================================================
 // Tauri IPC 封装 —— 所有后端调用统一入口
 // ============================================================
+
+async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return args === undefined ? await tauriInvoke<T>(command) : await tauriInvoke<T>(command, args);
+  } catch (error) {
+    throw normalizeApiError(error);
+  }
+}
 
 export interface DesktopNotificationPayload {
   id: number;

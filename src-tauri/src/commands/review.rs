@@ -1,3 +1,4 @@
+use crate::error::{CommandError, CommandResult};
 use crate::local_store::{CommentSnapshot, CommentSnapshotStore};
 use crate::models::*;
 use crate::patch::{extract_hunk_for_line, patch_matches_path, standardize_patches, PatchSide};
@@ -28,9 +29,9 @@ async fn ensure_owned_comment(
     pr_number: u64,
     thread_id: &str,
     comment_id: &str,
-) -> Result<(), String> {
-    let comments = platform.list_pr_comments(owner, repo, pr_number).await.map_err(|error| error.to_string())?;
-    let current_user = platform.current_user().await.map_err(|error| error.to_string())?;
+) -> CommandResult<()> {
+    let comments = platform.list_pr_comments(owner, repo, pr_number).await.map_err(CommandError::from)?;
+    let current_user = platform.current_user().await.map_err(CommandError::from)?;
     let comment = comments
         .iter()
         .find(|comment| value_id(&comment.id) == comment_id && comment.thread_id == thread_id)
@@ -53,14 +54,14 @@ pub async fn review_submit(
     body: String,
     event: String,
     comments: Vec<ReviewCommentPosition>,
-) -> Result<Review, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
+) -> CommandResult<Review> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
     let review_event = match event.as_str() {
         "approve" => ReviewEvent::Approve,
         "request_changes" => ReviewEvent::RequestChanges,
         _ => ReviewEvent::Comment,
     };
-    p.create_review(&owner, &repo, pr_number, &body, &review_event, &comments).await.map_err(|e| e.to_string())
+    p.create_review(&owner, &repo, pr_number, &body, &review_event, &comments).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -70,9 +71,9 @@ pub async fn review_list(
     owner: String,
     repo: String,
     pr_number: u64,
-) -> Result<Vec<Review>, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.list_reviews(&owner, &repo, pr_number).await.map_err(|e| e.to_string())
+) -> CommandResult<Vec<Review>> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.list_reviews(&owner, &repo, pr_number).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -83,9 +84,9 @@ pub async fn review_comments_list(
     owner: String,
     repo: String,
     pr_number: u64,
-) -> Result<Vec<PrComment>, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    let mut comments = p.list_pr_comments(&owner, &repo, pr_number).await.map_err(|e| e.to_string())?;
+) -> CommandResult<Vec<PrComment>> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let mut comments = p.list_pr_comments(&owner, &repo, pr_number).await.map_err(CommandError::from)?;
     let current_user = p.current_user().await.ok();
     for comment in &mut comments {
         let is_owned = current_user.as_ref().is_some_and(|user| comment.author.login.eq_ignore_ascii_case(&user.login));
@@ -156,17 +157,19 @@ pub async fn review_thread_reply(
     thread_id: String,
     reply_to_id: String,
     body: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     if thread_id.trim().is_empty() || reply_to_id.trim().is_empty() {
         return Err("评审线程和回复目标不能为空".into());
     }
     let body = validate_comment_body(&body)?;
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    let comments = p.list_pr_comments(&owner, &repo, pr_number).await.map_err(|e| e.to_string())?;
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let comments = p.list_pr_comments(&owner, &repo, pr_number).await.map_err(CommandError::from)?;
     if !comments.iter().any(|comment| comment.thread_id == thread_id && value_id(&comment.id) == reply_to_id) {
         return Err("回复目标不存在，可能已被删除或线程已更新".into());
     }
-    p.reply_to_review_thread(&owner, &repo, pr_number, &thread_id, &reply_to_id, &body).await.map_err(|e| e.to_string())
+    p.reply_to_review_thread(&owner, &repo, pr_number, &thread_id, &reply_to_id, &body)
+        .await
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -180,14 +183,14 @@ pub async fn review_comment_update(
     thread_id: String,
     comment_id: String,
     body: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     if thread_id.trim().is_empty() || comment_id.trim().is_empty() {
         return Err("评审线程和评论 ID 不能为空".into());
     }
     let body = validate_comment_body(&body)?;
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
     ensure_owned_comment(&*p, &owner, &repo, pr_number, &thread_id, &comment_id).await?;
-    p.update_review_comment(&owner, &repo, pr_number, &thread_id, &comment_id, &body).await.map_err(|e| e.to_string())
+    p.update_review_comment(&owner, &repo, pr_number, &thread_id, &comment_id, &body).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -201,13 +204,13 @@ pub async fn review_comment_delete(
     pr_number: u64,
     thread_id: String,
     comment_id: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     if thread_id.trim().is_empty() || comment_id.trim().is_empty() {
         return Err("评审线程和评论 ID 不能为空".into());
     }
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
     ensure_owned_comment(&*p, &owner, &repo, pr_number, &thread_id, &comment_id).await?;
-    p.delete_review_comment(&owner, &repo, pr_number, &thread_id, &comment_id).await.map_err(|e| e.to_string())?;
+    p.delete_review_comment(&owner, &repo, pr_number, &thread_id, &comment_id).await.map_err(CommandError::from)?;
     let _ = comment_store.delete_snapshot(&comment_id, &platform);
     Ok(())
 }
@@ -221,17 +224,17 @@ pub async fn review_thread_set_resolved(
     pr_number: u64,
     thread_id: String,
     resolved: bool,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     if thread_id.trim().is_empty() {
-        return Err("评审线程 ID 不能为空".to_string());
+        return Err("评审线程 ID 不能为空".into());
     }
     let capabilities =
         crate::platform::capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
     if !capabilities.supports_review_thread_resolution {
-        return Err(format!("{platform} 不支持解决或重新打开评审线程"));
+        return Err(format!("{platform} 不支持解决或重新打开评审线程").into());
     }
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.set_review_thread_resolved(&owner, &repo, pr_number, &thread_id, resolved).await.map_err(|e| e.to_string())
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.set_review_thread_resolved(&owner, &repo, pr_number, &thread_id, resolved).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -241,14 +244,14 @@ pub async fn review_viewed_files_list(
     owner: String,
     repo: String,
     pr_number: u64,
-) -> Result<Vec<String>, String> {
+) -> CommandResult<Vec<String>> {
     let capabilities =
         crate::platform::capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
     if !capabilities.supports_remote_file_viewed_state {
-        return Err(format!("{platform} 不支持同步文件已查看状态"));
+        return Err(format!("{platform} 不支持同步文件已查看状态").into());
     }
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.list_viewed_pr_files(&owner, &repo, pr_number).await.map_err(|e| e.to_string())
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.list_viewed_pr_files(&owner, &repo, pr_number).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -260,17 +263,17 @@ pub async fn review_file_set_viewed(
     pr_number: u64,
     path: String,
     viewed: bool,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     if path.trim().is_empty() {
-        return Err("文件路径不能为空".to_string());
+        return Err("文件路径不能为空".into());
     }
     let capabilities =
         crate::platform::capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
     if !capabilities.supports_remote_file_viewed_state {
-        return Err(format!("{platform} 不支持同步文件已查看状态"));
+        return Err(format!("{platform} 不支持同步文件已查看状态").into());
     }
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.set_pr_file_viewed(&owner, &repo, pr_number, &path, viewed).await.map_err(|e| e.to_string())
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.set_pr_file_viewed(&owner, &repo, pr_number, &path, viewed).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -289,12 +292,12 @@ pub async fn review_comment_add(
     side: String,
     body: String,
     diff_hunk: Option<String>,
-) -> Result<PrComment, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
+) -> CommandResult<PrComment> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
     let mut comment = p
         .create_pr_comment(&owner, &repo, pr_number, &commit_id, &path, start_line, line, &side, &body)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(CommandError::from)?;
     // If the platform didn't return diff_hunk but the caller provided it, write to SQLite
     if comment.diff_hunk.is_none() {
         if let Some(dh) = diff_hunk {
@@ -311,7 +314,7 @@ pub async fn review_comment_add(
                 original_line: comment.original_line,
                 original_start_line: comment.original_start_line,
             };
-            comment_store.save_snapshot(&snapshot).map_err(|e| e.to_string())?;
+            comment_store.save_snapshot(&snapshot).map_err(|error| CommandError::from(error.to_string()))?;
         }
     }
     Ok(comment)

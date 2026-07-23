@@ -2,6 +2,29 @@
 // 数据模型 —— 前后端一致的类型定义
 // ============================================================
 
+export type CommandErrorCode =
+  | "validation"
+  | "authentication"
+  | "permission_denied"
+  | "not_found"
+  | "conflict"
+  | "rate_limited"
+  | "network"
+  | "timeout"
+  | "invalid_response"
+  | "storage"
+  | "unsupported"
+  | "ai"
+  | "platform"
+  | "unknown";
+
+export interface CommandErrorPayload {
+  code: CommandErrorCode;
+  message: string;
+  retryable: boolean;
+  http_status?: number;
+}
+
 // ── 用户 ──
 export interface User {
   id: number | string;

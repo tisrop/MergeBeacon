@@ -2,6 +2,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::error::{CommandError, CommandResult};
+
 #[cfg(target_os = "macos")]
 use std::{
     sync::{Arc, LazyLock},
@@ -78,19 +80,19 @@ fn reserve_action_response_slot(slots: &Arc<Semaphore>) -> Result<OwnedSemaphore
 }
 
 #[tauri::command]
-pub async fn desktop_notification_permission_granted(app: AppHandle) -> Result<bool, String> {
-    permission_granted(&app).await
+pub async fn desktop_notification_permission_granted(app: AppHandle) -> CommandResult<bool> {
+    permission_granted(&app).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub async fn desktop_notification_request_permission(app: AppHandle) -> Result<bool, String> {
-    request_permission(&app).await
+pub async fn desktop_notification_request_permission(app: AppHandle) -> CommandResult<bool> {
+    request_permission(&app).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub async fn desktop_notification_send(app: AppHandle, payload: DesktopNotificationPayload) -> Result<(), String> {
+pub async fn desktop_notification_send(app: AppHandle, payload: DesktopNotificationPayload) -> CommandResult<()> {
     validate_payload(&payload)?;
-    send_notification(app, payload).await
+    send_notification(app, payload).await.map_err(CommandError::from)
 }
 
 #[cfg(target_os = "macos")]

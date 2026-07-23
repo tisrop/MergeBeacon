@@ -10,6 +10,7 @@ import type {
   PrContext,
   AiSuggestionAction,
   AiStreamEvent,
+  CommandErrorPayload,
 } from "@/types";
 import {
   aiReview,
@@ -22,6 +23,7 @@ import {
   reviewCommentAdd,
   reviewSubmit,
 } from "@/api";
+import { normalizeApiError, type ApiError } from "@/api/errors";
 import { discoverAiRepositoryRules, type DiscoveredAiRules } from "@/services/aiRepositoryRules";
 import { getErrorMessage } from "@/utils/error";
 import { draftPositionIsCurrent } from "@/utils/aiReviewDraft";
@@ -57,6 +59,7 @@ const reviewMode = ref<AiReviewMode>("full");
 const useStreaming = ref(true);
 const loading = ref(false);
 const error = ref("");
+const errorDetails = ref<ApiError | null>(null);
 const result = ref<AiReviewResult | null>(null);
 const resultHeadSha = ref("");
 const resultFocus = ref<AiReviewFocus | null>(null);
@@ -339,6 +342,7 @@ async function startReview() {
   cleanupListeners();
   loading.value = true;
   error.value = "";
+  errorDetails.value = null;
   draftError.value = "";
   streamReceivedData.value = false;
   activeReviewHeadSha = reviewHeadSha;
@@ -417,7 +421,8 @@ async function startNonStreamingReview() {
     saveLastSuccessfulHeadSha(reviewHeadSha, activeReviewStorageKey);
     recordSuccessfulReview(result.value);
   } catch (e) {
-    error.value = getErrorMessage(e, "AI 评审失败");
+    errorDetails.value = normalizeApiError(e);
+    error.value = getErrorMessage(errorDetails.value, "AI 评审失败");
   } finally {
     loading.value = false;
   }
@@ -448,13 +453,17 @@ async function startStreamingReview() {
       cleanupListeners();
     });
 
-    unlistenError = await listen<AiStreamEvent<string>>("ai-review-error", (event) => {
-      if (event.payload.request_id !== activeRequestId) return;
-      error.value = event.payload.payload;
-      activeRequestId = null;
-      loading.value = false;
-      cleanupListeners();
-    });
+    unlistenError = await listen<AiStreamEvent<CommandErrorPayload | string>>(
+      "ai-review-error",
+      (event) => {
+        if (event.payload.request_id !== activeRequestId) return;
+        errorDetails.value = normalizeApiError(event.payload.payload);
+        error.value = errorDetails.value.message;
+        activeRequestId = null;
+        loading.value = false;
+        cleanupListeners();
+      },
+    );
 
     await aiReviewStream(requestId, {
       diff: activeReviewDiff,
@@ -465,7 +474,8 @@ async function startStreamingReview() {
   } catch (e) {
     if (activeRequestId === requestId) {
       activeRequestId = null;
-      error.value = getErrorMessage(e, "AI 流式评审启动失败");
+      errorDetails.value = normalizeApiError(e);
+      error.value = getErrorMessage(errorDetails.value, "AI 流式评审启动失败");
       loading.value = false;
       cleanupListeners();
     }

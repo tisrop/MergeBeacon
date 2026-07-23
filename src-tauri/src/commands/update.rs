@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 use tauri_plugin_updater::{Error as UpdaterError, UpdaterExt};
 
@@ -205,7 +206,7 @@ fn install_error(_error: UpdaterError) -> String {
 }
 
 #[tauri::command]
-pub async fn update_check(app: AppHandle) -> Result<UpdateCheckResult, String> {
+pub async fn update_check(app: AppHandle) -> CommandResult<UpdateCheckResult> {
     let updater = app.updater().map_err(|_| "初始化更新检查失败，请稍后重试".to_string())?;
     let update = updater.check().await.map_err(update_error)?;
     let update_mode = current_update_mode();
@@ -234,7 +235,7 @@ pub async fn update_download_and_install(
     state: State<'_, AppState>,
     request_id: String,
     expected_version: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     validate_update_request_id(&request_id)?;
     ensure_installer_update_mode(current_update_mode())?;
     let _operation = state.operations.begin_update().await?;
@@ -265,8 +266,8 @@ pub async fn update_download_and_install(
 }
 
 #[tauri::command]
-pub async fn update_restart(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    restart_app(app, &state).await
+pub async fn update_restart(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    restart_app(app, &state).await.map_err(CommandError::from)
 }
 
 async fn restart_app(app: AppHandle, state: &AppState) -> Result<(), String> {

@@ -1,6 +1,7 @@
 import { computed, onScopeDispose, ref, watch } from "vue";
 import { defineStore } from "pinia";
 import { reviewInboxList } from "@/api";
+import { commandErrorCode } from "@/api/errors";
 import type {
   Paginated,
   Platform,
@@ -169,6 +170,7 @@ function sortItems(left: ReviewInboxItem, right: ReviewInboxItem, sort: InboxSor
 }
 
 function isRateLimitError(cause: unknown): boolean {
+  if (commandErrorCode(cause) === "rate_limited") return true;
   const message = cause instanceof Error ? cause.message : String(cause);
   return /\b429\b|rate.?limit|限流|请求过于频繁/i.test(message);
 }

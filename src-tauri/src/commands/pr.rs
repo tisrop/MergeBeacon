@@ -1,3 +1,4 @@
+use crate::error::{CommandError, CommandResult};
 use crate::models::*;
 use crate::patch::{standardize_patches, PATCH_SCHEMA_VERSION};
 use crate::platform::capabilities_for;
@@ -374,8 +375,8 @@ pub async fn pr_list(
     state_filter: Option<String>,
     page: Option<u32>,
     per_page: Option<u32>,
-) -> Result<Paginated<PrSummary>, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
+) -> CommandResult<Paginated<PrSummary>> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
     let pr_state = match state_filter.as_deref() {
         Some("closed") => PrState::Closed,
         Some("merged") => PrState::Merged,
@@ -384,7 +385,7 @@ pub async fn pr_list(
     };
     p.list_pull_requests(&owner, &repo, &pr_state, page.unwrap_or(1), per_page.unwrap_or(20))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -394,9 +395,9 @@ pub async fn pr_detail(
     owner: String,
     repo: String,
     number: u64,
-) -> Result<PrDetail, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.get_pull_request(&owner, &repo, number).await.map_err(|e| e.to_string())
+) -> CommandResult<PrDetail> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.get_pull_request(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -406,15 +407,16 @@ pub async fn pr_dependencies(
     owner: String,
     repo: String,
     number: u64,
-) -> Result<PrDependencyGraph, String> {
+) -> CommandResult<PrDependencyGraph> {
     let owner = owner.trim();
     let repo = repo.trim();
     if owner.is_empty() || repo.is_empty() || number == 0 {
         return Err("仓库和 PR / MR 编号不能为空".into());
     }
-    let p = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    let candidates = p.list_pr_dependency_candidates(owner, repo, number).await.map_err(|error| error.to_string())?;
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let candidates = p.list_pr_dependency_candidates(owner, repo, number).await.map_err(CommandError::from)?;
     build_pr_dependency_graph(candidates.items, number, Some(candidates.current), candidates.truncated)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -424,7 +426,7 @@ pub async fn pr_merge_queue_status(
     owner: String,
     repo: String,
     number: u64,
-) -> Result<PrMergeQueueStatus, String> {
+) -> CommandResult<PrMergeQueueStatus> {
     let owner = owner.trim();
     let repo = repo.trim();
     if owner.is_empty() || repo.is_empty() || number == 0 {
@@ -434,8 +436,8 @@ pub async fn pr_merge_queue_status(
     if capabilities.merge_queue_kind.is_none() {
         return Err("当前平台不支持原生 Merge Queue / Merge Train".into());
     }
-    let adapter = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    adapter.get_pr_merge_queue_status(owner, repo, number).await.map_err(|error| error.to_string())
+    let adapter = build_platform(&platform, &state).map_err(CommandError::from)?;
+    adapter.get_pr_merge_queue_status(owner, repo, number).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -444,14 +446,14 @@ pub async fn pr_branches(
     platform: String,
     owner: String,
     repo: String,
-) -> Result<PrBranchOptions, String> {
+) -> CommandResult<PrBranchOptions> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
     if owner.is_empty() || repo.is_empty() {
         return Err("仓库 owner 和名称不能为空".into());
     }
-    let p = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    p.list_branches(&owner, &repo).await.map_err(|error| error.to_string())
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.list_branches(&owner, &repo).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -460,14 +462,14 @@ pub async fn pr_labels(
     platform: String,
     owner: String,
     repo: String,
-) -> Result<Vec<PrLabel>, String> {
+) -> CommandResult<Vec<PrLabel>> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
     if owner.is_empty() || repo.is_empty() {
         return Err("仓库 owner 和名称不能为空".into());
     }
-    let p = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    p.list_labels(&owner, &repo).await.map_err(|error| error.to_string())
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.list_labels(&owner, &repo).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -476,14 +478,14 @@ pub async fn pr_participant_suggestions(
     platform: String,
     owner: String,
     repo: String,
-) -> Result<Vec<User>, String> {
+) -> CommandResult<Vec<User>> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
     if owner.is_empty() || repo.is_empty() {
         return Err("仓库 owner 和名称不能为空".into());
     }
-    let p = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    p.list_pr_participant_suggestions(&owner, &repo).await.map_err(|error| error.to_string())
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.list_pr_participant_suggestions(&owner, &repo).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -493,7 +495,7 @@ pub async fn pr_create_preview(
     owner: String,
     repo: String,
     request: PrCreatePreviewRequest,
-) -> Result<PrCreatePreview, String> {
+) -> CommandResult<PrCreatePreview> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
     validate_create_reference(&owner, "目标仓库 owner")?;
@@ -507,8 +509,8 @@ pub async fn pr_create_preview(
         return Err("当前平台不支持创建 PR / MR".into());
     }
 
-    let p = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    let preview = p.preview_pull_request(&owner, &repo, &request).await.map_err(|error| error.to_string())?;
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let preview = p.preview_pull_request(&owner, &repo, &request).await.map_err(CommandError::from)?;
     let patches = standardize_patches(&preview.diff, &preview.files);
     Ok(PrCreatePreview {
         commits: preview.commits,
@@ -530,7 +532,7 @@ pub async fn pr_create(
     owner: String,
     repo: String,
     request: PrCreateRequest,
-) -> Result<PrCreateOutcome, String> {
+) -> CommandResult<PrCreateOutcome> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
     if owner.is_empty() || repo.is_empty() {
@@ -548,18 +550,19 @@ pub async fn pr_create(
         return Err("当前平台不支持创建 Draft PR / MR".into());
     }
 
-    let p = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    let number = p.create_pull_request(&owner, &repo, &request).await.map_err(|error| error.to_string())?;
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let number = p.create_pull_request(&owner, &repo, &request).await.map_err(CommandError::from)?;
     let mut detail = match p.get_pull_request(&owner, &repo, number).await {
         Ok(detail) => detail,
         Err(error) => {
+            let message = CommandError::from(error).message;
             return Ok(PrCreateOutcome {
                 number,
                 detail: None,
                 updated_fields: Vec::new(),
                 failures: vec![PrMetadataUpdateFailure {
                     field: PrMetadataField::Refresh,
-                    message: format!("PR / MR 已创建，但刷新详情失败：{error}"),
+                    message: format!("PR / MR 已创建，但刷新详情失败：{message}"),
                 }],
             });
         }
@@ -606,15 +609,19 @@ pub async fn pr_create(
                 failures.extend(mutation.failures);
                 match p.get_pull_request(&owner, &repo, number).await {
                     Ok(refreshed) => detail = refreshed,
-                    Err(error) => failures.push(PrMetadataUpdateFailure {
-                        field: PrMetadataField::Refresh,
-                        message: format!("参与者或标签写入后刷新详情失败：{error}"),
-                    }),
+                    Err(error) => {
+                        let message = CommandError::from(error).message;
+                        failures.push(PrMetadataUpdateFailure {
+                            field: PrMetadataField::Refresh,
+                            message: format!("参与者或标签写入后刷新详情失败：{message}"),
+                        });
+                    }
                 }
             }
             Err(error) => {
+                let message = CommandError::from(error).message;
                 for field in writable_fields {
-                    failures.push(PrMetadataUpdateFailure { field, message: error.to_string() });
+                    failures.push(PrMetadataUpdateFailure { field, message: message.clone() });
                 }
             }
         }
@@ -631,14 +638,14 @@ pub async fn pr_metadata_update(
     repo: String,
     number: u64,
     update: PrMetadataUpdate,
-) -> Result<PrMetadataUpdateOutcome, String> {
+) -> CommandResult<PrMetadataUpdateOutcome> {
     if owner.trim().is_empty() || repo.trim().is_empty() {
         return Err("仓库 owner 和名称不能为空".into());
     }
     let update = validate_metadata_update(update)?;
     let capabilities = capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
-    let p = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    let current = p.get_pull_request(&owner, &repo, number).await.map_err(|error| error.to_string())?;
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let current = p.get_pull_request(&owner, &repo, number).await.map_err(CommandError::from)?;
     if !update.expected_updated_at.trim().is_empty() && current.summary.updated_at != update.expected_updated_at {
         return Err("PR 元数据已在远端更新，请刷新详情后重试".into());
     }
@@ -651,10 +658,8 @@ pub async fn pr_metadata_update(
         return Ok(PrMetadataUpdateOutcome { detail: Some(current), updated_fields: Vec::new(), failures: Vec::new() });
     }
 
-    let mut mutation = p
-        .update_pull_request_metadata(&owner, &repo, number, &current, &update)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut mutation =
+        p.update_pull_request_metadata(&owner, &repo, number, &current, &update).await.map_err(CommandError::from)?;
     match p.get_pull_request(&owner, &repo, number).await {
         Ok(detail) => Ok(PrMetadataUpdateOutcome {
             detail: Some(detail),
@@ -662,9 +667,10 @@ pub async fn pr_metadata_update(
             failures: mutation.failures,
         }),
         Err(error) => {
+            let message = CommandError::from(error).message;
             mutation.failures.push(PrMetadataUpdateFailure {
                 field: PrMetadataField::Refresh,
-                message: format!("元数据写入后刷新详情失败：{error}"),
+                message: format!("元数据写入后刷新详情失败：{message}"),
             });
             Ok(PrMetadataUpdateOutcome {
                 detail: None,
@@ -682,9 +688,9 @@ pub async fn pr_merge_readiness(
     owner: String,
     repo: String,
     number: u64,
-) -> Result<PrMergeReadiness, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.get_merge_readiness(&owner, &repo, number).await.map_err(|e| e.to_string())
+) -> CommandResult<PrMergeReadiness> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.get_merge_readiness(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -694,9 +700,9 @@ pub async fn pr_diff(
     owner: String,
     repo: String,
     number: u64,
-) -> Result<DiffResult, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    let (diff, files) = p.get_pr_diff(&owner, &repo, number).await.map_err(|e| e.to_string())?;
+) -> CommandResult<DiffResult> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let (diff, files) = p.get_pr_diff(&owner, &repo, number).await.map_err(CommandError::from)?;
     let patches = standardize_patches(&diff, &files);
     Ok(DiffResult { diff, files, patch_schema_version: PATCH_SCHEMA_VERSION, patches })
 }
@@ -709,11 +715,11 @@ pub async fn pr_compare_diff(
     repo: String,
     base_sha: String,
     head_sha: String,
-) -> Result<DiffResult, String> {
+) -> CommandResult<DiffResult> {
     validate_compare_request(&owner, &repo, &base_sha, &head_sha)?;
 
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    let (diff, files) = p.get_compare_diff(&owner, &repo, &base_sha, &head_sha).await.map_err(|e| e.to_string())?;
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let (diff, files) = p.get_compare_diff(&owner, &repo, &base_sha, &head_sha).await.map_err(CommandError::from)?;
     let patches = standardize_patches(&diff, &files);
     Ok(DiffResult { diff, files, patch_schema_version: PATCH_SCHEMA_VERSION, patches })
 }
@@ -726,13 +732,13 @@ pub async fn pr_file_content(
     repo: String,
     path: String,
     revision: String,
-) -> Result<PrFileContent, String> {
+) -> CommandResult<PrFileContent> {
     if owner.trim().is_empty() || repo.trim().is_empty() {
         return Err("仓库 owner 和名称不能为空".into());
     }
-    crate::file_content::validate_request(&path, &revision).map_err(|error| error.to_string())?;
-    let p = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    p.get_pr_file_content(&owner, &repo, &path, &revision).await.map_err(|error| error.to_string())
+    crate::file_content::validate_request(&path, &revision).map_err(CommandError::from)?;
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.get_pr_file_content(&owner, &repo, &path, &revision).await.map_err(CommandError::from)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -747,9 +753,9 @@ pub async fn pr_merge(
     commit_title: Option<String>,
     commit_message: Option<String>,
     close_issues: Option<bool>,
-) -> Result<PrMergeOutcome, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    let pr_detail = p.get_pull_request(&owner, &repo, number).await.map_err(|e| e.to_string())?;
+) -> CommandResult<PrMergeOutcome> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let pr_detail = p.get_pull_request(&owner, &repo, number).await.map_err(CommandError::from)?;
     let merge_strategy = match strategy.as_str() {
         "squash" => MergeStrategy::Squash,
         "rebase" => MergeStrategy::Rebase,
@@ -758,7 +764,7 @@ pub async fn pr_merge(
     let result = p
         .merge_pull_request(&owner, &repo, number, &merge_strategy, commit_title, commit_message, &pr_detail.head_sha)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(CommandError::from)?;
 
     let mut closed_issues = Vec::new();
     let mut issue_close_failures = Vec::new();
@@ -766,9 +772,8 @@ pub async fn pr_merge(
         for issue_num in extract_issue_refs(&pr_detail.body) {
             match p.close_issue(&owner, &repo, issue_num).await {
                 Ok(()) => closed_issues.push(issue_num),
-                Err(error) => {
-                    issue_close_failures.push(IssueCloseFailure { number: issue_num, error: error.to_string() })
-                }
+                Err(error) => issue_close_failures
+                    .push(IssueCloseFailure { number: issue_num, error: CommandError::from(error).message }),
             }
         }
     }
@@ -783,9 +788,9 @@ pub async fn pr_close(
     owner: String,
     repo: String,
     number: u64,
-) -> Result<PrState, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.close_pull_request(&owner, &repo, number).await.map_err(|e| e.to_string())
+) -> CommandResult<PrState> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.close_pull_request(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -795,9 +800,9 @@ pub async fn pr_reopen(
     owner: String,
     repo: String,
     number: u64,
-) -> Result<PrState, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.reopen_pull_request(&owner, &repo, number).await.map_err(|e| e.to_string())
+) -> CommandResult<PrState> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.reopen_pull_request(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
 #[cfg(test)]

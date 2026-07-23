@@ -1,6 +1,7 @@
 import { computed, ref, watch } from "vue";
 import { defineStore } from "pinia";
 import { reviewInboxList } from "@/api";
+import { commandErrorCode } from "@/api/errors";
 import type { Platform, ReadinessState, ReviewInboxCategory, ReviewInboxItem } from "@/types";
 
 export const NOTIFICATION_POLL_INTERVAL_MS = 10 * 60 * 1000;
@@ -180,6 +181,7 @@ function itemSnapshot(
 }
 
 function isRateLimitError(cause: unknown): boolean {
+  if (commandErrorCode(cause) === "rate_limited") return true;
   const message = cause instanceof Error ? cause.message : String(cause);
   return /\b429\b|rate.?limit|限流|请求过于频繁/i.test(message);
 }
