@@ -1,3 +1,4 @@
+use crate::error::{CommandError, CommandResult};
 use crate::models::{Paginated, ReviewInboxCategory, ReviewInboxItem};
 use crate::state::AppState;
 use tauri::State;
@@ -32,10 +33,10 @@ pub async fn review_inbox_list(
     category: Option<String>,
     page: Option<u32>,
     per_page: Option<u32>,
-) -> Result<Paginated<ReviewInboxItem>, String> {
+) -> CommandResult<Paginated<ReviewInboxItem>> {
     let (category, page, per_page) = parse_request(category.as_deref(), page, per_page)?;
-    let adapter = build_platform(&platform, &state).map_err(|error| error.to_string())?;
-    adapter.list_review_inbox(&category, page, per_page).await.map_err(|error| error.to_string())
+    let adapter = build_platform(&platform, &state).map_err(CommandError::from)?;
+    adapter.list_review_inbox(&category, page, per_page).await.map_err(CommandError::from)
 }
 
 #[cfg(test)]

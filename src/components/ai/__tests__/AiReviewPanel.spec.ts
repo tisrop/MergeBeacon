@@ -1,6 +1,6 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiSuggestion } from "@/types";
 import AiReviewPanel from "../AiReviewPanel.vue";
 import AiSuggestionCard from "../AiSuggestionCard.vue";
@@ -20,6 +20,8 @@ type EventCallback = (event: { payload: unknown }) => void;
 const listeners = new Map<string, EventCallback[]>();
 const unlisteners: ReturnType<typeof vi.fn>[] = [];
 const storedReviews = new Map<string, string>();
+
+enableAutoUnmount(afterEach);
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (event: string, callback: EventCallback) => {
@@ -504,13 +506,40 @@ describe("AiReviewPanel", () => {
         payload: { summary: "旧结果", suggestions: [] },
       },
     });
-    oldError?.({ payload: { request_id: "request-1", payload: "旧错误" } });
+    oldError?.({
+      payload: {
+        request_id: "request-1",
+        payload: { code: "ai", message: "旧错误", retryable: false, http_status: 401 },
+      },
+    });
     await wrapper.vm.$nextTick();
 
     expect(wrapper.text()).not.toContain("旧响应");
     expect(wrapper.text()).not.toContain("旧结果");
     expect(wrapper.text()).not.toContain("旧错误");
     expect(wrapper.text()).toContain("重新评审");
+  });
+
+  it("保留流式评审错误的结构化 payload 并展示消息", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+
+    latestListener("ai-review-error")?.({
+      payload: {
+        request_id: "request-1",
+        payload: {
+          code: "ai",
+          message: "AI 服务请求过于频繁，请稍后重试",
+          retryable: true,
+          http_status: 429,
+        },
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("AI 服务请求过于频繁，请稍后重试");
+    expect(wrapper.text()).not.toContain("登录凭据已失效");
   });
 
   it("卸载时取消当前请求并解除全部事件监听", async () => {

@@ -2,18 +2,27 @@ pub mod ai;
 mod commands;
 pub mod crypto;
 pub mod error;
+pub mod error_log;
 pub mod file_content;
 pub mod http_client;
 pub mod local_store;
 pub mod models;
 pub mod patch;
 pub mod platform;
+#[cfg(all(feature = "restart-timing-test", not(debug_assertions)))]
+compile_error!("restart-timing-test is only available in debug builds");
+#[cfg(feature = "restart-timing-test")]
+mod restart_timing_test;
 mod single_instance;
 mod state;
 pub mod vault;
 mod window_state;
 
-use commands::{ai as ai_cmds, auth, capabilities, inbox, issue, notification, pr, review, support, update};
+use commands::{
+    ai as ai_cmds, auth, capabilities, error_log as error_log_cmds, inbox, issue, notification, pr, review, support,
+    update,
+};
+use error_log::ErrorLogStore;
 use local_store::CommentSnapshotStore;
 use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,6 +40,8 @@ pub fn run() {
     tauri::Builder::default()
         // 官方要求 single-instance 必须是首个注册的插件。
         .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
+            #[cfg(feature = "restart-timing-test")]
+            restart_timing_test::record_duplicate_activation();
             if second_instance_activation.request_activation() {
                 single_instance::activate_main_window(app);
             }
@@ -50,6 +61,7 @@ pub fn run() {
             let app_dir = app.path().app_data_dir().unwrap_or_default();
             let comment_store = CommentSnapshotStore::new(&app_dir.join("comment_cache.db"));
             app.manage(comment_store);
+            app.manage(ErrorLogStore::new(app.path().app_data_dir().ok()));
 
             if let Some(window) = app.get_webview_window("main") {
                 let restored = window
@@ -78,6 +90,8 @@ pub fn run() {
             if setup_activation.mark_ready() {
                 single_instance::activate_main_window(app.handle());
             }
+            #[cfg(feature = "restart-timing-test")]
+            restart_timing_test::arm(app.handle().clone());
 
             let command_palette =
                 MenuItem::with_id(app, "open-command-palette", "命令面板...", true, Some("CmdOrCtrl+K"))?;
@@ -146,7 +160,9 @@ pub fn run() {
             // Support / platform capabilities
             support::support_info,
             support::copy_support_info,
+            support::copy_recent_error_logs,
             support::app_version,
+            error_log_cmds::error_log_record,
             update::update_check,
             update::update_download_and_install,
             update::update_restart,

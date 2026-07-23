@@ -2,6 +2,8 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+use crate::error::{CommandError, CommandResult};
+use crate::error_log::{ErrorLogStore, DEFAULT_MAX_EXPORTED_RECORDS};
 use crate::local_store::CommentSnapshotStore;
 use crate::state::AppState;
 use crate::vault::CredentialStorage;
@@ -99,14 +101,14 @@ pub async fn support_info(
     state: State<'_, AppState>,
     comment_store: State<'_, CommentSnapshotStore>,
     platform: String,
-) -> Result<SupportInfo, String> {
+) -> CommandResult<SupportInfo> {
     if !SUPPORTED_PLATFORMS.contains(&platform.as_str()) {
-        return Err("不支持的平台，无法生成诊断信息".to_string());
+        return Err("不支持的平台，无法生成诊断信息".into());
     }
 
     let custom_url = state.token_vault.get_custom_url(&platform);
-    let credential_storage = state.token_vault.credential_storage(&platform).map_err(|error| error.to_string())?;
-    let ai_config = state.ai_config.get_config().map_err(|error| error.to_string())?;
+    let credential_storage = state.token_vault.credential_storage(&platform).map_err(CommandError::from)?;
+    let ai_config = state.ai_config.get_config().map_err(CommandError::from)?;
 
     Ok(build_support_info(SupportInfoInput {
         platform: &platform,
@@ -124,9 +126,22 @@ pub async fn copy_support_info(
     state: State<'_, AppState>,
     comment_store: State<'_, CommentSnapshotStore>,
     platform: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     let info = support_info(state, comment_store, platform).await?;
-    app.clipboard().write_text(info.formatted).map_err(|error| format!("写入系统剪贴板失败：{error}"))
+    app.clipboard()
+        .write_text(info.formatted)
+        .map_err(|error| CommandError::from(format!("写入系统剪贴板失败：{error}")))
+}
+
+#[tauri::command]
+pub fn copy_recent_error_logs(app: AppHandle, error_logs: State<'_, ErrorLogStore>) -> CommandResult<usize> {
+    let (formatted, count) = error_logs
+        .formatted_recent_errors(DEFAULT_MAX_EXPORTED_RECORDS)
+        .map_err(|_| CommandError::from("近期错误日志暂不可用"))?;
+    app.clipboard()
+        .write_text(formatted)
+        .map_err(|error| CommandError::from(format!("写入系统剪贴板失败：{error}")))?;
+    Ok(count)
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
 import { reviewInboxList } from "@/api";
+import { ApiError } from "@/api/errors";
 import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import type {
   Paginated,
@@ -621,7 +622,14 @@ describe("useReviewInboxStore", () => {
 
     await restored.refresh(["github"]);
     vi.mocked(reviewInboxList).mockClear();
-    vi.mocked(reviewInboxList).mockRejectedValueOnce(new Error("HTTP 429 rate limit"));
+    vi.mocked(reviewInboxList).mockRejectedValueOnce(
+      new ApiError({
+        code: "rate_limited",
+        message: "代码平台请求过于频繁，请稍后重试",
+        retryable: true,
+        http_status: 429,
+      }),
+    );
     expect(await restored.backgroundRefresh(["github"], 1_000_000)).toBe(true);
     expect(restored.rateLimitedUntil.github).toBeGreaterThan(1_000_000);
     expect(await restored.backgroundRefresh(["github"], 1_000_001)).toBe(false);

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prFileContent } from "@/api";
+import { ApiError } from "@/api/errors";
 import {
   aiRepositoryRuleDiscoveryPaths,
   discoverAiRepositoryRules,
@@ -111,6 +112,36 @@ describe("aiRepositoryRules", () => {
       }),
     ).rejects.toThrow("403 Forbidden");
     expect(prFileContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("优先使用结构化错误码区分文件缺失和权限失败", async () => {
+    vi.mocked(prFileContent)
+      .mockRejectedValueOnce(
+        new ApiError({
+          code: "not_found",
+          message: "请求的远端资源不存在或当前 Token 无权访问",
+          retryable: false,
+          http_status: 404,
+        }),
+      )
+      .mockRejectedValueOnce(
+        new ApiError({
+          code: "permission_denied",
+          message: "当前 Token 没有执行此操作的权限",
+          retryable: false,
+          http_status: 403,
+        }),
+      );
+
+    await expect(
+      discoverAiRepositoryRules({
+        platform: "gitlab",
+        owner: "team",
+        repo: "repo",
+        revision: "head-1",
+      }),
+    ).rejects.toMatchObject({ code: "permission_denied" });
+    expect(prFileContent).toHaveBeenCalledTimes(2);
   });
 
   it("跳过超过上下文上限的规则文件，避免静默截断团队规则", async () => {

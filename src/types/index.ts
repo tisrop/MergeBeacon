@@ -2,6 +2,30 @@
 // 数据模型 —— 前后端一致的类型定义
 // ============================================================
 
+export type CommandErrorCode =
+  | "validation"
+  | "authentication"
+  | "permission_denied"
+  | "not_found"
+  | "conflict"
+  | "rate_limited"
+  | "network"
+  | "timeout"
+  | "invalid_response"
+  | "storage"
+  | "unsupported"
+  | "ai"
+  | "platform"
+  | "unknown";
+
+export interface CommandErrorPayload {
+  code: CommandErrorCode;
+  message: string;
+  retryable: boolean;
+  request_id?: string;
+  http_status?: number;
+}
+
 // ── 用户 ──
 export interface User {
   id: number | string;
@@ -393,6 +417,7 @@ export interface PrCreatePreview {
   commits: PrCommitSummary[];
   diff: DiffResult;
   incomplete: boolean;
+  incomplete_reasons: Array<"platform_limit" | "pagination_failed" | "pagination_limit">;
 }
 
 export type DiffSide = "left" | "right";

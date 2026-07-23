@@ -1,4 +1,5 @@
 import { prFileContent } from "@/api";
+import { commandErrorCode } from "@/api/errors";
 import type { Platform } from "@/types";
 
 const DISCOVERY_PATHS = [
@@ -24,6 +25,8 @@ export interface DiscoveredAiRules {
 }
 
 function isMissingFileError(error: unknown): boolean {
+  const code = commandErrorCode(error);
+  if (code) return code === "not_found";
   const message = String(error).trim().toLowerCase();
   const status = message.replace(/https?:\/\/\S+/g, "").match(/\b([45]\d{2})\b/)?.[1];
   if (status) return status === "404";

@@ -1,8 +1,11 @@
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 const projectRoot = process.cwd();
+const execFileAsync = promisify(execFile);
 const OFFICIAL_UPDATER_ENDPOINT =
   "https://github.com/tisrop/MergeBeacon/releases/latest/download/latest.json";
 
@@ -72,8 +75,42 @@ export async function readUpdaterConfig(root = projectRoot) {
   return JSON.parse(source);
 }
 
+export function assertUpdaterSystemProxy(metadata) {
+  const appPackage = metadata?.packages?.find((item) => item.name === "mergebeacon");
+  const dependency = appPackage?.dependencies?.find(
+    (item) => item.name === "reqwest" && item.rename === "reqwest-updater-system-proxy",
+  );
+
+  if (
+    !dependency ||
+    dependency.req !== "^0.13" ||
+    dependency.target !== null ||
+    dependency.uses_default_features !== false ||
+    !dependency.features.includes("system-proxy")
+  ) {
+    throw new Error("三平台 updater 必须为 reqwest 0.13 全局启用 system-proxy");
+  }
+}
+
+export async function readCargoMetadata(root = projectRoot) {
+  const { stdout } = await execFileAsync(
+    "cargo",
+    [
+      "metadata",
+      "--no-deps",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      resolve(root, "src-tauri/Cargo.toml"),
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  return JSON.parse(stdout);
+}
+
 async function main() {
   assertUpdaterConfig(await readUpdaterConfig());
+  assertUpdaterSystemProxy(await readCargoMetadata());
   process.stdout.write("updater 配置安全检查通过\n");
 }
 

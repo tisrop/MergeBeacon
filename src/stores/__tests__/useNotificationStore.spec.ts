@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { reviewInboxList } from "@/api";
+import { ApiError } from "@/api/errors";
 import { useNotificationStore } from "@/stores/useNotificationStore";
 import type { Paginated, Platform, ReviewInboxItem, ReviewInboxStatusSummary } from "@/types";
 
@@ -105,7 +106,14 @@ describe("useNotificationStore", () => {
 
   it("单平台限流不会阻止其他平台建立通知基线", async () => {
     vi.mocked(reviewInboxList).mockImplementation(async (platform) => {
-      if (platform === "github") throw new Error("HTTP 429 rate limit");
+      if (platform === "github") {
+        throw new ApiError({
+          code: "rate_limited",
+          message: "代码平台请求过于频繁，请稍后重试",
+          retryable: true,
+          http_status: 429,
+        });
+      }
       return page([item(platform, 1, "2026-07-19T01:00:00Z", pendingStatus)]);
     });
     const store = useNotificationStore();
@@ -113,7 +121,7 @@ describe("useNotificationStore", () => {
 
     expect(await store.poll(["github", "gitlab"], 1_000_000)).toEqual([]);
 
-    expect(store.errors.github).toContain("429");
+    expect(store.errors.github).toContain("请求过于频繁");
     expect(store.errors.gitlab).toBeNull();
     expect(store.rateLimitedUntil.github).toBeGreaterThan(1_000_000);
     expect(store.retryCountdown.github).toBe(15 * 60);

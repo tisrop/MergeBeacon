@@ -1,3 +1,4 @@
+use crate::error::{CommandError, CommandResult};
 use crate::models::*;
 use crate::state::AppState;
 use tauri::State;
@@ -8,7 +9,7 @@ pub async fn auth_login(
     platform: String,
     token: String,
     custom_url: Option<String>,
-) -> Result<AuthLoginResult, String> {
+) -> CommandResult<AuthLoginResult> {
     use crate::platform::{gitee::GiteeAdapter, github::GitHubAdapter, gitlab::GitLabAdapter, GitPlatform};
 
     let client = state.http_client.as_ref().clone();
@@ -40,35 +41,35 @@ pub async fn auth_login(
                 Box::new(adapter)
             }
         }
-        _ => return Err(format!("Unknown platform: {}", platform)),
+        _ => return Err(format!("Unknown platform: {}", platform).into()),
     };
 
     // Verify token by fetching current user
-    let user = p.current_user().await.map_err(|e| e.to_string())?;
+    let user = p.current_user().await.map_err(CommandError::from)?;
 
     // Store token
-    let credential_storage = state.token_vault.store_token(&platform, &token).map_err(|e| e.to_string())?;
+    let credential_storage = state.token_vault.store_token(&platform, &token).map_err(CommandError::from)?;
 
     // Store custom URL if provided
     if let Some(ref url) = custom_url {
-        state.token_vault.store_custom_url(&platform, url).map_err(|e| e.to_string())?;
+        state.token_vault.store_custom_url(&platform, url).map_err(CommandError::from)?;
     }
 
     Ok(AuthLoginResult { user, credential_storage })
 }
 
 #[tauri::command]
-pub async fn auth_logout(state: State<'_, AppState>, platform: String) -> Result<(), String> {
-    state.token_vault.delete_token(&platform).map_err(|e| e.to_string())?;
-    state.token_vault.delete_custom_url(&platform).map_err(|e| e.to_string())?;
+pub async fn auth_logout(state: State<'_, AppState>, platform: String) -> CommandResult<()> {
+    state.token_vault.delete_token(&platform).map_err(CommandError::from)?;
+    state.token_vault.delete_custom_url(&platform).map_err(CommandError::from)?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn auth_has_any_token(state: State<'_, AppState>) -> Result<bool, String> {
+pub async fn auth_has_any_token(state: State<'_, AppState>) -> CommandResult<bool> {
     let platforms = ["github", "gitlab", "gitee"];
     for platform in platforms {
-        if state.token_vault.get_token(platform).map_err(|e| e.to_string())?.is_some() {
+        if state.token_vault.get_token(platform).map_err(CommandError::from)?.is_some() {
             return Ok(true);
         }
     }
@@ -76,12 +77,12 @@ pub async fn auth_has_any_token(state: State<'_, AppState>) -> Result<bool, Stri
 }
 
 #[tauri::command]
-pub async fn auth_has_token(state: State<'_, AppState>, platform: String) -> Result<bool, String> {
-    Ok(state.token_vault.get_token(&platform).map_err(|e| e.to_string())?.is_some())
+pub async fn auth_has_token(state: State<'_, AppState>, platform: String) -> CommandResult<bool> {
+    Ok(state.token_vault.get_token(&platform).map_err(CommandError::from)?.is_some())
 }
 
 #[tauri::command]
-pub async fn auth_check(state: State<'_, AppState>, platform: String) -> Result<Option<User>, String> {
+pub async fn auth_check(state: State<'_, AppState>, platform: String) -> CommandResult<Option<User>> {
     let p = match build_platform(&platform, &state) {
         Ok(p) => p,
         Err(_) => return Ok(None),
@@ -97,9 +98,9 @@ pub async fn repo_list(
     state: State<'_, AppState>,
     platform: String,
     page: u32,
-) -> Result<Paginated<RepoSummary>, String> {
-    let p = build_platform(&platform, &state).map_err(|e| e.to_string())?;
-    p.list_repos(page).await.map_err(|e| e.to_string())
+) -> CommandResult<Paginated<RepoSummary>> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.list_repos(page).await.map_err(CommandError::from)
 }
 
 /// Build a platform adapter from state + token.
