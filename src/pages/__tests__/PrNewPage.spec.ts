@@ -528,6 +528,9 @@ describe("PrNewPage", () => {
     });
     expect(wrapper.text()).toContain("Add feature");
     expect(wrapper.text()).toContain("12345678");
+    expect(wrapper.get(".preview-summary").text()).toContain("1 个提交");
+    expect(wrapper.get(".preview-summary").text()).toContain("1 个文件");
+    expect(wrapper.find(".preview-tabs .tab-count").exists()).toBe(false);
 
     await wrapper.get('[role="tab"][aria-selected="false"]').trigger("click");
     expect(wrapper.get('[data-testid="diff-preview"]').text()).toBe("1 files");

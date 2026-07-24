@@ -82,6 +82,8 @@ describe("PrListPage 截断提示", () => {
   it("GitHub 提示真实总数和可浏览上限", () => {
     const wrapper = mountPage("github");
 
+    expect(wrapper.find(".result-count").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("1 条结果");
     expect(wrapper.get(".search-limit-notice").text()).toBe(
       "共 1,234 条已关闭或已合并 Pull Request，仅可浏览前 1,000 条。",
     );

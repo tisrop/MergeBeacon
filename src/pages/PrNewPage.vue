@@ -763,7 +763,7 @@ onUnmounted(() => {
             :class="{ active: previewTab === 'commits' }"
             @click="previewTab = 'commits'"
           >
-            Commit<span v-if="preview" class="tab-count">{{ preview.commits.length }}</span>
+            Commit
           </button>
           <button
             type="button"
@@ -772,7 +772,7 @@ onUnmounted(() => {
             :class="{ active: previewTab === 'diff' }"
             @click="previewTab = 'diff'"
           >
-            Diff<span v-if="preview" class="tab-count">{{ preview.diff.files.length }}</span>
+            Diff
           </button>
         </div>
 
@@ -1093,13 +1093,6 @@ onUnmounted(() => {
   background: var(--color-surface);
   box-shadow: var(--shadow-sm);
   color: var(--color-text);
-}
-
-.preview-tabs .tab-count {
-  margin-left: 6px;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 11px;
 }
 
 .preview-loading,

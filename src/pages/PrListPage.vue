@@ -97,7 +97,6 @@ function onSelectPr(prNumber: number) {
           <p v-else class="repo-name">选择仓库后查看合并请求</p>
         </div>
         <div class="header-actions">
-          <span v-if="pr.list.length" class="result-count">{{ pr.list.length }} 条结果</span>
           <RouterLink
             v-if="auth.isLoggedIn"
             class="btn btn-sm btn-primary"
@@ -284,17 +283,6 @@ function onSelectPr(prNumber: number) {
   font-size: 13px;
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
-}
-
-.result-count {
-  margin-top: 4px;
-  padding: 3px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  color: var(--color-text-secondary);
-  background: var(--color-bg);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
 }
 
 .header-actions {
