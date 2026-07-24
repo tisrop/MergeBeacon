@@ -80,6 +80,25 @@ describe("usePrStore", () => {
     expect(store.listTotalCount).toBe(0);
   });
 
+  it("仅允许跳转到总页数范围内的整数页", async () => {
+    vi.mocked(prList).mockResolvedValueOnce({
+      items: [],
+      page: 1,
+      total_pages: 5,
+      total_count: 100,
+    });
+    const store = usePrStore();
+    await store.fetchPrList("github", "owner", "repo");
+
+    store.setPage(4);
+    expect(store.filters.page).toBe(4);
+
+    store.setPage(0);
+    store.setPage(6);
+    store.setPage(2.5);
+    expect(store.filters.page).toBe(4);
+  });
+
   it("切换仓库后立即清除旧仓库的 PR 列表", async () => {
     const oldItem: PrSummary = {
       number: 3989,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useRepoStore } from "@/stores/useRepoStore";
@@ -15,6 +15,16 @@ const auth = useAuthStore();
 const repo = useRepoStore();
 const pr = usePrStore();
 const createLabel = computed(() => (auth.activePlatform === "gitlab" ? "创建 MR" : "创建 PR"));
+const pageInput = ref("1");
+const pageJumpTarget = computed(() => Number(pageInput.value));
+const canJumpToPage = computed(
+  () =>
+    Number.isInteger(pageJumpTarget.value) &&
+    pageJumpTarget.value >= 1 &&
+    pageJumpTarget.value <= pr.totalPages &&
+    pageJumpTarget.value !== pr.filters.page &&
+    !pr.loading,
+);
 const truncatedListNotice = computed(() => {
   if (!pr.listTruncated) return "";
   if (auth.activePlatform === "github") {
@@ -35,8 +45,34 @@ async function fetchPrs() {
   await pr.fetchPrList(platform, owner, repoName);
 }
 
+async function fetchPrPage() {
+  if (!auth.isLoggedIn || !repo.activeRepo) return;
+  const { owner, repo: repoName } = repo.activeRepo;
+  await pr.fetchPrList(auth.activePlatform, owner, repoName);
+}
+
 function switchToFork() {
   repo.switchForkView(auth.activePlatform);
+}
+
+function jumpToPage() {
+  if (!canJumpToPage.value) return;
+  pr.setPage(pageJumpTarget.value);
+}
+
+function goToPreviousPage() {
+  if (pr.filters.page <= 1 || pr.loading) return;
+  pr.prevPage();
+}
+
+function goToNextPage() {
+  if (pr.filters.page >= pr.totalPages || pr.loading) return;
+  pr.nextPage();
+}
+
+function changePageSize(value: string) {
+  pageInput.value = "1";
+  pr.setPerPage(Number(value));
 }
 
 onMounted(() => {
@@ -60,13 +96,21 @@ watch(
   },
 );
 watch(
-  () => pr.filters,
-  () => fetchPrs(),
-  { deep: true },
+  () => [pr.filters.state, pr.filters.page, pr.perPage] as const,
+  ([state], [previousState]) => {
+    if (state !== previousState) {
+      fetchPrs();
+      return;
+    }
+    fetchPrPage();
+  },
 );
 watch(
-  () => pr.perPage,
-  () => fetchPrs(),
+  () => pr.filters.page,
+  (page) => {
+    pageInput.value = String(page);
+  },
+  { immediate: true },
 );
 watch(
   () => route.query._t,
@@ -219,7 +263,11 @@ function onSelectPr(prNumber: number) {
     </div>
 
     <div v-if="pr.list.length > 0 && pr.totalPages > 1" class="pagination">
-      <button class="btn btn-sm" :disabled="pr.filters.page <= 1" @click="pr.prevPage()">
+      <button
+        class="btn btn-sm"
+        :disabled="pr.filters.page <= 1 || pr.loading"
+        @click="goToPreviousPage"
+      >
         <svg
           width="14"
           height="14"
@@ -237,8 +285,8 @@ function onSelectPr(prNumber: number) {
       <span class="page-info">{{ pr.filters.page }} / {{ pr.totalPages }}</span>
       <button
         class="btn btn-sm"
-        :disabled="pr.filters.page >= pr.totalPages"
-        @click="pr.nextPage()"
+        :disabled="pr.filters.page >= pr.totalPages || pr.loading"
+        @click="goToNextPage"
       >
         下一页
         <svg
@@ -258,8 +306,23 @@ function onSelectPr(prNumber: number) {
         size="sm"
         :modelValue="String(pr.perPage)"
         :options="pr.pageSizes.map((s: number) => ({ value: String(s), label: s + ' 条/页' }))"
-        @update:modelValue="(v: string) => pr.setPerPage(Number(v))"
+        @update:modelValue="changePageSize"
       />
+      <div class="page-jump">
+        <input
+          v-model="pageInput"
+          class="input page-jump-input"
+          type="text"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          autocomplete="off"
+          aria-label="跳转页码"
+          @keydown.enter.prevent="jumpToPage"
+        />
+        <button class="btn btn-sm" type="button" :disabled="!canJumpToPage" @click="jumpToPage">
+          跳转
+        </button>
+      </div>
     </div>
   </AppLayout>
 </template>
@@ -401,6 +464,7 @@ function onSelectPr(prNumber: number) {
 
 .pagination {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
@@ -410,5 +474,22 @@ function onSelectPr(prNumber: number) {
 .page-info {
   font-size: 13px;
   color: var(--color-text-secondary);
+}
+
+.page-jump {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.page-jump-input {
+  width: 64px;
+  min-height: 32px;
+  height: 32px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 </style>

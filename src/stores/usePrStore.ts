@@ -89,6 +89,11 @@ export const usePrStore = defineStore("pr", () => {
     }
   }
 
+  function setPage(page: number) {
+    if (!Number.isInteger(page) || page < 1 || page > totalPages.value) return;
+    filters.value.page = page;
+  }
+
   function setPerPage(n: number) {
     perPage.value = n;
     filters.value.page = 1;
@@ -320,6 +325,7 @@ export const usePrStore = defineStore("pr", () => {
     filters,
     nextPage,
     prevPage,
+    setPage,
     setPerPage,
     stateCounts,
     clearContext,
