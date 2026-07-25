@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from "vue";
-import { prLabels, prParticipantSuggestions } from "@/api";
+import { listRepositoryLabels, prParticipantSuggestions } from "@/api";
 import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
 import type {
@@ -238,7 +238,7 @@ async function loadLabelOptions(sequence: number): Promise<void> {
   if (!canManageLabels.value) return;
   labelsLoading.value = true;
   try {
-    const result = await prLabels(props.platform, props.owner, props.repo);
+    const result = await listRepositoryLabels(props.platform, props.owner, props.repo);
     if (sequence !== optionsSequence) return;
     const seen = new Set<string>();
     availableLabels.value = result.filter((label) => {

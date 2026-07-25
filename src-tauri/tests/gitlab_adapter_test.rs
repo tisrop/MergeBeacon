@@ -2019,3 +2019,38 @@ async fn test_gitlab_clears_merge_request_milestone_with_zero_id() {
     assert!(result.failures.is_empty());
     assert_eq!(result.updated_fields, vec![PrMetadataField::Milestone]);
 }
+
+#[tokio::test]
+async fn test_gitlab_lists_issue_templates() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/templates/issues"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "name": "Bug" },
+            { "name": "Feature request" }
+        ])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/templates/issues/Bug"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Bug",
+            "content": "## 复现步骤\n"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/templates/issues/Feature%20request"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Feature request",
+            "content": "## 使用场景\n"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let templates = adapter.list_issue_templates("group", "repo").await.unwrap();
+
+    assert_eq!(templates.iter().map(|item| item.name.as_str()).collect::<Vec<_>>(), vec!["Bug", "Feature request"]);
+    assert_eq!(templates[1].body, "## 使用场景");
+}

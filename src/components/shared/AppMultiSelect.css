@@ -62,10 +62,11 @@
 }
 
 .app-multi-select-chevron {
+  display: block;
   flex: none;
+  width: 12px;
+  height: 12px;
   color: var(--color-text-tertiary);
-  font-size: 16px;
-  line-height: 1;
   transition: transform var(--transition-fast);
 }
 
@@ -79,12 +80,20 @@
   top: calc(100% + 4px);
   left: 0;
   right: 0;
+  display: flex;
+  max-height: var(--multi-select-dropdown-max-height, 280px);
+  flex-direction: column;
   overflow: hidden;
   padding: 4px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   box-shadow: var(--shadow-md);
+}
+
+.multi-select-dropdown-up {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 
 .multi-select-search {
@@ -110,7 +119,7 @@
 }
 
 .multi-select-options {
-  max-height: 220px;
+  min-height: 0;
   overflow-y: auto;
 }
 

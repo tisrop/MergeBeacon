@@ -124,6 +124,21 @@ impl GiteeAdapter {
         Ok(resp.json().await?)
     }
 
+    async fn get_json_optional(&self, url: &str) -> Result<Option<Value>, AppError> {
+        let separator = if url.contains('?') { "&" } else { "?" };
+        let full_url = format!("{}{}{}", url, separator, self.auth_query());
+        let resp = self.client.get(&full_url).header("User-Agent", "mergebeacon").send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Api(format!("Gitee API {} ({}): {}", status, url, body)));
+        }
+        Ok(Some(resp.json().await?))
+    }
+
     fn acceptance_progress(json: &Value, gates: &[(&str, &str)]) -> (Option<u32>, Option<u32>) {
         let mut required_total = 0_u32;
         let mut received_total = 0_u32;
@@ -1067,6 +1082,58 @@ impl GitPlatform for GiteeAdapter {
                 })
             })
             .collect())
+    }
+
+    async fn list_issue_templates(&self, owner: &str, repo: &str) -> Result<Vec<IssueTemplate>, AppError> {
+        let mut paths = Vec::new();
+        for directory_path in [".gitee/ISSUE_TEMPLATE", ".github/ISSUE_TEMPLATE"] {
+            let url = format!(
+                "{}/repos/{}/{}/contents/{}",
+                self.base_url,
+                owner,
+                repo,
+                crate::file_content::encode_path_segments(directory_path)
+            );
+            let entries =
+                self.get_json_optional(&url).await?.and_then(|value| value.as_array().cloned()).unwrap_or_default();
+            paths.extend(
+                entries
+                    .into_iter()
+                    .filter(|entry| entry["type"].as_str() == Some("file"))
+                    .filter_map(|entry| entry["path"].as_str().map(str::to_string))
+                    .filter(|path| crate::issue_template::is_supported_template_path(path)),
+            );
+            if !paths.is_empty() {
+                break;
+            }
+        }
+        if paths.is_empty() {
+            paths.push("ISSUE_TEMPLATE.md".to_string());
+        }
+
+        let mut templates = Vec::new();
+        // TODO(perf): Use bounded concurrency (4-6 requests) plus a per-file timeout while
+        // preserving path order; this loop can issue up to 30 sequential Contents API requests.
+        for path in paths.into_iter().take(crate::issue_template::MAX_ISSUE_TEMPLATE_FILES) {
+            let url = format!(
+                "{}/repos/{}/{}/contents/{}",
+                self.base_url,
+                owner,
+                repo,
+                crate::file_content::encode_path_segments(&path)
+            );
+            let Some(json) = self.get_json_optional(&url).await? else {
+                continue;
+            };
+            let content = crate::file_content::decode_response("Gitee", &path, "default", &json)?;
+            if content.binary || content.truncated {
+                continue;
+            }
+            if let Some(template) = crate::issue_template::parse_remote_template(&path, &content.content).await {
+                templates.push(template);
+            }
+        }
+        Ok(templates)
     }
 
     async fn list_pr_participant_suggestions(&self, owner: &str, repo: &str) -> Result<Vec<User>, AppError> {

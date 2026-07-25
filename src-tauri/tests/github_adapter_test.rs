@@ -2423,3 +2423,33 @@ async fn test_github_updates_pull_request_metadata() {
         ]
     );
 }
+
+#[tokio::test]
+async fn test_github_lists_issue_templates() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/contents/.github/ISSUE_TEMPLATE"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "type": "file", "path": ".github/ISSUE_TEMPLATE/bug.md" },
+            { "type": "file", "path": ".github/ISSUE_TEMPLATE/config.yml" }
+        ])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/contents/.github/ISSUE_TEMPLATE/bug.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "encoding": "base64",
+            "size": 77,
+            "content": "LS0tCm5hbWU6IEJ1ZyDmiqXlkYoKYWJvdXQ6IOaPkOS6pOS4gOS4que8uumZtwpsYWJlbHM6IGJ1ZywgdHJpYWdlCi0tLQojIyDlpI3njrDmraXpqqQK"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let templates = adapter.list_issue_templates("octocat", "hello-world").await.unwrap();
+
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].name, "Bug 报告");
+    assert_eq!(templates[0].labels, vec!["bug", "triage"]);
+    assert_eq!(templates[0].body, "## 复现步骤");
+}

@@ -32,6 +32,7 @@ import type {
   IssueState,
   IssueSummary,
   Issue,
+  IssueTemplate,
   Paginated,
   RepoSummary,
   User,
@@ -248,7 +249,8 @@ export async function prBranches(
   return invoke("pr_branches", { platform, owner, repo });
 }
 
-export async function prLabels(
+// PR 与 Issue 共用仓库标签能力；后端命令沿用已有的 `pr_labels` 名称。
+export async function listRepositoryLabels(
   platform: Platform,
   owner: string,
   repo: string,
@@ -545,6 +547,14 @@ export async function issueCreate(
   labels: string[],
 ): Promise<Issue> {
   return invoke("issue_create", { platform, owner, repo, title, body, labels });
+}
+
+export async function issueTemplates(
+  platform: string,
+  owner: string,
+  repo: string,
+): Promise<IssueTemplate[]> {
+  return invoke("issue_templates", { platform, owner, repo });
 }
 
 // ── AI ──

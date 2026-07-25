@@ -1,5 +1,5 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 
 const options = [
@@ -9,6 +9,11 @@ const options = [
 ];
 
 describe("AppMultiSelect", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it("搜索后可以连续选择多个选项且保持下拉打开", async () => {
     const wrapper = mount(AppMultiSelect, {
       props: { modelValue: [], options, searchPlaceholder: "搜索标签" },
@@ -29,6 +34,18 @@ describe("AppMultiSelect", () => {
     await wrapper.get('input[placeholder="搜索标签"]').setValue("");
     await wrapper.get(".multi-select-option[data-value='bug']").trigger("click");
     expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([["bug", "frontend"]]);
+  });
+
+  it("使用固定尺寸 SVG 箭头并在展开时旋转", async () => {
+    const wrapper = mount(AppMultiSelect, { props: { modelValue: [], options } });
+    const chevron = wrapper.get("svg.app-multi-select-chevron");
+
+    expect(chevron.attributes("width")).toBe("12");
+    expect(chevron.attributes("height")).toBe("12");
+    expect(chevron.classes()).not.toContain("open");
+
+    await wrapper.get('[role="combobox"]').trigger("click");
+    expect(chevron.classes()).toContain("open");
   });
 
   it("中文输入法组合态回车不会误选标签", async () => {
@@ -77,5 +94,43 @@ describe("AppMultiSelect", () => {
     await wrapper.get('[role="combobox"]').trigger("click");
     expect(wrapper.get<HTMLInputElement>('input[type="search"]').element.value).toBe("");
     wrapper.unmount();
+  });
+
+  it("触发器靠近视口底部时向上展开下拉框", async () => {
+    vi.stubGlobal("innerHeight", 760);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        if (this.classList.contains("app-multi-select")) {
+          return {
+            x: 20,
+            y: 700,
+            top: 700,
+            right: 420,
+            bottom: 738,
+            left: 20,
+            width: 400,
+            height: 38,
+            toJSON: () => ({}),
+          };
+        }
+        return {
+          x: 0,
+          y: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+          width: 0,
+          height: 0,
+          toJSON: () => ({}),
+        };
+      },
+    );
+    const wrapper = mount(AppMultiSelect, { props: { modelValue: [], options } });
+
+    await wrapper.get('[role="combobox"]').trigger("click");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get(".multi-select-dropdown").classes()).toContain("multi-select-dropdown-up");
   });
 });

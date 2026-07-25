@@ -295,6 +295,15 @@ export interface PrLabel {
   description: string | null;
 }
 
+export interface IssueTemplate {
+  name: string;
+  description: string | null;
+  title: string;
+  body: string;
+  labels: string[];
+  source_path: string;
+}
+
 export interface PrCreateOutcome {
   number: number;
   detail: PrDetail | null;

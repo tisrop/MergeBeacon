@@ -618,6 +618,16 @@ pub struct Issue {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IssueTemplate {
+    pub name: String,
+    pub description: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+    pub source_path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateIssueRequest {
     pub title: String,

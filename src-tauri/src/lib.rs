@@ -5,6 +5,7 @@ pub mod error;
 pub mod error_log;
 pub mod file_content;
 pub mod http_client;
+pub mod issue_template;
 pub mod local_store;
 pub mod models;
 pub mod patch;
@@ -206,6 +207,7 @@ pub fn run() {
             // Issue
             issue::issue_list,
             issue::issue_create,
+            issue::issue_templates,
             // AI
             ai_cmds::ai_get_config,
             ai_cmds::ai_save_config,

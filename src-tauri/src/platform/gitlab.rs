@@ -41,6 +41,21 @@ impl GitLabAdapter {
         Ok(resp.json().await?)
     }
 
+    async fn get_json_optional(&self, url: &str) -> Result<Option<Value>, AppError> {
+        let resp = self
+            .client
+            .get(url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .header("User-Agent", "mergebeacon")
+            .send()
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let resp = resp.error_for_status()?;
+        Ok(Some(resp.json().await?))
+    }
+
     fn warn_source_project_resolution_failed(source_project_id: u64, error: &AppError) {
         let (error_kind, http_status) = match error {
             AppError::Http(error) => {
@@ -1160,6 +1175,33 @@ impl GitPlatform for GitLabAdapter {
                 })
             })
             .collect())
+    }
+
+    async fn list_issue_templates(&self, owner: &str, repo: &str) -> Result<Vec<IssueTemplate>, AppError> {
+        let project_id = urlencoding(owner, repo);
+        let list_url = format!("{}/projects/{}/templates/issues", self.base_url, project_id);
+        let items =
+            self.get_json_optional(&list_url).await?.and_then(|value| value.as_array().cloned()).unwrap_or_default();
+        let mut templates = Vec::new();
+        for item in items.into_iter().take(crate::issue_template::MAX_ISSUE_TEMPLATE_FILES) {
+            let Some(name) = item["name"].as_str().filter(|value| !value.trim().is_empty()) else {
+                continue;
+            };
+            let url =
+                format!("{}/projects/{}/templates/issues/{}", self.base_url, project_id, urlencoding::encode(name));
+            let Some(value) = self.get_json_optional(&url).await? else {
+                continue;
+            };
+            let Some(content) = value["content"].as_str() else {
+                continue;
+            };
+            let path = format!(".gitlab/issue_templates/{name}.md");
+            if let Some(mut template) = crate::issue_template::parse_remote_template(&path, content).await {
+                template.name = name.to_string();
+                templates.push(template);
+            }
+        }
+        Ok(templates)
     }
 
     async fn list_pr_participant_suggestions(&self, owner: &str, repo: &str) -> Result<Vec<User>, AppError> {

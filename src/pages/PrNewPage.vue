@@ -6,7 +6,13 @@ import DiffViewer from "@/components/diff/DiffViewer.vue";
 import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 import AppSelect from "@/components/shared/AppSelect.vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
-import { prBranches, prCreate, prCreatePreview, prLabels, prParticipantSuggestions } from "@/api";
+import {
+  prBranches,
+  prCreate,
+  prCreatePreview,
+  listRepositoryLabels,
+  prParticipantSuggestions,
+} from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { usePrStore } from "@/stores/usePrStore";
@@ -407,7 +413,7 @@ async function loadLabels(): Promise<void> {
   }
   labelsLoading.value = true;
   try {
-    const result = await prLabels(platform, target.owner, target.repo);
+    const result = await listRepositoryLabels(platform, target.owner, target.repo);
     if (sequence !== labelsSequence) return;
     const seen = new Set<string>();
     availableLabels.value = result.filter((label) => {

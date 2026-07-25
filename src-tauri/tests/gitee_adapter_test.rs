@@ -2088,3 +2088,31 @@ async fn test_gitee_clears_pull_request_milestone_with_zero_number() {
     assert!(result.failures.is_empty());
     assert_eq!(result.updated_fields, vec![PrMetadataField::Milestone]);
 }
+
+#[tokio::test]
+async fn test_gitee_lists_issue_templates() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/team/repo/contents/.gitee/ISSUE_TEMPLATE"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "type": "file", "path": ".gitee/ISSUE_TEMPLATE/bug.md" }
+        ])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/team/repo/contents/.gitee/ISSUE_TEMPLATE/bug.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "encoding": "base64",
+            "size": 18,
+            "content": "IyMg5aSN546w5q2l6aqkCg=="
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let templates = adapter.list_issue_templates("team", "repo").await.unwrap();
+
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].name, "bug");
+    assert_eq!(templates[0].body, "## 复现步骤");
+}

@@ -1,3 +1,52 @@
+.issue-new-header,
+.issue-new-content {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.issue-new-header {
+  align-items: center;
+}
+
+.issue-new-header > div {
+  min-width: 0;
+}
+
 .issue-new-header p {
+  overflow: hidden;
   font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issue-new-empty {
+  min-height: 360px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+}
+
+.issue-new-empty svg {
+  margin-bottom: var(--space-3);
+  opacity: 0.55;
+}
+
+.issue-new-empty strong {
+  color: var(--color-text);
+  font-size: 15px;
+}
+
+.issue-new-empty p {
+  max-width: 360px;
+  margin-top: var(--space-1);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .issue-new-header {
+    align-items: flex-start;
+  }
 }

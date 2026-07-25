@@ -8,7 +8,7 @@ import {
   prBranches,
   prCreate,
   prCreatePreview,
-  prLabels,
+  listRepositoryLabels,
   prParticipantSuggestions,
   repoList,
 } from "@/api";
@@ -29,7 +29,7 @@ vi.mock("@/api", () => ({
   prBranches: vi.fn(),
   prCreate: vi.fn(),
   prCreatePreview: vi.fn(),
-  prLabels: vi.fn(),
+  listRepositoryLabels: vi.fn(),
   prParticipantSuggestions: vi.fn(),
   repoList: vi.fn(),
 }));
@@ -196,7 +196,7 @@ describe("PrNewPage", () => {
       failures: [],
     });
     vi.mocked(prCreatePreview).mockResolvedValue(createPreview("Add feature"));
-    vi.mocked(prLabels).mockResolvedValue([
+    vi.mocked(listRepositoryLabels).mockResolvedValue([
       { name: "bug", color: "#d73a4a", description: "需要修复的问题" },
       { name: "feature", color: "b60205", description: "新功能" },
       { name: "frontend", color: null, description: null },
@@ -327,7 +327,7 @@ describe("PrNewPage", () => {
   it("从目标仓库加载标签并将多选结果提交给创建接口", async () => {
     const { wrapper } = await mountPage();
 
-    expect(prLabels).toHaveBeenCalledWith("github", "team", "repo");
+    expect(listRepositoryLabels).toHaveBeenCalledWith("github", "team", "repo");
     const labelsSelect = wrapper.get('[aria-label="Labels"]');
     await labelsSelect.trigger("click");
     await wrapper.get('input[placeholder="搜索标签"]').setValue("feature");
@@ -350,7 +350,7 @@ describe("PrNewPage", () => {
 
   it("切换目标仓库后清空选择并忽略迟到的旧标签请求", async () => {
     let resolveOld!: (value: PrLabel[]) => void;
-    vi.mocked(prLabels).mockImplementation((_platform, owner) => {
+    vi.mocked(listRepositoryLabels).mockImplementation((_platform, owner) => {
       if (owner === "team") {
         return new Promise((resolve) => {
           resolveOld = resolve;
@@ -372,7 +372,7 @@ describe("PrNewPage", () => {
     await wrapper.get(".dropdown-option[data-value='other/repo']").trigger("click");
     await flushPromises();
 
-    expect(prLabels).toHaveBeenLastCalledWith("github", "other", "repo");
+    expect(listRepositoryLabels).toHaveBeenLastCalledWith("github", "other", "repo");
     await wrapper.get('[aria-label="Labels"]').trigger("click");
     expect(
       wrapper.findAll(".multi-select-option-copy > span").map((option) => option.text()),
@@ -423,7 +423,7 @@ describe("PrNewPage", () => {
   });
 
   it("标签读取失败时显示错误但不阻止创建", async () => {
-    vi.mocked(prLabels).mockRejectedValue(new Error("labels unavailable"));
+    vi.mocked(listRepositoryLabels).mockRejectedValue(new Error("labels unavailable"));
     const { wrapper } = await mountPage();
 
     expect(wrapper.text()).toContain("labels unavailable");
