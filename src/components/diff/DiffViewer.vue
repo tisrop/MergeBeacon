@@ -26,6 +26,8 @@ import {
 } from "@/stores/useReviewProgressStore";
 import { getErrorMessage } from "@/utils/error";
 import { findPatchLocation as findStandardPatchLocation } from "@/utils/diffHunk";
+import CodeSearchBar from "./CodeSearchBar.vue";
+import { useDiffCodeSearch } from "./useDiffCodeSearch";
 
 const props = defineProps<{
   diff: DiffResult | null;
@@ -483,6 +485,7 @@ async function loadImagePreview(): Promise<void> {
 
 function setImageViewMode(mode: "source" | "preview"): void {
   imageViewMode.value = mode;
+  if (mode === "preview") closeCodeSearch();
 }
 
 function imagePreviewPanelKey(panel: ImagePreviewTarget): string {
@@ -991,6 +994,13 @@ const diffHtml = computed(() => {
 });
 
 const hasDiffContent = computed(() => hasControlledPatch.value || Boolean(diffHtml.value));
+const canSearchCurrentFile = computed(() => {
+  if (!selectedFile.value || isShowingImagePreview.value) return false;
+  if (selectedStandardPatch.value) {
+    return selectedStandardPatch.value.content_kind === "text" && controlledHunks.value.length > 0;
+  }
+  return Boolean(diffHtml.value);
+});
 
 function toggleDirectory(key: string) {
   const next = new Set(expandedDirectories.value);
@@ -1401,6 +1411,41 @@ const quickBody = ref("");
 const quickSubmitting = ref(false);
 const quickCategory = ref("logic");
 const quickSubCategory = ref("");
+
+const {
+  registerSearchInput,
+  codeSearchStates,
+  isCodeSearchOpen,
+  visibleCodeSearchSides,
+  toggleCodeSearch,
+  closeCodeSearch,
+  closeCodeSearchSide,
+  clearCodeSearchQuery,
+  navigateCodeSearch,
+  updateCodeSearchQuery,
+  toggleCodeSearchOption,
+  handleCodeSearchKeydown,
+  setHoveredCodeSearchSide,
+  clearHoveredCodeSearchSide,
+  updateHoveredLegacyCodeSearchSide,
+} = useDiffCodeSearch({
+  containerRef,
+  workspaceRef,
+  diffScrollRef,
+  selectedFile,
+  selectedFilePath,
+  diffHtml,
+  selectedStandardPatch,
+  expandedContextGaps,
+  isShowingImagePreview,
+  canSearchCurrentFile,
+  isDiffSyncScrollEnabled,
+  quickComment,
+  setSideDiffScrollLeft,
+  setSideDiffScrollerScrollLeft,
+  updateTopScrollbar,
+  scrollElementWithinContainer,
+});
 
 const categories: Record<string, string[]> = {
   logic: ["边界条件", "空值处理", "异常处理", "并发问题", "状态管理", "类型错误"],
@@ -1857,6 +1902,21 @@ onUnmounted(() => {
             <span class="additions">+{{ selectedFile.additions }}</span>
             <span class="deletions">-{{ selectedFile.deletions }}</span>
           </div>
+          <button
+            class="navigator-toggle code-search-toggle"
+            type="button"
+            :aria-pressed="isCodeSearchOpen"
+            :disabled="!canSearchCurrentFile"
+            :title="canSearchCurrentFile ? '查找代码' : '当前文件没有可查找的代码'"
+            aria-label="查找代码"
+            aria-keyshortcuts="Meta+F Control+F"
+            @click="toggleCodeSearch"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="6.75" cy="6.75" r="4.25" stroke="currentColor" stroke-width="1.4" />
+              <path d="m10 10 3.5 3.5" stroke="currentColor" stroke-width="1.4" />
+            </svg>
+          </button>
           <div v-if="canPreviewImage" class="image-view-toggle" aria-label="图片显示方式">
             <button
               type="button"
@@ -1945,6 +2005,19 @@ onUnmounted(() => {
             </button>
           </div>
         </header>
+
+        <CodeSearchBar
+          v-if="isCodeSearchOpen"
+          :visible-sides="visibleCodeSearchSides"
+          :states="codeSearchStates"
+          :register-input="registerSearchInput"
+          @keydown="handleCodeSearchKeydown"
+          @clear-query="clearCodeSearchQuery"
+          @navigate="navigateCodeSearch"
+          @close-side="closeCodeSearchSide"
+          @update-query="updateCodeSearchQuery"
+          @toggle-option="toggleCodeSearchOption"
+        />
 
         <div
           v-if="!isShowingImagePreview"
@@ -2083,6 +2156,8 @@ onUnmounted(() => {
                   class="controlled-file-side-diff"
                   :class="`controlled-side-${side}`"
                   :aria-label="side === 'left' ? '变更前代码' : '变更后代码'"
+                  @pointerenter="setHoveredCodeSearchSide(side)"
+                  @pointerleave="clearHoveredCodeSearchSide"
                 >
                   <div class="controlled-side-content">
                     <template
@@ -2291,7 +2366,14 @@ onUnmounted(() => {
                 {{ selectedStandardPatch.message ?? "该文件没有可展示的文本 Diff" }}
               </div>
             </article>
-            <div v-else class="legacy-diff" v-html="diffHtml" />
+            <div
+              v-else
+              class="legacy-diff"
+              v-html="diffHtml"
+              @pointerover="updateHoveredLegacyCodeSearchSide"
+              @pointermove="updateHoveredLegacyCodeSearchSide"
+              @pointerleave="clearHoveredCodeSearchSide"
+            />
           </div>
         </div>
       </section>
@@ -2646,6 +2728,15 @@ onUnmounted(() => {
   color: var(--color-primary);
 }
 
+.navigator-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.code-search-toggle {
+  flex-shrink: 0;
+}
+
 .selected-file-heading {
   display: flex;
   min-width: 0;
@@ -2807,6 +2898,23 @@ onUnmounted(() => {
 .diff2html-container :deep(ins.d2h-low-similarity-highlight),
 .diff2html-container :deep(del.d2h-low-similarity-highlight) {
   background-color: transparent;
+}
+
+.diff2html-container :deep(mark.diff-search-match) {
+  padding: 0 1px;
+  border-radius: 2px;
+  background: color-mix(in srgb, #f6d45a 72%, transparent);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  box-shadow: none;
+  color: inherit;
+}
+
+.diff2html-container :deep(mark.diff-search-match.active) {
+  background: color-mix(in srgb, #f0a202 88%, #fff 12%);
+  box-shadow: none;
+  color: inherit;
+  font-weight: inherit;
 }
 
 .diff2html-container :deep(.d2h-file-side-diff) {

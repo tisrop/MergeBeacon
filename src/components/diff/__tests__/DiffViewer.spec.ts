@@ -85,6 +85,21 @@ async function mountViewer(value = diff, extraProps: ContextProps = {}) {
   return wrapper;
 }
 
+async function setCodeSearchQuery(
+  search: { setValue(value: string): Promise<void> },
+  query: string,
+): Promise<void> {
+  await flushPromises();
+  vi.useFakeTimers();
+  try {
+    await search.setValue(query);
+    await vi.advanceTimersByTimeAsync(75);
+    await flushPromises();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 const standardizedDiff: DiffResult = {
   diff: "",
   files: [
@@ -290,6 +305,483 @@ describe("DiffViewer 受控标准 patch", () => {
     );
     expect(wrapper.get(".controlled-side-right").text()).toContain('it("works");');
     expect(wrapper.findAll(".controlled-line-addition")).toHaveLength(1);
+  });
+
+  it("支持搜索当前标准 patch 并循环定位匹配项", async () => {
+    const wrapper = await mountViewer(standardizedDiff);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const pane = wrapper.get('.code-search-pane[data-side="right"]');
+    const search = pane.get<HTMLInputElement>('input[type="search"]');
+    await setCodeSearchQuery(search, "<NEW>");
+
+    expect(pane.get(".code-search-result").text()).toBe("1/1");
+    expect(wrapper.findAll("mark.diff-search-match")).toHaveLength(1);
+    expect(wrapper.get("mark.diff-search-match.active").text()).toBe("<new>");
+
+    await setCodeSearchQuery(search, "const");
+    expect(pane.get(".code-search-result").text()).toBe("1/2");
+
+    await search.trigger("keydown", { key: "Enter" });
+    expect(pane.get(".code-search-result").text()).toBe("2/2");
+    await search.trigger("keydown", { key: "Enter", shiftKey: true });
+    expect(pane.get(".code-search-result").text()).toBe("1/2");
+    await pane.get('[aria-label="右侧上一个匹配项"]').trigger("click");
+    expect(pane.get(".code-search-result").text()).toBe("2/2");
+  });
+
+  it("搜索框清除按钮只清空当前侧并保持输入焦点", async () => {
+    const wrapper = mount(DiffViewer, {
+      attachTo: document.body,
+      props: { diff: standardizedDiff },
+    });
+    await flushPromises();
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const leftPane = wrapper.get('.code-search-pane[data-side="left"]');
+    const rightPane = wrapper.get('.code-search-pane[data-side="right"]');
+    const leftSearch = leftPane.get<HTMLInputElement>('input[type="search"]');
+    const rightSearch = rightPane.get<HTMLInputElement>('input[type="search"]');
+    await setCodeSearchQuery(leftSearch, "state");
+    await setCodeSearchQuery(rightSearch, "const");
+
+    await leftPane.get('[aria-label="清空左侧查找"]').trigger("click");
+    await flushPromises();
+
+    expect(leftSearch.element.value).toBe("");
+    expect(leftPane.find('[aria-label="清空左侧查找"]').exists()).toBe(false);
+    expect(rightSearch.element.value).toBe("const");
+    expect(rightPane.get(".code-search-result").text()).toBe("1/2");
+    expect(document.activeElement).toBe(leftSearch.element);
+    wrapper.unmount();
+  });
+
+  it("左右侧搜索独立维护查询和导航位置", async () => {
+    const wrapper = await mountViewer(standardizedDiff);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const panes = wrapper.findAll(".code-search-pane");
+    expect(panes).toHaveLength(2);
+    const leftSearch = panes[0].get<HTMLInputElement>('input[type="search"]');
+    const rightSearch = panes[1].get<HTMLInputElement>('input[type="search"]');
+    expect(leftSearch.attributes("placeholder")).toBeUndefined();
+    expect(rightSearch.attributes("placeholder")).toBeUndefined();
+    expect(panes[0].get(".code-search-result").text()).toBe("");
+    expect(panes[1].get(".code-search-result").text()).toBe("");
+
+    await setCodeSearchQuery(leftSearch, "const");
+    await setCodeSearchQuery(rightSearch, "const");
+    expect(panes[0].get(".code-search-result").text()).toBe("1/2");
+    expect(panes[1].get(".code-search-result").text()).toBe("1/2");
+
+    await panes[0].get('[aria-label="左侧下一个匹配项"]').trigger("click");
+    expect(panes[0].get(".code-search-result").text()).toBe("2/2");
+    expect(panes[1].get(".code-search-result").text()).toBe("1/2");
+  });
+
+  it("放大镜按最近鼠标所在代码侧打开，未检测到代码侧时同时打开两侧", async () => {
+    const wrapper = await mountViewer(standardizedDiff);
+    const toggle = wrapper.get('[aria-label="查找代码"]');
+
+    await toggle.trigger("click");
+    expect(wrapper.findAll(".code-search-pane")).toHaveLength(2);
+    await toggle.trigger("click");
+
+    await wrapper.get(".controlled-side-left").trigger("pointerenter");
+    await wrapper.get(".controlled-side-left").trigger("pointerleave");
+    await toggle.trigger("click");
+    expect(wrapper.find('.code-search-pane[data-side="left"]').exists()).toBe(true);
+    expect(wrapper.find('.code-search-pane[data-side="right"]').exists()).toBe(false);
+    await toggle.trigger("click");
+
+    await wrapper.get(".controlled-side-right").trigger("pointerenter");
+    await wrapper.get(".controlled-side-right").trigger("pointerleave");
+    await toggle.trigger("click");
+    expect(wrapper.find('.code-search-pane[data-side="left"]').exists()).toBe(false);
+    expect(wrapper.find('.code-search-pane[data-side="right"]').exists()).toBe(true);
+  });
+
+  it("连续输入时只在最后一次停顿后刷新搜索结果", async () => {
+    vi.useFakeTimers();
+    const wrapper = await mountViewer(standardizedDiff);
+
+    try {
+      await wrapper.get('[aria-label="查找代码"]').trigger("click");
+      const pane = wrapper.get('.code-search-pane[data-side="left"]');
+      const search = pane.get<HTMLInputElement>('input[type="search"]');
+      await search.setValue("state");
+      await vi.advanceTimersByTimeAsync(75);
+      await flushPromises();
+      expect(wrapper.get("mark.diff-search-match.active").text()).toBe("state");
+
+      await search.setValue("con");
+      await vi.advanceTimersByTimeAsync(50);
+      await search.setValue("const");
+      await vi.advanceTimersByTimeAsync(74);
+      await flushPromises();
+      expect(wrapper.get("mark.diff-search-match.active").text()).toBe("state");
+
+      await vi.advanceTimersByTimeAsync(1);
+      await flushPromises();
+      expect(pane.get(".code-search-result").text()).toBe("1/2");
+      expect(wrapper.get("mark.diff-search-match.active").text()).toBe("const");
+    } finally {
+      wrapper.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("展开上下文后保留当前搜索匹配和滚动位置", async () => {
+    prFileContentMock.mockImplementation(
+      async (_platform: Platform, _owner: string, _repo: string, path: string, revision: string) =>
+        fileContent(
+          path,
+          revision,
+          [
+            revision === "base-sha" ? "base 1" : "head 1",
+            `${revision} 2`,
+            "unchanged 3",
+            `${revision} 4`,
+            "unchanged 5",
+            `${revision} 6`,
+            "unchanged 7",
+            `${revision} 8`,
+          ].join("\n"),
+        ),
+    );
+    const wrapper = await mountViewer(contextDiff, contextProps);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const pane = wrapper.get('.code-search-pane[data-side="right"]');
+    const search = pane.get<HTMLInputElement>('input[type="search"]');
+    await setCodeSearchQuery(search, "unchanged");
+    await search.trigger("keydown", { key: "Enter" });
+
+    expect(pane.get(".code-search-result").text()).toBe("2/2");
+    const diffScroll = wrapper.get<HTMLElement>(".diff-scroll-region").element;
+    diffScroll.scrollTop = 137;
+
+    const secondHunkHeader = wrapper.findAll(".controlled-side-left .controlled-hunk-header")[1];
+    await secondHunkHeader.get(".context-gap-button").trigger("click");
+    await flushPromises();
+
+    const activeLine = wrapper
+      .get("mark.diff-search-match.active")
+      .element.closest<HTMLElement>(".controlled-line");
+    expect(pane.get(".code-search-result").text()).toBe("3/3");
+    expect(activeLine?.dataset.side).toBe("right");
+    expect(activeLine?.dataset.line).toBe("7");
+    expect(diffScroll.scrollTop).toBe(137);
+  });
+
+  it("Vue 更新清除代码 DOM 高亮后会恢复搜索结果和当前索引", async () => {
+    const wrapper = await mountViewer(standardizedDiff);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const pane = wrapper.get('.code-search-pane[data-side="right"]');
+    const search = pane.get<HTMLInputElement>('input[type="search"]');
+    await setCodeSearchQuery(search, "const");
+    await pane.get('[aria-label="右侧下一个匹配项"]').trigger("click");
+    expect(pane.get(".code-search-result").text()).toBe("2/2");
+
+    wrapper.findAll(".controlled-side-right .controlled-code").forEach((code) => {
+      code.element.replaceChildren(document.createTextNode(code.element.textContent ?? ""));
+    });
+    expect(wrapper.find("mark.diff-search-match").exists()).toBe(false);
+    expect(pane.get(".code-search-result").text()).toBe("2/2");
+
+    await wrapper.setProps({ readOnly: true });
+    await flushPromises();
+
+    expect(wrapper.findAll(".controlled-side-right mark.diff-search-match")).toHaveLength(2);
+    expect(pane.get(".code-search-result").text()).toBe("2/2");
+    expect(wrapper.get("mark.diff-search-match.active").text()).toBe("const");
+
+    await pane.get('[aria-label="右侧下一个匹配项"]').trigger("click");
+    expect(pane.get(".code-search-result").text()).toBe("1/2");
+  });
+
+  it("支持区分大小写、全词和正则表达式搜索", async () => {
+    const wrapper = await mountViewer(standardizedDiff);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const pane = wrapper.get('.code-search-pane[data-side="right"]');
+    const search = pane.get<HTMLInputElement>('input[type="search"]');
+    const caseSensitive = pane.get('[aria-label="右侧区分大小写"]');
+    const wholeWord = pane.get('[aria-label="右侧全词匹配"]');
+    const regex = pane.get('[aria-label="右侧使用正则表达式"]');
+
+    await setCodeSearchQuery(search, "<NEW>");
+    expect(pane.get(".code-search-result").text()).toBe("1/1");
+
+    await caseSensitive.trigger("click");
+    await flushPromises();
+    expect(caseSensitive.attributes("aria-pressed")).toBe("true");
+    expect(pane.get(".code-search-result").text()).toBe("无结果");
+    await setCodeSearchQuery(search, "<new>");
+    expect(pane.get(".code-search-result").text()).toBe("1/1");
+
+    await caseSensitive.trigger("click");
+    await setCodeSearchQuery(search, "stat");
+    expect(pane.get(".code-search-result").text()).toBe("1/1");
+    await wholeWord.trigger("click");
+    await flushPromises();
+    expect(wholeWord.attributes("aria-pressed")).toBe("true");
+    expect(pane.get(".code-search-result").text()).toBe("无结果");
+    await setCodeSearchQuery(search, "state");
+    expect(pane.get(".code-search-result").text()).toBe("1/1");
+
+    await wholeWord.trigger("click");
+    await regex.trigger("click");
+    await setCodeSearchQuery(search, "(?:const )+(state|value)");
+    expect(regex.attributes("aria-pressed")).toBe("true");
+    expect(pane.get(".code-search-result").text()).toBe("1/2");
+
+    await setCodeSearchQuery(search, "(a+)+$");
+    expect(pane.get(".code-search-result").text()).toBe("正则表达式包含可能导致卡顿的重复结构");
+    expect(wrapper.find("mark.diff-search-match").exists()).toBe(false);
+
+    await setCodeSearchQuery(search, "(a|aa)+$");
+    expect(pane.get(".code-search-result").text()).toBe("正则表达式包含可能导致卡顿的重复结构");
+
+    await setCodeSearchQuery(search, "a*a*a*a*a*a*a*a*b");
+    expect(pane.get(".code-search-result").text()).toBe("正则表达式包含可能导致卡顿的重复结构");
+
+    for (const dangerousPattern of ["\\d*\\d*\\d*X", "[ab]*[ab]*[ab]*c"]) {
+      await setCodeSearchQuery(search, dangerousPattern);
+      expect(pane.get(".code-search-result").text()).toBe("正则表达式包含可能导致卡顿的重复结构");
+    }
+
+    for (const allowedPattern of ["a*b*", "a+b+c+", "a{2}a{2}", "foo.*bar"]) {
+      await setCodeSearchQuery(search, allowedPattern);
+      expect(pane.get(".code-search-result").text()).not.toContain("重复结构");
+    }
+
+    await setCodeSearchQuery(search, "(state)\\1");
+    expect(pane.get(".code-search-result").text()).toBe("正则表达式不支持反向引用");
+
+    await setCodeSearchQuery(search, "a".repeat(257));
+    expect(pane.get(".code-search-result").text()).toBe("正则表达式过长（最多 256 个字符）");
+
+    await setCodeSearchQuery(search, "[");
+    expect(search.attributes("aria-invalid")).toBe("true");
+    expect(pane.get(".code-search-result").text()).toBe("正则表达式无效");
+    expect(wrapper.find("mark.diff-search-match").exists()).toBe(false);
+    expect(pane.get('[aria-label="右侧下一个匹配项"]').attributes()).toHaveProperty("disabled");
+  });
+
+  it("正则模式拒绝搜索超长代码行", async () => {
+    const longContent = "a".repeat(20_001);
+    const longLineDiff: DiffResult = {
+      diff: "",
+      files: [
+        {
+          filename: "src/generated.ts",
+          status: "added",
+          patch: "",
+          additions: 1,
+          deletions: 0,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: "src/generated.ts",
+          old_path: null,
+          new_path: "src/generated.ts",
+          status: "added",
+          additions: 1,
+          deletions: 0,
+          content_kind: "text",
+          patch: "",
+          message: null,
+          hunks: [
+            {
+              header: "@@ -0,0 +1 @@",
+              old_start: 0,
+              old_count: 0,
+              new_start: 1,
+              new_count: 1,
+              section_header: null,
+              lines: [{ kind: "addition", content: longContent, old_line: null, new_line: 1 }],
+            },
+          ],
+        },
+      ],
+    };
+    const wrapper = await mountViewer(longLineDiff);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const pane = wrapper.get('.code-search-pane[data-side="right"]');
+    await pane.get('[aria-label="右侧使用正则表达式"]').trigger("click");
+    const search = pane.get<HTMLInputElement>('input[type="search"]');
+    await setCodeSearchQuery(search, "a+$");
+
+    expect(search.attributes("aria-invalid")).toBe("true");
+    expect(pane.get(".code-search-result").text()).toContain("超长代码行");
+    expect(wrapper.find("mark.diff-search-match").exists()).toBe(false);
+  });
+
+  it("无匹配时禁用导航，Escape 只关闭当前侧搜索并清除其高亮", async () => {
+    const wrapper = await mountViewer(standardizedDiff);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const pane = wrapper.get('.code-search-pane[data-side="left"]');
+    const search = pane.get<HTMLInputElement>('input[type="search"]');
+    await setCodeSearchQuery(search, "missing-value");
+
+    expect(pane.get(".code-search-result").text()).toBe("无结果");
+    expect(pane.get('[aria-label="左侧下一个匹配项"]').attributes()).toHaveProperty("disabled");
+    expect(wrapper.find("mark.diff-search-match").exists()).toBe(false);
+
+    await setCodeSearchQuery(search, "const");
+    expect(wrapper.find("mark.diff-search-match").exists()).toBe(true);
+    await search.trigger("keydown", { key: "Escape" });
+
+    expect(wrapper.find('.code-search-pane[data-side="left"]').exists()).toBe(false);
+    expect(wrapper.find('.code-search-pane[data-side="right"]').exists()).toBe(true);
+    expect(wrapper.findAll(".controlled-side-left mark.diff-search-match")).toHaveLength(0);
+  });
+
+  it("⌘/Ctrl+F 与放大镜使用相同的代码侧回退，且不接管其他输入控件", async () => {
+    const wrapper = mount(DiffViewer, {
+      attachTo: document.body,
+      props: { diff: standardizedDiff },
+    });
+    await flushPromises();
+
+    const outsideFind = new KeyboardEvent("keydown", {
+      key: "f",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(outsideFind);
+    await flushPromises();
+
+    expect(outsideFind.defaultPrevented).toBe(true);
+    expect(wrapper.findAll(".code-search-pane")).toHaveLength(2);
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+
+    await wrapper.get(".controlled-side-left").trigger("pointerenter");
+    const metaFind = new KeyboardEvent("keydown", {
+      key: "f",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(metaFind);
+    await flushPromises();
+
+    expect(metaFind.defaultPrevented).toBe(true);
+    expect(wrapper.find(".diff-search-bar").exists()).toBe(true);
+    expect(document.activeElement).toBe(
+      wrapper.get('.code-search-pane[data-side="left"] .code-search-input').element,
+    );
+
+    await wrapper.get('[aria-label="关闭左侧查找"]').trigger("click");
+    const externalInput = document.createElement("input");
+    document.body.append(externalInput);
+    externalInput.focus();
+    const inputFind = new KeyboardEvent("keydown", {
+      key: "f",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    externalInput.dispatchEvent(inputFind);
+    await flushPromises();
+
+    expect(inputFind.defaultPrevented).toBe(false);
+    expect(wrapper.find(".diff-search-bar").exists()).toBe(false);
+    externalInput.remove();
+
+    await wrapper.get(".controlled-side-right").trigger("pointerenter");
+    const ctrlFind = new KeyboardEvent("keydown", {
+      key: "F",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(ctrlFind);
+    await flushPromises();
+    expect(ctrlFind.defaultPrevented).toBe(true);
+    expect(wrapper.find(".diff-search-bar").exists()).toBe(true);
+    expect(document.activeElement).toBe(
+      wrapper.get('.code-search-pane[data-side="right"] .code-search-input').element,
+    );
+
+    await wrapper.get(".controlled-side-right").trigger("pointerleave");
+    await wrapper.get('[aria-label="关闭右侧查找"]').trigger("click");
+    const afterLeaveFind = new KeyboardEvent("keydown", {
+      key: "f",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(afterLeaveFind);
+    await flushPromises();
+    expect(afterLeaveFind.defaultPrevented).toBe(true);
+    expect(wrapper.find('.code-search-pane[data-side="left"]').exists()).toBe(false);
+    expect(wrapper.find('.code-search-pane[data-side="right"]').exists()).toBe(true);
+
+    wrapper.unmount();
+    const afterUnmount = new KeyboardEvent("keydown", {
+      key: "f",
+      metaKey: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(afterUnmount);
+    expect(afterUnmount.defaultPrevented).toBe(false);
+  });
+
+  it("可单独关闭左侧查找并保留右侧结果", async () => {
+    const wrapper = await mountViewer(standardizedDiff);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const leftPane = wrapper.get('.code-search-pane[data-side="left"]');
+    const rightPane = wrapper.get('.code-search-pane[data-side="right"]');
+    await setCodeSearchQuery(leftPane.get<HTMLInputElement>('input[type="search"]'), "const");
+    await setCodeSearchQuery(rightPane.get<HTMLInputElement>('input[type="search"]'), "const");
+
+    expect(wrapper.findAll("mark.diff-search-match")).toHaveLength(4);
+    await leftPane.get('[aria-label="关闭左侧查找"]').trigger("click");
+
+    expect(wrapper.find('.code-search-pane[data-side="left"]').exists()).toBe(false);
+    expect(wrapper.find('.code-search-pane[data-side="right"]').exists()).toBe(true);
+    expect(wrapper.findAll(".controlled-side-left mark.diff-search-match")).toHaveLength(0);
+    expect(wrapper.findAll(".controlled-side-right mark.diff-search-match")).toHaveLength(2);
+
+    await wrapper.get('[aria-label="关闭右侧查找"]').trigger("click");
+    expect(wrapper.find(".diff-search-bar").exists()).toBe(false);
+    expect(wrapper.findAll("mark.diff-search-match")).toHaveLength(0);
+  });
+
+  it("在 diff2html 回退视图中按鼠标所在代码侧打开查找", async () => {
+    const wrapper = mount(DiffViewer, {
+      attachTo: document.body,
+      props: { diff },
+    });
+    await flushPromises();
+
+    const legacyRightSide = wrapper.findAll<HTMLElement>(".d2h-file-side-diff")[1];
+    if (!legacyRightSide) throw new Error("未找到回退视图的右侧代码面板");
+    await legacyRightSide.trigger("pointermove");
+
+    const find = new KeyboardEvent("keydown", {
+      key: "f",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(find);
+    await flushPromises();
+
+    expect(find.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(
+      wrapper.get('.code-search-pane[data-side="right"] .code-search-input').element,
+    );
+    wrapper.unmount();
   });
 
   it("按 AI 建议选中文件并优先定位变更后的行", async () => {
@@ -1689,6 +2181,29 @@ describe("DiffViewer 文件树", () => {
     expect(wrapper.get(".selected-file-name").text()).toBe("tests/App.spec.ts");
   });
 
+  it("diff2html 回退视图只搜索当前选中文件", async () => {
+    const wrapper = await mountViewer();
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const leftPane = wrapper.get('.code-search-pane[data-side="left"]');
+    const rightPane = wrapper.get('.code-search-pane[data-side="right"]');
+    const leftSearch = leftPane.get<HTMLInputElement>('input[type="search"]');
+    const rightSearch = rightPane.get<HTMLInputElement>('input[type="search"]');
+    await setCodeSearchQuery(leftSearch, "state");
+
+    expect(leftPane.get(".code-search-result").text()).toBe("1/1");
+    expect(wrapper.findAll("mark.diff-search-match")).toHaveLength(1);
+
+    await wrapper.get('[data-file-path="tests/App.spec.ts"]').trigger("click");
+    await flushPromises();
+    expect(leftPane.get(".code-search-result").text()).toBe("无结果");
+    expect(wrapper.find("mark.diff-search-match").exists()).toBe(false);
+
+    await setCodeSearchQuery(rightSearch, "works");
+    expect(rightPane.get(".code-search-result").text()).toBe("1/1");
+    expect(wrapper.get("mark.diff-search-match.active").text()).toBe("works");
+  });
+
   it("目录支持折叠并保留当前文件上下文", async () => {
     const wrapper = await mountViewer();
     const srcDirectory = wrapper
@@ -1828,6 +2343,27 @@ index 1111111..2222222 100644
         highlight.classes().includes("d2h-low-similarity-highlight"),
       ),
     ).toBe(false);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    const leftPane = wrapper.get('.code-search-pane[data-side="left"]');
+    const rightPane = wrapper.get('.code-search-pane[data-side="right"]');
+    const leftSearch = leftPane.get<HTMLInputElement>('input[type="search"]');
+    const rightSearch = rightPane.get<HTMLInputElement>('input[type="search"]');
+    await setCodeSearchQuery(leftSearch, "timeout = 1000");
+
+    const deletionMatch = wrapper.get("mark.diff-search-match.active");
+    expect(leftPane.get(".code-search-result").text()).toBe("1/1");
+    expect(deletionMatch.text()).toBe("timeout = 1000");
+    expect(deletionMatch.find("del").exists()).toBe(true);
+
+    await setCodeSearchQuery(rightSearch, "timeout = 2000");
+
+    const additionMatch = wrapper
+      .findAll(".d2h-file-side-diff")[1]
+      .get("mark.diff-search-match.active");
+    expect(rightPane.get(".code-search-result").text()).toBe("1/1");
+    expect(additionMatch.text()).toBe("timeout = 2000");
+    expect(additionMatch.find("ins").exists()).toBe(true);
   });
 
   it("标准化高亮时仍将远端 HTML 作为文本渲染", async () => {
