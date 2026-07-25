@@ -8,6 +8,17 @@ import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import { dispatchAppCommand } from "@/types/commands";
 import type { Platform, RepoSummary, ReviewInboxItem } from "@/types";
 
+const props = withDefaults(
+  defineProps<{
+    disabled?: boolean;
+  }>(),
+  { disabled: false },
+);
+
+const emit = defineEmits<{
+  "open-change": [open: boolean];
+}>();
+
 interface PaletteCommand {
   id: string;
   group: string;
@@ -256,10 +267,18 @@ watch(filteredCommands, () => {
   selectedIndex.value = 0;
 });
 
+watch(
+  () => props.disabled,
+  (disabled) => {
+    if (disabled) closePalette();
+  },
+);
+
 function openPalette(): void {
-  if (open.value) return;
+  if (props.disabled || open.value) return;
   previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   open.value = true;
+  emit("open-change", true);
   query.value = "";
   selectedIndex.value = 0;
   for (const platform of platforms) {
@@ -274,6 +293,7 @@ function closePalette(): void {
   if (!open.value) return;
   open.value = false;
   void nextTick(() => previousFocus?.focus());
+  emit("open-change", false);
 }
 
 async function runCommand(command: PaletteCommand | undefined): Promise<void> {

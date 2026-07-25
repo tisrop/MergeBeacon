@@ -63,6 +63,12 @@ describe("SettingsPage 诊断信息", () => {
     vi.mocked(restartAfterUpdate).mockReset();
   });
 
+  it("为应用更新区块提供稳定的路由锚点", () => {
+    const wrapper = mountPage();
+
+    expect(wrapper.get("#app-update").text()).toContain("应用更新");
+  });
+
   it("持久化 Diff 同步滚动设置并在重新加载后恢复", async () => {
     const firstPage = mountPage();
     const firstToggle = firstPage.get<HTMLInputElement>('input[aria-label="同步 Diff 横向滚动"]');

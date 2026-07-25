@@ -3,16 +3,31 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { checkForUpdates } from "@/api";
+import UpdateAvailableDialog from "@/components/update/UpdateAvailableDialog.vue";
 import { useUpdateStore } from "@/stores/useUpdateStore";
 import App from "../App.vue";
 
 const storage = new Map<string, string>();
+const scrollIntoView = vi.fn();
+
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  configurable: true,
+  value: scrollIntoView,
+});
 const noUpdate = {
   current_version: "0.7.0",
   available: false,
   version: null,
   notes: null,
   published_at: null,
+  update_mode: "installer" as const,
+};
+const availableUpdate = {
+  current_version: "0.3.5",
+  available: true,
+  version: "0.4.0",
+  notes: "更新说明",
+  published_at: "2026-07-13",
   update_mode: "installer" as const,
 };
 
@@ -31,18 +46,12 @@ describe("App", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     storage.clear();
+    scrollIntoView.mockReset();
     vi.mocked(checkForUpdates).mockReset();
   });
 
   it("未进入设置页也会在应用挂载时执行后台更新检查", async () => {
-    vi.mocked(checkForUpdates).mockResolvedValue({
-      current_version: "0.3.5",
-      available: true,
-      version: "0.4.0",
-      notes: "更新说明",
-      published_at: "2026-07-13",
-      update_mode: "installer",
-    });
+    vi.mocked(checkForUpdates).mockResolvedValue(availableUpdate);
     const pinia = createPinia();
     const router = createRouter({
       history: createMemoryHistory(),
@@ -62,11 +71,198 @@ describe("App", () => {
     expect(router.currentRoute.value.path).toBe("/pr");
     expect(checkForUpdates).toHaveBeenCalledOnce();
     expect(useUpdateStore(pinia).updateResult?.version).toBe("0.4.0");
+    expect(useUpdateStore(pinia).updatePromptVersion).toBe("0.4.0");
+    expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(true);
     expect(window.__goToSettings).toBeTypeOf("function");
     expect(window.__openCommandPalette).toBeTypeOf("function");
     wrapper.unmount();
     expect(window.__goToSettings).toBeUndefined();
     expect(window.__openCommandPalette).toBeUndefined();
+  });
+
+  it("已持久化忽略的版本在后续后台检查中不再打开更新弹窗", async () => {
+    storage.set("mergebeacon:dismissed-update-version", "0.4.0");
+    vi.mocked(checkForUpdates).mockResolvedValue(availableUpdate);
+    const pinia = createPinia();
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/pr", component: { template: "<div>PR 列表</div>" } }],
+    });
+    await router.push("/pr");
+    await router.isReady();
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
+    await flushPromises();
+
+    const updates = useUpdateStore(pinia);
+    expect(updates.updateResult).toEqual(availableUpdate);
+    expect(updates.updatePromptVersion).toBeNull();
+    expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("提示版本与更新结果版本不一致时不展示更新弹窗", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue(availableUpdate);
+    const pinia = createPinia();
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/pr", component: { template: "<div>PR 列表</div>" } }],
+    });
+    await router.push("/pr");
+    await router.isReady();
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
+    await flushPromises();
+
+    const updates = useUpdateStore(pinia);
+    expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(true);
+
+    updates.updateResult = { ...availableUpdate, version: "0.5.0" };
+    await flushPromises();
+
+    expect(updates.updatePromptVersion).toBe("0.4.0");
+    expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("后台检查完成时不打断正在编辑的输入控件", async () => {
+    let resolveCheck!: (result: typeof availableUpdate) => void;
+    vi.mocked(checkForUpdates).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCheck = resolve;
+      }),
+    );
+    const pinia = createPinia();
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        {
+          path: "/editor",
+          component: { template: '<input data-testid="editor" aria-label="编辑内容" />' },
+        },
+      ],
+    });
+    await router.push("/editor");
+    await router.isReady();
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: {
+        plugins: [pinia, router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
+    const editor = wrapper.get<HTMLInputElement>('[data-testid="editor"]');
+    editor.element.focus();
+    await flushPromises();
+
+    resolveCheck(availableUpdate);
+    await flushPromises();
+
+    expect(useUpdateStore(pinia).updatePromptVersion).toBe("0.4.0");
+    expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(false);
+    expect(document.activeElement).toBe(editor.element);
+
+    editor.element.blur();
+    await flushPromises();
+
+    expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(true);
+    expect(document.activeElement).toBe(
+      document.body.querySelector<HTMLButtonElement>(".update-dialog-primary"),
+    );
+    wrapper.unmount();
+  });
+
+  it("命令面板打开时挂起更新提示，关闭后再展示且禁止双模态", async () => {
+    let resolveCheck!: (result: typeof availableUpdate) => void;
+    vi.mocked(checkForUpdates).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCheck = resolve;
+      }),
+    );
+    const pinia = createPinia();
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/pr", component: { template: "<div>PR 列表</div>" } }],
+    });
+    await router.push("/pr");
+    await router.isReady();
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: {
+        plugins: [pinia, router],
+        stubs: { NotificationManager: true },
+      },
+    });
+
+    window.__openCommandPalette?.();
+    await flushPromises();
+    const commandInput = document.body.querySelector<HTMLInputElement>(
+      '.command-palette input[type="search"]',
+    );
+    expect(document.activeElement).toBe(commandInput);
+
+    resolveCheck(availableUpdate);
+    await flushPromises();
+
+    expect(useUpdateStore(pinia).updatePromptVersion).toBe("0.4.0");
+    expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(false);
+    expect(document.body.querySelector('[data-testid="update-available-dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(commandInput);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushPromises();
+
+    expect(document.body.querySelector(".command-palette")).toBeNull();
+    expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(true);
+    expect(document.activeElement).toBe(
+      document.body.querySelector<HTMLButtonElement>(".update-dialog-primary"),
+    );
+
+    window.__openCommandPalette?.();
+    await flushPromises();
+    expect(document.body.querySelector(".command-palette")).toBeNull();
+    wrapper.unmount();
+  });
+
+  it("从更新提示进入设置页并关闭本次提示", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue(availableUpdate);
+    const pinia = createPinia();
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/pr", component: { template: "<div>PR 列表</div>" } },
+        {
+          path: "/settings",
+          component: { template: '<section id="app-update">设置</section>' },
+        },
+      ],
+    });
+    await router.push("/pr");
+    await router.isReady();
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: {
+        plugins: [pinia, router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
+    await flushPromises();
+
+    wrapper.getComponent(UpdateAvailableDialog).vm.$emit("confirm");
+    await flushPromises();
+
+    expect(router.currentRoute.value.fullPath).toBe("/settings#app-update");
+    expect(useUpdateStore(pinia).updatePromptVersion).toBeNull();
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    wrapper.unmount();
   });
 
   it("普通参数路由变化时复用页面组件", async () => {

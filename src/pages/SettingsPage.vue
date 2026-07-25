@@ -288,7 +288,7 @@ async function copyRecentErrorLogs() {
         <AiSettings />
       </section>
 
-      <section class="section">
+      <section id="app-update" class="section">
         <div class="section-heading update-heading">
           <span class="section-icon update" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
