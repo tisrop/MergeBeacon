@@ -670,15 +670,29 @@ async function submitDrafts() {
       <div class="review-mode-select">
         <label for="ai-review-mode">范围:</label>
         <div class="review-mode-control">
-          <AppSelect id="ai-review-mode" v-model="reviewMode" size="sm" :options="reviewModes" />
+          <AppSelect
+            id="ai-review-mode"
+            v-model="reviewMode"
+            class="toolbar-select"
+            size="sm"
+            :options="reviewModes"
+          />
         </div>
       </div>
       <div v-if="!hasIncrementalBase" class="incremental-hint" role="status">
         增量评审：{{ incrementalDisabledReason }}
       </div>
       <div class="focus-select">
-        <label>聚焦:</label>
-        <AppSelect v-model="focus" :options="foci" />
+        <label for="ai-review-focus">聚焦:</label>
+        <div class="focus-control">
+          <AppSelect
+            id="ai-review-focus"
+            v-model="focus"
+            class="toolbar-select"
+            size="sm"
+            :options="foci"
+          />
+        </div>
       </div>
 
       <label class="stream-toggle" title="边生成边接收评审结果，不展示原始 JSON">
@@ -1016,15 +1030,31 @@ async function submitDrafts() {
   color: var(--color-text-tertiary);
 }
 
-.review-mode-select {
+.review-mode-select,
+.focus-select {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-1);
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .review-mode-control {
-  width: 124px;
+  width: 100px;
+}
+
+.focus-control {
+  width: 84px;
+}
+
+.toolbar-select {
+  width: 100%;
+}
+
+.toolbar-select :deep(.app-select) {
+  gap: var(--space-1);
+  padding-inline: 6px;
 }
 
 .incremental-hint {
@@ -1032,13 +1062,6 @@ async function submitDrafts() {
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.35;
-}
-
-.focus-select {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: 13px;
 }
 
 .stream-toggle {
