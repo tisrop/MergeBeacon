@@ -36,4 +36,16 @@ describe("MarkdownRenderer", () => {
     expect(wrapper.find("a[href='/docs/review']").exists()).toBe(true);
     expect(wrapper.find("img[src='./assets/diagram.png']").exists()).toBe(true);
   });
+
+  it("可按文档排版合并普通换行", () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: "这是一段为了源码可读性\n分成两行的说明。",
+        breaks: false,
+      },
+    });
+
+    expect(wrapper.get("p").text()).toBe("这是一段为了源码可读性\n分成两行的说明。");
+    expect(wrapper.find("br").exists()).toBe(false);
+  });
 });

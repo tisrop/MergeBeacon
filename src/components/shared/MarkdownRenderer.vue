@@ -4,6 +4,7 @@ import { marked } from "marked";
 
 const props = defineProps<{
   content: string;
+  breaks?: boolean;
 }>();
 
 const allowedTags = new Set([
@@ -114,7 +115,13 @@ function sanitizeHtml(rawHtml: string): string {
 }
 
 const html = computed(() =>
-  sanitizeHtml(marked.parse(props.content, { async: false, gfm: true, breaks: true }) as string),
+  sanitizeHtml(
+    marked.parse(props.content, {
+      async: false,
+      gfm: true,
+      breaks: props.breaks ?? true,
+    }) as string,
+  ),
 );
 </script>
 

@@ -2,7 +2,11 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assembleUpdaterMetadata, createUpdaterFragment } from "../updater-metadata.mjs";
+import {
+  assembleUpdaterMetadata,
+  createUpdaterFragment,
+  extractAppUpdateNotes,
+} from "../updater-metadata.mjs";
 
 const FIXTURE_VERSION = "0.3.5";
 const FIXTURE_RELEASE_DOWNLOAD_URL = `https://github.com/tisrop/MergeBeacon/releases/download/v${FIXTURE_VERSION}`;
@@ -32,6 +36,47 @@ function portableAsset(version = FIXTURE_VERSION, releaseName = `v${version}`) {
 }
 
 describe("updater 元数据汇总", () => {
+  it("从面向用户的 changelog 中只提取当前版本说明", () => {
+    const changelog = `# 更新日志
+
+这里是面向用户的总说明。
+
+## v0.4.0（2026-07-25）
+
+这一版更顺手。
+
+### 重点变化
+
+- 支持直接搜索代码。
+- 列表翻页更方便。
+
+## v0.3.0（2026-07-20）
+
+旧版本说明。
+`;
+
+    expect(extractAppUpdateNotes(changelog, "0.4.0")).toBe(`这一版更顺手。
+
+### 重点变化
+
+- 支持直接搜索代码。
+- 列表翻页更方便。`);
+    expect(extractAppUpdateNotes(changelog, "0.4.0")).not.toContain("旧版本说明");
+    expect(extractAppUpdateNotes(changelog, "0.4.0")).not.toContain("面向用户的总说明");
+  });
+
+  it("拒绝缺失、重复或为空的当前版本应用更新说明", () => {
+    expect(() => extractAppUpdateNotes("# 更新日志\n", "0.4.0")).toThrow(
+      "缺少 v0.4.0 的应用更新说明",
+    );
+    expect(() => extractAppUpdateNotes("## v0.4.0\n第一份\n\n## v0.4.0\n第二份", "0.4.0")).toThrow(
+      "存在多个 v0.4.0 章节",
+    );
+    expect(() => extractAppUpdateNotes("## v0.4.0\n\n## v0.3.0\n旧说明", "0.4.0")).toThrow(
+      "v0.4.0 的应用更新说明为空",
+    );
+  });
+
   it("从 macOS Tauri 产物生成架构隔离的分片", async () => {
     const directory = await mkdtemp(join(tmpdir(), "mergebeacon-updater-"));
     const signature = await signatureFile(
@@ -218,6 +263,9 @@ describe("updater 元数据汇总", () => {
     expect(workflow).toContain("name: updater-fragment-${{ matrix.updater-platform }}");
     expect(workflow).toContain("assemble-updater-metadata:");
     expect(workflow).toContain("needs: [prepare-release, build]");
+    expect(workflow).toContain("--changelog docs/changelogs/latest.md");
+    expect(workflow).not.toContain("jq -r '.body // \"\"'");
+    expect(workflow).not.toContain("release-notes.txt");
     expect(workflow).toContain("--asset-download-url-prefix");
     expect(workflow).toContain(
       "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/",

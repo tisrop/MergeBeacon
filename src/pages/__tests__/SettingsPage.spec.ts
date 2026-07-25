@@ -247,12 +247,14 @@ describe("SettingsPage 诊断信息", () => {
     expect(wrapper.text()).toContain("当前已是最新版本");
   });
 
-  it("将远端版本说明按不可信文本渲染", async () => {
+  it("将应用更新说明渲染为经过清理的 Markdown", async () => {
     vi.mocked(checkForUpdates).mockResolvedValue({
       current_version: "0.3.0",
       available: true,
       version: "0.4.0",
-      notes: "<script>危险说明</script>",
+      notes:
+        "这一版更顺手。\n\n### 重点变化\n\n- 支持直接搜索代码。\n\n" +
+        "<script>危险说明</script>\n\n[危险链接](javascript:alert(1))",
       published_at: "2026-07-13",
       update_mode: "installer",
     });
@@ -262,8 +264,10 @@ describe("SettingsPage 诊断信息", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("发现新版本 v0.4.0");
-    expect(wrapper.get(".update-notes").text()).toBe("<script>危险说明</script>");
+    expect(wrapper.get(".update-notes h3").text()).toBe("重点变化");
+    expect(wrapper.get(".update-notes li").text()).toBe("支持直接搜索代码。");
     expect(wrapper.find(".update-notes script").exists()).toBe(false);
+    expect(wrapper.find(".update-notes a[href^='javascript:']").exists()).toBe(false);
   });
 
   it("检查更新失败后恢复按钮并允许重试", async () => {

@@ -13,6 +13,7 @@ import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import AiSettings from "@/components/ai/AiSettings.vue";
 import NotificationSettings from "@/components/notification/NotificationSettings.vue";
+import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
 import type { Platform } from "@/types";
 
 const auth = useAuthStore();
@@ -338,7 +339,12 @@ async function copyRecentErrorLogs() {
           </p>
           <p v-else-if="!isUpdateInstalled">下载完成后将安装更新，并由你确认何时重启应用。</p>
           <p v-else>更新已安装，重启应用后生效。</p>
-          <pre v-if="updateResult.notes" class="update-notes">{{ updateResult.notes }}</pre>
+          <MarkdownRenderer
+            v-if="updateResult.notes"
+            class="update-notes"
+            :content="updateResult.notes"
+            :breaks="false"
+          />
           <div v-if="isInstallingUpdate" class="update-progress" aria-live="polite">
             <progress
               v-if="updateProgressPercent !== null"
