@@ -206,6 +206,19 @@ function updateQuery(side: DiffSide, event: Event): void {
   appearance: none;
 }
 
+.code-search-input:hover:not(:disabled),
+.code-search-input:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  box-shadow: inset 0 1px 2px rgba(20, 43, 73, 0.03);
+}
+
+.diff-search-field:focus-within > svg {
+  color: var(--color-primary);
+}
+
 .code-search-clear {
   position: absolute;
   top: 50%;
@@ -259,7 +272,12 @@ function updateQuery(side: DiffSide, event: Event): void {
   letter-spacing: 0;
 }
 
-.code-search-option:hover,
+.code-search-option:hover {
+  border-color: transparent;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
 .code-search-option[aria-pressed="true"] {
   border-color: var(--color-border);
   background: var(--color-primary-light);
@@ -283,7 +301,7 @@ function updateQuery(side: DiffSide, event: Event): void {
 }
 
 .code-search-action:hover:not(:disabled) {
-  border-color: var(--color-border);
+  border-color: transparent;
   background: var(--color-surface-hover);
   color: var(--color-primary);
 }
