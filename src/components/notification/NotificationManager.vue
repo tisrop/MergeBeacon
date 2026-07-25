@@ -161,8 +161,4 @@ onUnmounted(() => {
 
 <template><span class="notification-manager" aria-hidden="true" /></template>
 
-<style scoped>
-.notification-manager {
-  display: none;
-}
-</style>
+<style scoped src="./NotificationManager.css"></style>

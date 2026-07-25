@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const projectRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const sourceRoot = resolve(projectRoot, "src");
 const sourceExtensions = new Set([".css", ".ts", ".vue"]);
-const styleExtensions = new Set([".css", ".vue"]);
+const styleExtensions = new Set([".css"]);
 const findings = [];
 
 const normalizedPath = (path) => relative(projectRoot, path).replaceAll("\\", "/");
@@ -51,6 +51,54 @@ function checkTauriBoundary(file, source) {
     /(?:from\s+["']@tauri-apps\/api\/core["']|\binvoke\s*\()/g,
     "tauri-ipc-boundary",
     "Tauri invoke 只能出现在 src/api/index.ts 中。",
+  );
+}
+
+function checkVueStyleIsolation(file, source) {
+  const path = normalizedPath(file);
+  const expectedStyleSource = `./${path
+    .split("/")
+    .at(-1)
+    .replace(/\.vue$/, ".css")}`;
+  const styleBlockPattern = /<style\b([^>]*)>([\s\S]*?)<\/style>/gi;
+
+  for (const match of source.matchAll(styleBlockPattern)) {
+    const attributes = match[1];
+    const contents = match[2];
+    const sourceMatch = attributes.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+    const hasScoped = /\bscoped\b/i.test(attributes);
+    const isExternalScopedStyle =
+      sourceMatch?.[1] === expectedStyleSource && hasScoped && contents.trim().length === 0;
+
+    if (!isExternalScopedStyle) {
+      report(
+        file,
+        source,
+        match.index,
+        "external-sfc-styles",
+        `Vue 样式必须使用 <style scoped src="${expectedStyleSource}"></style>；禁止在 SFC 内编写 CSS。`,
+      );
+    }
+  }
+
+  checkPattern(
+    file,
+    source,
+    /(?:\bstyle\s*=|:style\s*=|v-bind:style\s*=)/gi,
+    "no-inline-styles",
+    "Vue 模板禁止 style、:style 和 v-bind:style；请使用外部 CSS 类。",
+  );
+}
+
+function checkDirectStyleMutation(file, source) {
+  if (normalizedPath(file).includes("/__tests__/")) return;
+
+  checkPattern(
+    file,
+    source,
+    /\.style\.(?:setProperty|removeProperty)\s*\(|\.style\.[A-Za-z_$][\w$]*\s*=(?!=)|\.style\s*\[\s*["'][^"']+["']\s*\]\s*=/g,
+    "no-direct-style-mutation",
+    "禁止直接写入 element.style；请使用外部 CSS 语义类或受控的 TypeScript 动态 CSS 类。",
   );
 }
 
@@ -102,6 +150,13 @@ function checkBannedUiImports(file, source) {
 }
 
 function checkStyles(file, source) {
+  checkPattern(
+    file,
+    source,
+    /\bv-bind\s*\(/g,
+    "no-css-v-bind",
+    "CSS 禁止使用 v-bind()；请使用语义类或受控的 TypeScript 动态 CSS 类。",
+  );
   checkPattern(
     file,
     source,
@@ -157,8 +212,10 @@ for (const file of files) {
   const source = await readFile(file, "utf8");
   checkTauriBoundary(file, source);
   checkBannedUiImports(file, source);
+  checkDirectStyleMutation(file, source);
 
   if (extname(file) === ".vue") {
+    checkVueStyleIsolation(file, source);
     checkVueHtml(file, source);
   }
   if (styleExtensions.has(extname(file))) {

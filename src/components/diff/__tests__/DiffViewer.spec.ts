@@ -2230,12 +2230,8 @@ describe("DiffViewer 文件树", () => {
     await topScrollbar.trigger("scroll");
     expect(sideScrollers[0].element.scrollLeft).toBe(120);
     expect(sideScrollers[1].element.scrollLeft).toBe(120);
-    expect(sideScrollers[0].element.style.getPropertyValue("--diff-line-number-offset")).toBe(
-      "120px",
-    );
-    expect(sideScrollers[1].element.style.getPropertyValue("--diff-line-number-offset")).toBe(
-      "120px",
-    );
+    expect(sideScrollers[0].attributes("style")).toBeUndefined();
+    expect(sideScrollers[1].attributes("style")).toBeUndefined();
 
     sideScrollers[0].element.scrollLeft = 48;
     await sideScrollers[0].trigger("scroll");
@@ -2258,12 +2254,8 @@ describe("DiffViewer 文件树", () => {
 
     expect(sideScrollers[0].element.scrollLeft).toBe(64);
     expect(sideScrollers[1].element.scrollLeft).toBe(0);
-    expect(sideScrollers[0].element.style.getPropertyValue("--diff-line-number-offset")).toBe(
-      "64px",
-    );
-    expect(sideScrollers[1].element.style.getPropertyValue("--diff-line-number-offset")).toBe(
-      "0px",
-    );
+    expect(sideScrollers[0].attributes("style")).toBeUndefined();
+    expect(sideScrollers[1].attributes("style")).toBeUndefined();
 
     sideScrollers[1].element.scrollLeft = 32;
     await sideScrollers[1].trigger("scroll");

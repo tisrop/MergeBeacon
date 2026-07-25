@@ -1,0 +1,46 @@
+.status-summary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.status-chip {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 999px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.overall-status {
+  font-weight: 700;
+}
+
+.status-ready {
+  border-color: var(--color-success-border);
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.status-blocked {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.status-pending,
+.status-draft {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+
+.status-unknown {
+  color: var(--color-text-tertiary);
+}

@@ -1,0 +1,197 @@
+.inbox-card {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color var(--transition-base),
+    box-shadow var(--transition-base),
+    transform var(--transition-base);
+}
+
+.inbox-card.unread {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-light);
+}
+
+.inbox-card:hover {
+  border-color: var(--color-primary-border);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.card-open:active {
+  background: var(--color-surface-hover);
+}
+
+.card-open {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pr-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-success-border);
+  border-radius: var(--radius-md);
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.pr-icon svg,
+.chevron {
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.card-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card-context,
+.card-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.unread-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+
+.repository-name {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-title {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta {
+  flex-wrap: wrap;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.pr-number {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+}
+
+.platform-badge,
+.relationship-badge,
+.activity-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.platform-github {
+  background: #f6f8fa;
+  color: #1f2328;
+}
+
+.platform-gitlab {
+  border-color: #e7c5b8;
+  background: #fff4ef;
+  color: #9f2f13;
+}
+
+.platform-gitee {
+  border-color: #f2c2c2;
+  background: #fff3f3;
+  color: #c71d23;
+}
+
+.relationship-badge {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.activity-badge {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.activity-badge.status-change {
+  border-color: var(--color-warning-border);
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+
+.read-toggle {
+  flex: 0 0 auto;
+  margin-right: var(--space-4);
+  padding: 3px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.read-toggle:hover {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary);
+}
+
+.chevron {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  transition:
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.inbox-card:hover .chevron {
+  color: var(--color-primary);
+  transform: translateX(2px);
+}
+
+@media (max-width: 760px) {
+  .card-meta > span:not(.pr-number):not(.relationship-badge):not(.activity-badge) {
+    display: none;
+  }
+}
