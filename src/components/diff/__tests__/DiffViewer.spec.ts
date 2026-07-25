@@ -874,6 +874,140 @@ describe("DiffViewer 受控标准 patch", () => {
     expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
   });
 
+  it("首次自动预览失败后点击当前图片会重新加载", async () => {
+    const imageDiff: DiffResult = {
+      diff: "",
+      files: [
+        {
+          filename: "assets/screenshot.png",
+          status: "modified",
+          patch: "",
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: "assets/screenshot.png",
+          old_path: "assets/screenshot.png",
+          new_path: "assets/screenshot.png",
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          content_kind: "binary",
+          patch: "",
+          message: "二进制文件不提供文本 Diff",
+          hunks: [],
+        },
+      ],
+    };
+    prFileContentMock
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockImplementation(
+        async (
+          _platform: Platform,
+          _owner: string,
+          _repo: string,
+          path: string,
+          revision: string,
+        ) => ({
+          ...fileContent(path, revision, ""),
+          content_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+          binary: true,
+        }),
+      );
+    const wrapper = await mountViewer(imageDiff, contextProps);
+
+    expect(wrapper.findAll(".image-preview-error")).toHaveLength(2);
+    expect(wrapper.find(".image-preview-image").exists()).toBe(false);
+
+    await wrapper.get('.tree-row[data-file-path="assets/screenshot.png"]').trigger("click");
+    await flushPromises();
+
+    expect(prFileContentMock).toHaveBeenCalledTimes(4);
+    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
+  });
+
+  it("切换图片时重建节点并忽略上一张图片迟到的解码错误", async () => {
+    const imageDiff: DiffResult = {
+      diff: "",
+      files: [
+        {
+          filename: "assets/first.png",
+          status: "added",
+          patch: "",
+          additions: 0,
+          deletions: 0,
+        },
+        {
+          filename: "assets/second.png",
+          status: "added",
+          patch: "",
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: "assets/first.png",
+          old_path: null,
+          new_path: "assets/first.png",
+          status: "added",
+          additions: 0,
+          deletions: 0,
+          content_kind: "binary",
+          patch: "",
+          message: "二进制文件不提供文本 Diff",
+          hunks: [],
+        },
+        {
+          filename: "assets/second.png",
+          old_path: null,
+          new_path: "assets/second.png",
+          status: "added",
+          additions: 0,
+          deletions: 0,
+          content_kind: "binary",
+          patch: "",
+          message: "二进制文件不提供文本 Diff",
+          hunks: [],
+        },
+      ],
+    };
+    prFileContentMock.mockImplementation(
+      async (
+        _platform: Platform,
+        _owner: string,
+        _repo: string,
+        path: string,
+        revision: string,
+      ) => ({
+        ...fileContent(path, revision, ""),
+        content_base64: path.includes("first") ? "Zmlyc3Q=" : "c2Vjb25k",
+        binary: true,
+      }),
+    );
+    const wrapper = await mountViewer(imageDiff, contextProps);
+    const firstImage = wrapper.get(".image-preview-image");
+    const firstElement = firstImage.element;
+
+    await wrapper.get('.tree-row[data-file-path="assets/second.png"]').trigger("click");
+    await flushPromises();
+
+    const secondImage = wrapper.get(".image-preview-image");
+    expect(secondImage.element).not.toBe(firstElement);
+    expect(secondImage.attributes("src")).toContain("c2Vjb25k");
+
+    await firstImage.trigger("error");
+    await flushPromises();
+
+    expect(wrapper.get(".image-preview-image").attributes("src")).toContain("c2Vjb25k");
+    expect(wrapper.find(".image-preview-error").exists()).toBe(false);
+  });
+
   it("图片请求未完成时切走再切回同一文件会启动新请求并展示预览", async () => {
     const mixedDiff: DiffResult = {
       ...standardizedDiff,

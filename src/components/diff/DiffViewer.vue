@@ -322,7 +322,6 @@ const imageViewMode = ref<"source" | "preview">("preview");
 const imagePreviewPanels = ref<ImagePreviewPanel[]>([]);
 const imagePreviewLoading = ref(false);
 let imagePreviewRequestSequence = 0;
-let imagePreviewLoadingRequest: { identity: string; sequence: number } | null = null;
 
 function imageMimeType(path: string): string | null {
   const extension = path.toLowerCase().split(".").at(-1) ?? "";
@@ -447,56 +446,55 @@ async function loadImagePreview(): Promise<void> {
   const targets = imagePreviewTargets.value;
   const identity = imagePreviewIdentity.value;
   if (!canPreviewImage.value || !props.platform) return;
-  if (imagePreviewLoadingRequest?.identity === identity) return;
   const platform = props.platform;
 
   const requestSequence = ++imagePreviewRequestSequence;
-  imagePreviewLoadingRequest = { identity, sequence: requestSequence };
   imagePreviewLoading.value = true;
   imagePreviewPanels.value = targets.map((target) => ({ ...target, src: null, error: null }));
 
-  try {
-    const panels = await Promise.all(
-      targets.map(async (target): Promise<ImagePreviewPanel> => {
-        try {
-          const file = await prFileContent(
-            platform,
-            target.owner,
-            target.repo,
-            target.path,
-            target.revision,
-          );
-          if (file.truncated) {
-            return { ...target, src: null, error: "图片文件过大，无法渲染预览" };
-          }
-          const src = createImagePreviewSource(file, target.mimeType);
-          return src
-            ? { ...target, src, error: null }
-            : { ...target, src: null, error: "文件内容不是有效或受支持的图片" };
-        } catch (error) {
-          return { ...target, src: null, error: getErrorMessage(error, "图片预览加载失败") };
+  const panels = await Promise.all(
+    targets.map(async (target): Promise<ImagePreviewPanel> => {
+      try {
+        const file = await prFileContent(
+          platform,
+          target.owner,
+          target.repo,
+          target.path,
+          target.revision,
+        );
+        if (file.truncated) {
+          return { ...target, src: null, error: "图片文件过大，无法渲染预览" };
         }
-      }),
-    );
+        const src = createImagePreviewSource(file, target.mimeType);
+        return src
+          ? { ...target, src, error: null }
+          : { ...target, src: null, error: "文件内容不是有效或受支持的图片" };
+      } catch (error) {
+        return { ...target, src: null, error: getErrorMessage(error, "图片预览加载失败") };
+      }
+    }),
+  );
 
-    if (requestSequence !== imagePreviewRequestSequence || identity !== imagePreviewIdentity.value)
-      return;
-    imagePreviewPanels.value = panels;
-    imagePreviewLoading.value = false;
-  } finally {
-    if (imagePreviewLoadingRequest?.sequence === requestSequence) {
-      imagePreviewLoadingRequest = null;
-    }
-  }
+  if (requestSequence !== imagePreviewRequestSequence || identity !== imagePreviewIdentity.value)
+    return;
+  imagePreviewPanels.value = panels;
+  imagePreviewLoading.value = false;
 }
 
 function setImageViewMode(mode: "source" | "preview"): void {
   imageViewMode.value = mode;
 }
 
-function handleImagePreviewError(side: ImagePreviewTarget["side"]): void {
-  imagePreviewPanels.value = imagePreviewPanels.value.map((panel) =>
-    panel.side === side ? { ...panel, src: null, error: "图片解码失败" } : panel,
+function imagePreviewPanelKey(panel: ImagePreviewTarget): string {
+  return [panel.side, panel.owner, panel.repo, panel.path, panel.revision].join("\0");
+}
+
+function handleImagePreviewError(failedPanel: ImagePreviewPanel): void {
+  imagePreviewPanels.value = imagePreviewPanels.value.map((currentPanel) =>
+    imagePreviewPanelKey(currentPanel) === imagePreviewPanelKey(failedPanel) &&
+    currentPanel.src === failedPanel.src
+      ? { ...currentPanel, src: null, error: "图片解码失败" }
+      : currentPanel,
   );
 }
 
@@ -1057,13 +1055,12 @@ function resizeNavigatorWithKeyboard(event: KeyboardEvent): void {
 }
 
 async function selectFile(path: string) {
-  if (selectedFilePath.value === path) return;
+  if (selectedFilePath.value === path) {
+    if (isShowingImagePreview.value && !imagePreviewLoading.value) void loadImagePreview();
+    return;
+  }
   selectedFilePath.value = path;
   await nextTick();
-  // The desktop WebView can commit the file selection before the image-preview watcher runs.
-  // Start the first preview from the selection path as a fallback; the loading guard prevents
-  // this from duplicating the watcher request.
-  if (isShowingImagePreview.value && !imagePreviewLoading.value) void loadImagePreview();
   if (diffScrollRef.value) diffScrollRef.value.scrollTop = 0;
   setSideDiffScrollLeft(0);
   if (topScrollbarRef.value) topScrollbarRef.value.scrollLeft = 0;
@@ -1358,7 +1355,6 @@ watch(
   [imagePreviewIdentity, isShowingImagePreview],
   async ([identity, showingPreview]) => {
     imagePreviewRequestSequence += 1;
-    imagePreviewLoadingRequest = null;
     imagePreviewPanels.value = [];
     imagePreviewLoading.value = false;
     if (!showingPreview) return;
@@ -2048,7 +2044,7 @@ onUnmounted(() => {
                 </div>
                 <section
                   v-for="panel in imagePreviewPanels"
-                  :key="panel.side"
+                  :key="imagePreviewPanelKey(panel)"
                   class="image-preview-panel"
                   :aria-label="`${panel.label}图片预览`"
                 >
@@ -2069,7 +2065,7 @@ onUnmounted(() => {
                       class="image-preview-image"
                       :src="panel.src"
                       :alt="`${panel.label}图片预览：${panel.path}`"
-                      @error="handleImagePreviewError(panel.side)"
+                      @error="handleImagePreviewError(panel)"
                     />
                   </div>
                 </section>
