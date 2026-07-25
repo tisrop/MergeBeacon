@@ -155,9 +155,11 @@ async function copyRecentErrorLogs() {
 <template>
   <AppLayout>
     <template #header>
-      <div class="settings-header">
-        <h2>设置</h2>
-        <p>管理代码平台显示方式与 AI 评审服务</p>
+      <div class="settings-header page-heading">
+        <div>
+          <h2>设置</h2>
+          <p>管理代码平台显示方式与 AI 评审服务</p>
+        </div>
       </div>
     </template>
 

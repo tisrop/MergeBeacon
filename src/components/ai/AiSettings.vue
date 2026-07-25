@@ -236,7 +236,7 @@ async function handleTest() {
           />
           <div v-if="showModelDropdown && models.length > 0" class="model-dropdown">
             <div v-if="modelSearch" class="model-search-hint">
-              搜索 "{{ modelSearch }}" — {{ filteredModels.length }} 个结果
+              搜索“{{ modelSearch }}”，{{ filteredModels.length }} 个结果
             </div>
             <div
               v-for="m in filteredModels"

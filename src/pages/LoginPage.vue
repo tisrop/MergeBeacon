@@ -77,13 +77,12 @@ async function handleLogin() {
         <div class="intro-mark" aria-hidden="true">
           <BrandMark />
         </div>
-        <p class="intro-kicker">REVIEW SIGNALS</p>
         <p class="intro-title">发现关键信号，放心完成每一次合并</p>
         <p>在一个工作台中管理多平台仓库、代码差异、评审意见与 AI 建议。</p>
         <ul>
-          <li><span>01</span> GitHub、GitLab 与 Gitee 统一工作流</li>
-          <li><span>02</span> 聚焦上下文的代码评审体验</li>
-          <li><span>03</span> Token 安全保存，敏感信息不出本机</li>
+          <li>GitHub、GitLab 与 Gitee 统一工作流</li>
+          <li>聚焦上下文的代码评审体验</li>
+          <li>Token 安全保存，敏感信息不出本机</li>
         </ul>
       </section>
 
@@ -104,6 +103,7 @@ async function handleLogin() {
         <div v-if="needsCustomUrl" class="form-group">
           <label for="server-url">服务器地址（可选）</label>
           <input
+            id="server-url"
             v-model="gitlabUrl"
             class="input"
             type="text"
@@ -122,6 +122,7 @@ async function handleLogin() {
         <div class="form-group">
           <label for="access-token">Personal Access Token</label>
           <input
+            id="access-token"
             v-model="token"
             class="input"
             type="password"

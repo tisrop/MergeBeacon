@@ -221,6 +221,14 @@ describe("PrNewPage", () => {
     );
   });
 
+  it("使用语义标题组织创建流程而不显示装饰编号", async () => {
+    const { wrapper } = await mountPage();
+
+    const headings = wrapper.findAll(".section-heading h3").map((heading) => heading.text());
+    expect(headings).toEqual(["选择变更来源", "变更预览", "说明变更内容", "参与者与分类"]);
+    expect(wrapper.findAll(".section-heading > span")).toHaveLength(0);
+  });
+
   it("创建同仓库 PR 后跳转现有详情页", async () => {
     const { wrapper, router } = await mountPage();
     await wrapper.get("input[placeholder='简要说明这次变更']").setValue("Add feature");

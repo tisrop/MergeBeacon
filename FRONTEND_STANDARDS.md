@@ -67,8 +67,8 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 | 用途 | Token | 约束 |
 | --- | --- | --- |
 | 页面背景 | `--color-bg`、`--color-bg-accent` | 用于应用背景和弱分区 |
-| 表面 | `--color-surface`、`--color-surface-raised` | 卡片、面板和浮层 |
-| 边框 | `--color-border`、`--color-border-light` | 普通和弱分隔 |
+| 表面 | `--color-surface`、`--color-surface-raised`、`--color-surface-subtle` | 卡片、面板、弱分区和浮层 |
+| 边框 | `--color-border`、`--color-border-light`、`--color-border-strong` | 普通、弱分隔和强调边界 |
 | 正文 | `--color-text` | 标题和主要内容 |
 | 次要文字 | `--color-text-secondary`、`--color-text-tertiary` | 辅助信息和弱提示 |
 | 主操作 | `--color-primary*` | 导航、链接、主要按钮和选中状态 |
@@ -88,6 +88,8 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 ### 3.3 字体与排版
 
 - 正文使用 `--font-sans`；代码、Diff、提交哈希、行号和技术标识使用 `--font-mono`。
+- `--font-sans` 必须使用操作系统与本地 CJK 字体栈，不得为桌面应用从远程站点加载 Web Font；
+  这样可保证离线启动、跨平台回退和首屏稳定性。
 - 基础字号为 `14px`，基础行高为 `1.5`。正文不得小于 `12px`，主要交互文字通常不得小于
   `13px`。
 - 标题层级必须通过字号、字重和间距共同表达。一个页面只应有一个视觉主标题。
@@ -101,8 +103,8 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 - 同组元素使用较小间距，组与组之间使用较大间距；禁止为对齐问题连续添加任意像素补丁。
 - 使用 `--radius-sm/md/lg/xl`。表单和按钮通常使用 `md`，卡片通常使用 `lg`，品牌或大型容器
   才使用 `xl`。
-- 使用 `--shadow-sm/md/lg/xl` 表达层级。常规卡片保持轻阴影，浮层应明显高于页面内容；禁止用
-  重阴影代替边框或信息分组。
+- 使用 `--shadow-sm/md/lg/xl` 表达层级。常规卡片和列表行默认只依赖边框与表面差异，不使用阴影；
+  菜单、命令面板等浮层可使用阴影并应明显高于页面内容。禁止用重阴影代替边框或信息分组。
 
 ### 3.5 动效
 
@@ -115,7 +117,8 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 
 - 应用采用桌面优先布局，默认窗口为 `1280 × 800`，最小支持窗口为 `900 × 600`；新页面必须在
   这两种尺寸下可用。
-- 全局布局使用 `--sidebar-width: 264px` 和 `--header-height: 64px`。修改这两个值属于设计系统
+- 全局布局使用 `--sidebar-width: 272px` 和 `--header-height: 72px`；`900px` 以下侧栏收窄为
+  `232px`。修改这些值属于设计系统
   变更，必须检查侧边栏、页头、滚动容器和窄窗口行为。
 - 页面内容区应沿用布局容器提供的内边距和滚动边界。禁止页面自行创建不必要的全窗口滚动层。
 - 在 `900px` 临界宽度附近必须检查导航、页头和主体内容；窄布局可以压缩间距或重排，但不得

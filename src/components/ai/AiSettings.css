@@ -44,7 +44,7 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
   z-index: 10;
   margin-top: var(--space-1);
 }
@@ -97,7 +97,7 @@
 }
 
 .model-item :deep(mark) {
-  background: #fff3b0;
+  background: var(--color-warning-light);
   color: inherit;
   padding: 0 2px;
   border-radius: 2px;
@@ -135,12 +135,12 @@
 
 .test-result.success {
   background: var(--color-success-light);
-  color: #065f46;
+  color: var(--color-success);
 }
 
 .test-result.fail {
   background: var(--color-danger-light);
-  color: #991b1b;
+  color: var(--color-danger);
 }
 
 .save-msg {
