@@ -634,7 +634,7 @@ onUnmounted(() => {
 <template>
   <AppLayout compact-sidebar>
     <template #header>
-      <div class="pr-new-header">
+      <div class="pr-new-header page-heading">
         <div>
           <h2>{{ createLabel }}</h2>
           <p v-if="targetRepository">目标仓库：{{ targetRepository.fullName }}</p>
@@ -647,7 +647,6 @@ onUnmounted(() => {
     <form class="pr-create-form" @submit.prevent="handleSubmit">
       <section class="form-section">
         <div class="section-heading">
-          <span>01</span>
           <div>
             <h3>选择变更来源</h3>
             <p>源仓库可以选择当前仓库或已加载的 Fork。</p>
@@ -734,7 +733,6 @@ onUnmounted(() => {
         class="form-section preview-section"
       >
         <div class="section-heading preview-heading">
-          <span>02</span>
           <div>
             <h3>变更预览</h3>
             <p>
@@ -838,7 +836,6 @@ onUnmounted(() => {
 
       <section class="form-section">
         <div class="section-heading">
-          <span>03</span>
           <div>
             <h3>说明变更内容</h3>
             <p>创建后仍可在详情页继续修改标题、描述和 Draft 状态。</p>
@@ -895,7 +892,6 @@ onUnmounted(() => {
 
       <section class="form-section">
         <div class="section-heading">
-          <span>04</span>
           <div>
             <h3>参与者与分类</h3>
             <p>参与者和标签候选均从目标仓库加载。</p>

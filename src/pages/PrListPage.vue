@@ -134,7 +134,7 @@ function onSelectPr(prNumber: number) {
 <template>
   <AppLayout>
     <template #header>
-      <div class="header-row">
+      <div class="header-row page-heading">
         <div>
           <h2>Pull Requests</h2>
           <p v-if="repo.activeFullName" class="repo-name">{{ repo.activeFullName }}</p>
@@ -211,7 +211,7 @@ function onSelectPr(prNumber: number) {
       <p class="error-msg">{{ pr.error }}</p>
     </div>
 
-    <div v-else-if="!repo.activeRepo" class="empty-state">
+    <div v-else-if="!repo.activeRepo" class="empty-state state-panel">
       <svg
         width="32"
         height="32"
@@ -227,7 +227,7 @@ function onSelectPr(prNumber: number) {
       <p>请先在左侧选择一个仓库</p>
     </div>
 
-    <div v-else-if="pr.list.length === 0" class="empty-state">
+    <div v-else-if="pr.list.length === 0" class="empty-state state-panel">
       <svg
         width="32"
         height="32"

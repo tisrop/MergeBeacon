@@ -77,4 +77,21 @@ describe("LoginPage", () => {
     expect(useAuthStore().activePlatform).toBe("gitee");
     expect(replace).toHaveBeenCalledWith("/pr");
   });
+
+  it("为服务器地址和 Token 输入框提供可点击的标签关联", () => {
+    routeQuery.platform = "gitlab";
+    const wrapper = mount(LoginPage, {
+      global: {
+        stubs: {
+          AppSelect: true,
+          RouterLink: true,
+        },
+      },
+    });
+
+    expect(wrapper.get('label[for="server-url"]').text()).toContain("服务器地址");
+    expect(wrapper.get("#server-url").attributes("type")).toBe("text");
+    expect(wrapper.get('label[for="access-token"]').text()).toContain("Personal Access Token");
+    expect(wrapper.get("#access-token").attributes("type")).toBe("password");
+  });
 });

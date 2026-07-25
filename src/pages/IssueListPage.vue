@@ -47,7 +47,7 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
 <template>
   <AppLayout>
     <template #header>
-      <div class="issue-header">
+      <div class="issue-header page-heading">
         <div>
           <h2>Issues</h2>
           <p v-if="repo.activeFullName">{{ repo.activeFullName }}</p>
@@ -94,7 +94,7 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
       <div class="skeleton skeleton-card" v-for="i in 4" :key="i" />
     </div>
 
-    <div v-else-if="!repo.activeRepo" class="empty-state">
+    <div v-else-if="!repo.activeRepo" class="empty-state state-panel">
       <svg
         width="32"
         height="32"
@@ -110,7 +110,7 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
       <p>请先在左侧选择一个仓库</p>
     </div>
 
-    <div v-else-if="issues.length === 0" class="empty-state">
+    <div v-else-if="issues.length === 0" class="empty-state state-panel">
       <svg
         width="32"
         height="32"

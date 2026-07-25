@@ -163,7 +163,7 @@ onUnmounted(() => {
 <template>
   <AppLayout>
     <template #header>
-      <div class="header-row">
+      <div class="header-row page-heading">
         <div>
           <h2>PR 收件箱</h2>
           <p class="subtitle">汇总需要你评审、负责或测试的 PR/MR</p>
@@ -282,7 +282,7 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <div v-if="availablePlatforms.length === 0" class="empty-state">
+    <div v-if="availablePlatforms.length === 0" class="empty-state state-panel">
       <svg
         width="32"
         height="32"

@@ -48,7 +48,7 @@ async function handleSubmit() {
 <template>
   <AppLayout>
     <template #header>
-      <div class="issue-new-header">
+      <div class="issue-new-header page-heading">
         <h2>新建 Issue</h2>
         <p v-if="repo.activeFullName">将在 {{ repo.activeFullName }} 中创建</p>
         <p v-else>请先选择目标仓库</p>

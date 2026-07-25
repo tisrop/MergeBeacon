@@ -1,11 +1,3 @@
-.issue-new-header h2 {
-  font-size: 20px;
-  letter-spacing: -0.02em;
-}
-
 .issue-new-header p {
-  margin-top: 2px;
-  color: var(--color-text-secondary);
   font-family: var(--font-mono);
-  font-size: 11px;
 }
