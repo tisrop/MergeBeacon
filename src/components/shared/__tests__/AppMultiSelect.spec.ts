@@ -15,9 +15,9 @@ describe("AppMultiSelect", () => {
     });
 
     await wrapper.get('[role="combobox"]').trigger("click");
-    expect(wrapper.get(".multi-select-swatch").attributes("style")).toContain(
-      "background-color: rgb(215, 58, 74)",
-    );
+    const swatch = wrapper.get(".multi-select-swatch");
+    expect(swatch.attributes("style")).toBeUndefined();
+    expect(swatch.classes().some((name) => name.startsWith("mb-static-label-color-"))).toBe(true);
     expect(wrapper.text()).toContain("需要修复的问题");
     await wrapper.get('input[placeholder="搜索标签"]').setValue("front");
     await wrapper.get(".multi-select-option[data-value='frontend']").trigger("click");

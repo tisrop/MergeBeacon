@@ -78,8 +78,7 @@ function removeLabel(label: string) {
         </div>
         <input
           id="issue-labels"
-          class="input"
-          style="border: none; padding: 4px 6px"
+          class="input label-entry-input"
           placeholder="输入标签后回车"
           @keyup.enter="
             addLabel(($event.target as HTMLInputElement).value);
@@ -104,87 +103,4 @@ function removeLabel(label: string) {
   </div>
 </template>
 
-<style scoped>
-.issue-form {
-  max-width: 720px;
-  padding: var(--space-6);
-}
-
-.field {
-  margin-bottom: var(--space-4);
-}
-
-label {
-  display: block;
-  font-weight: 600;
-  margin-bottom: var(--space-1);
-  font-size: 13px;
-}
-
-.required {
-  margin-left: var(--space-1);
-  color: var(--color-danger);
-  font-size: 10px;
-  font-weight: 500;
-}
-
-.labels-input {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: var(--space-1);
-  transition: border-color var(--transition-fast);
-}
-
-.labels-input:focus-within {
-  border-color: var(--color-focus);
-  box-shadow: var(--shadow-control-focus);
-}
-
-.labels-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  margin-bottom: var(--space-1);
-}
-
-.label-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 8px;
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-  border-radius: 999px;
-  font-size: 12px;
-}
-
-.label-chip button {
-  border: none;
-  background: none;
-  color: var(--color-primary);
-  cursor: pointer;
-  width: 22px;
-  height: 22px;
-  justify-content: center;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-}
-
-.error {
-  padding: var(--space-2);
-  background: var(--color-danger-light);
-  color: var(--color-danger);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--space-4);
-  font-size: 13px;
-  border: 1px solid var(--color-danger-border);
-}
-
-.form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-}
-</style>
+<style scoped src="./IssueForm.css"></style>

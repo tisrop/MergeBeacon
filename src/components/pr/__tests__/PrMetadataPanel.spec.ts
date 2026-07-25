@@ -153,9 +153,9 @@ describe("PrMetadataPanel", () => {
     const bugOption = wrapper.get(
       '[data-testid="metadata-labels"] .multi-select-option[data-value="bug"]',
     );
-    expect(bugOption.find(".multi-select-swatch").attributes("style")).toContain(
-      "background-color: rgb(215, 58, 74)",
-    );
+    const swatch = bugOption.find(".multi-select-swatch");
+    expect(swatch.attributes("style")).toBeUndefined();
+    expect(swatch.classes().some((name) => name.startsWith("mb-static-label-color-"))).toBe(true);
     expect(bugOption.text()).toContain("需要修复的问题");
   });
 

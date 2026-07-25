@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useRepoStore } from "@/stores/useRepoStore";
@@ -15,6 +15,16 @@ const auth = useAuthStore();
 const repo = useRepoStore();
 const pr = usePrStore();
 const createLabel = computed(() => (auth.activePlatform === "gitlab" ? "创建 MR" : "创建 PR"));
+const pageInput = ref("1");
+const pageJumpTarget = computed(() => Number(pageInput.value));
+const canJumpToPage = computed(
+  () =>
+    Number.isInteger(pageJumpTarget.value) &&
+    pageJumpTarget.value >= 1 &&
+    pageJumpTarget.value <= pr.totalPages &&
+    pageJumpTarget.value !== pr.filters.page &&
+    !pr.loading,
+);
 const truncatedListNotice = computed(() => {
   if (!pr.listTruncated) return "";
   if (auth.activePlatform === "github") {
@@ -35,8 +45,34 @@ async function fetchPrs() {
   await pr.fetchPrList(platform, owner, repoName);
 }
 
+async function fetchPrPage() {
+  if (!auth.isLoggedIn || !repo.activeRepo) return;
+  const { owner, repo: repoName } = repo.activeRepo;
+  await pr.fetchPrList(auth.activePlatform, owner, repoName);
+}
+
 function switchToFork() {
   repo.switchForkView(auth.activePlatform);
+}
+
+function jumpToPage() {
+  if (!canJumpToPage.value) return;
+  pr.setPage(pageJumpTarget.value);
+}
+
+function goToPreviousPage() {
+  if (pr.filters.page <= 1 || pr.loading) return;
+  pr.prevPage();
+}
+
+function goToNextPage() {
+  if (pr.filters.page >= pr.totalPages || pr.loading) return;
+  pr.nextPage();
+}
+
+function changePageSize(value: string) {
+  pageInput.value = "1";
+  pr.setPerPage(Number(value));
 }
 
 onMounted(() => {
@@ -60,13 +96,21 @@ watch(
   },
 );
 watch(
-  () => pr.filters,
-  () => fetchPrs(),
-  { deep: true },
+  () => [pr.filters.state, pr.filters.page, pr.perPage] as const,
+  ([state], [previousState]) => {
+    if (state !== previousState) {
+      fetchPrs();
+      return;
+    }
+    fetchPrPage();
+  },
 );
 watch(
-  () => pr.perPage,
-  () => fetchPrs(),
+  () => pr.filters.page,
+  (page) => {
+    pageInput.value = String(page);
+  },
+  { immediate: true },
 );
 watch(
   () => route.query._t,
@@ -97,7 +141,6 @@ function onSelectPr(prNumber: number) {
           <p v-else class="repo-name">选择仓库后查看合并请求</p>
         </div>
         <div class="header-actions">
-          <span v-if="pr.list.length" class="result-count">{{ pr.list.length }} 条结果</span>
           <RouterLink
             v-if="auth.isLoggedIn"
             class="btn btn-sm btn-primary"
@@ -220,7 +263,11 @@ function onSelectPr(prNumber: number) {
     </div>
 
     <div v-if="pr.list.length > 0 && pr.totalPages > 1" class="pagination">
-      <button class="btn btn-sm" :disabled="pr.filters.page <= 1" @click="pr.prevPage()">
+      <button
+        class="btn btn-sm"
+        :disabled="pr.filters.page <= 1 || pr.loading"
+        @click="goToPreviousPage"
+      >
         <svg
           width="14"
           height="14"
@@ -238,8 +285,8 @@ function onSelectPr(prNumber: number) {
       <span class="page-info">{{ pr.filters.page }} / {{ pr.totalPages }}</span>
       <button
         class="btn btn-sm"
-        :disabled="pr.filters.page >= pr.totalPages"
-        @click="pr.nextPage()"
+        :disabled="pr.filters.page >= pr.totalPages || pr.loading"
+        @click="goToNextPage"
       >
         下一页
         <svg
@@ -259,168 +306,25 @@ function onSelectPr(prNumber: number) {
         size="sm"
         :modelValue="String(pr.perPage)"
         :options="pr.pageSizes.map((s: number) => ({ value: String(s), label: s + ' 条/页' }))"
-        @update:modelValue="(v: string) => pr.setPerPage(Number(v))"
+        @update:modelValue="changePageSize"
       />
+      <div class="page-jump">
+        <input
+          v-model="pageInput"
+          class="input page-jump-input"
+          type="text"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          autocomplete="off"
+          aria-label="跳转页码"
+          @keydown.enter.prevent="jumpToPage"
+        />
+        <button class="btn btn-sm" type="button" :disabled="!canJumpToPage" @click="jumpToPage">
+          跳转
+        </button>
+      </div>
     </div>
   </AppLayout>
 </template>
 
-<style scoped>
-.header-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.header-row h2 {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.repo-name {
-  margin-top: 2px;
-  font-size: 13px;
-  color: var(--color-text-secondary);
-  font-family: var(--font-mono);
-}
-
-.result-count {
-  margin-top: 4px;
-  padding: 3px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  color: var(--color-text-secondary);
-  background: var(--color-bg);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.fork-banner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  margin-top: var(--space-1);
-  background: var(--color-primary-light);
-  border: 1px solid var(--color-primary-border);
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  color: var(--color-primary);
-}
-
-.fork-switch {
-  padding: 2px 8px;
-  border: 1px solid var(--color-primary-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-primary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.fork-switch:hover {
-  background: var(--color-primary-light);
-}
-
-.loading-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.skeleton-card {
-  height: 84px;
-  border-radius: var(--radius-lg);
-}
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 280px;
-  padding: var(--space-8);
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-lg);
-  background: rgba(255, 255, 255, 0.72);
-  gap: var(--space-3);
-  color: var(--color-text-tertiary);
-}
-
-.empty-state p {
-  font-size: 14px;
-}
-
-.empty-state svg {
-  opacity: 0.4;
-}
-
-.empty-repo {
-  margin-top: var(--space-1);
-  font-size: 11px;
-}
-
-.error-box {
-  margin: var(--space-3) 0;
-  padding: var(--space-3) var(--space-4);
-  background: var(--color-danger-light);
-  border: 1px solid var(--color-danger-border);
-  border-radius: var(--radius-lg);
-}
-
-.error-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-weight: 600;
-  color: var(--color-danger);
-  margin: 0 0 var(--space-1) 0;
-  font-size: 14px;
-}
-
-.error-msg {
-  color: var(--color-danger);
-  margin: 0;
-  font-size: 12px;
-  word-break: break-all;
-  opacity: 0.8;
-}
-
-.pr-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.search-limit-notice {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-warning-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-warning-light);
-  color: var(--color-warning);
-  font-size: 12px;
-}
-
-.pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-  padding: var(--space-5) 0;
-}
-
-.page-info {
-  font-size: 13px;
-  color: var(--color-text-secondary);
-}
-</style>
+<style scoped src="./PrListPage.css"></style>

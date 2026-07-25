@@ -38,6 +38,17 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 - 远端数据、平台能力、异步生命周期和安全规则必须遵循 `CODE_STANDARDS.md`，视觉优化不得改变
   这些语义或以占位数据掩盖缺失能力。
 - 未经讨论禁止引入 UI 框架、Tailwind、CSS-in-JS、图标字体或第二套状态管理方案。
+- **视图、逻辑、样式必须分层**：`.vue` 仅承载模板、组件装配及必要的 Props/Emits/ref 绑定；
+  可复用计算、事件编排、请求、订阅、状态转换和 DOM 协调应优先放入同目录 `use*.ts`、
+  `src/composables/`、`src/services/`、`src/stores/` 或 `src/utils/`。页面和复杂组件不得继续把可独立
+  测试的业务逻辑堆积在 SFC 中。
+- **Vue SFC 不得内嵌 CSS**：组件样式必须抽到与视图同名的外部 `.css` 文件；SFC 只能通过
+  `<style scoped src="./ComponentName.css"></style>` 声明关联，`<style>` 标签内不得出现任何 CSS。
+  全局 Token、reset 和跨页面基础类仍只允许放在 `src/style.css`。
+- **禁止行内样式**：禁止静态 `style="..."`、`:style`、`v-bind:style` 以及 CSS `v-bind()`。
+  静态视觉差异使用语义类名；平台标签颜色等可信动态值必须由 TypeScript 生成受控 CSS 类；仅在
+  Diff 尺寸、浮层位置等无法用语义类表达的测量结果场景，才可复用 `useDynamicCssClass.ts` 在专用
+  动态样式表中维护类规则，禁止在模板或组件中写入 `element.style`。
 
 ## 3. 设计 Token
 
@@ -231,8 +242,31 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 
 ## 11. CSS 实现规则
 
-- 组件样式默认使用 `<style scoped>`；只有 Token、reset、共享基础类和跨页面工具类放入
-  `src/style.css`。
+### 11.1 文件边界
+
+- 每个带局部样式的视图采用同名三件套：`ComponentName.vue`（视图）、`ComponentName.css`（样式）和
+  可选的 `useComponentName.ts`（逻辑）。`.vue` 内只允许保留
+  `<style scoped src="./ComponentName.css"></style>` 这个外部样式声明，禁止在其中书写 CSS。
+- `src/style.css` 仅承载 Token、reset、全局排版、共享基础类和明确的跨页面工具类；不得把某个页面或
+  领域组件的专属规则放回全局文件。
+- `.vue` 模板禁止 `style="..."`、`:style`、`v-bind:style`；`.css` 同样禁止 `v-bind()`。动态视觉
+  状态优先映射为语义类名或 `data-*` 状态。测量值必须通过受控的 TypeScript 动态 CSS 类工具管理，
+  不得直接调用 `element.style`。
+- 样式文件必须与视图同目录、同名，且局部样式必须保留 `scoped`。没有样式的纯视图不需要空 CSS 文件。
+
+### 11.2 逻辑边界
+
+- 视图文件中的 `<script setup lang="ts">` 只负责声明 Props/Emits、组合已有状态和把事件交给逻辑函数。
+  可单独命名、单独测试或跨组件复用的逻辑必须移入 `.ts` 文件。
+- 复杂页面应优先拆为 `useXxx.ts` composable：返回视图所需状态和处理函数；远端请求仍只能通过 store 或
+  `src/api/index.ts` 的既有边界进入。
+- 不得为规避抽离而把业务逻辑写进模板表达式、内联事件语句或样式绑定。模板表达式只能做显示格式化和
+  简单布尔分支；复杂格式化、列表转换和状态计算移到 TypeScript。
+- 新增或重构逻辑时，应为抽出的 `.ts` 文件补充可隔离的单元测试；无法抽离的生命周期黏合代码需保持短小，
+  并说明其与 DOM 或 Vue 生命周期的直接依赖。
+
+### 11.3 CSS 质量
+
 - 选择器保持扁平，优先使用单一类名；禁止依赖脆弱的深层 DOM 结构或过高特异性。
 - 禁止使用 `!important`，全局 reduced-motion 覆盖等明确的无障碍兜底除外。
 - 禁止 `transition: all`；禁止以大量任意 `z-index` 竞争层级。新增全局层级前应定义清晰用途。

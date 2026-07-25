@@ -1,0 +1,224 @@
+.notification-settings,
+.event-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.setting-row,
+.test-notification-row,
+.choice-row,
+.privacy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.test-notification-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.test-notification-button {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.test-notification-button:hover:not(:disabled) {
+  border-color: var(--color-border);
+  background: var(--color-surface-hover);
+}
+
+.test-notification-button:focus-visible {
+  box-shadow: var(--shadow-control-focus);
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.test-notification-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.test-notification-status {
+  margin: calc(var(--space-2) * -1) 0 0;
+  color: var(--color-success);
+  font-size: 12px;
+}
+
+.test-notification-status.error {
+  color: var(--color-danger);
+}
+
+.primary-row {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.setting-label,
+.choice-row strong,
+.privacy-row strong {
+  display: block;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.setting-hint,
+.choice-row small,
+.privacy-row small {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+fieldset {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+}
+
+legend {
+  padding: 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.setting-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.choice-row {
+  align-items: flex-start;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.platform-copy {
+  min-width: 0;
+}
+
+.platform-copy small {
+  overflow-wrap: anywhere;
+}
+
+.platform-copy small.degraded {
+  color: var(--color-warning);
+}
+
+.choice-row:hover,
+.privacy-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.event-row {
+  align-items: flex-start;
+}
+
+.event-row > span {
+  min-width: 0;
+}
+
+.privacy-row {
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.choice-row input,
+.privacy-row input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--color-primary);
+}
+
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.toggle input {
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  border: 1px solid var(--color-border);
+  border-radius: 22px;
+  background: var(--color-text-tertiary);
+  box-shadow: inset 0 0 0 1px rgba(23, 32, 51, 0.06);
+  cursor: pointer;
+  inset: 0;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.toggle-slider::before {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  box-shadow: 0 1px 2px rgba(23, 32, 51, 0.18);
+  content: "";
+  left: 2px;
+  top: 2px;
+  transition: transform var(--transition-fast);
+}
+
+.toggle input:checked + .toggle-slider {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  box-shadow: none;
+}
+
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+}
+
+.toggle input:focus-visible + .toggle-slider {
+  box-shadow: var(--shadow-control-focus);
+}
+
+.toggle input:disabled + .toggle-slider {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.permission-error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .setting-grid {
+    grid-template-columns: 1fr;
+  }
+}
