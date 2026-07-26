@@ -2042,6 +2042,54 @@ describe("DiffViewer 文件树", () => {
     expect(wrapper.get(".navigator-header").text()).toContain("-1");
   });
 
+  it("没有 Diff 内容时仍渲染 scope 插槽", async () => {
+    // 变更范围控件挂在这个插槽上。插槽必须位于 hasDiffContent 判断之外，
+    // 否则 compare 加载中、失败或结果为空时控件会跟着消失，
+    // 用户就没有入口切回整体 Diff。
+    const wrapper = mount(DiffViewer, {
+      props: { diff: null },
+      slots: { scope: '<div data-testid="scope-slot">变更范围</div>' },
+    });
+    await flushPromises();
+
+    expect(wrapper.find(".diff-empty").exists()).toBe(true);
+    expect(wrapper.get('[data-testid="scope-slot"]').text()).toBe("变更范围");
+  });
+
+  it("有 Diff 内容时 scope 插槽渲染在工作区之前", async () => {
+    const wrapper = mount(DiffViewer, {
+      props: { diff: standardizedDiff },
+      slots: { scope: '<div data-testid="scope-slot">变更范围</div>' },
+    });
+    await flushPromises();
+
+    const slot = wrapper.get('[data-testid="scope-slot"]');
+    // 插槽是 Diff 卡片的兄弟节点而不是其内部元素，才能在卡片消失时留存。
+    expect(slot.element.parentElement?.classList.contains("diff-viewer-wrapper")).toBe(true);
+    expect(
+      slot.element.compareDocumentPosition(wrapper.get(".diff-workspace").element) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("只读 Diff 不参与已查看进度，也不上报评审进度", async () => {
+    const wrapper = await mountViewer(standardizedDiff, {
+      platform: "github",
+      owner: "octocat",
+      repo: "hello-world",
+      prNumber: 42,
+      headSha: "range-head",
+      readOnly: true,
+    });
+
+    expect(wrapper.find(".viewed-toggle-button").exists()).toBe(false);
+    expect(wrapper.find(".review-progress-actions").exists()).toBe(false);
+    expect(wrapper.emitted("reviewProgress")).toBeUndefined();
+    expect(
+      storage.get("mergebeacon:review-progress:github:octocat:hello-world:42:range-head"),
+    ).toBe(undefined);
+  });
+
   it("按 PR 和 head SHA 保存本地文件已查看状态并显示进度", async () => {
     const wrapper = await mountViewer(standardizedDiff, {
       platform: "github",

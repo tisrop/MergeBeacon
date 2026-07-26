@@ -1,13 +1,31 @@
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { prDetail, prDiff, prList, prMerge, prMergeReadiness, prMetadataUpdate } from "@/api";
+import {
+  prCommits,
+  prCompareDiff,
+  prDetail,
+  prDiff,
+  prList,
+  prMerge,
+  prMergeReadiness,
+  prMetadataUpdate,
+} from "@/api";
 import { usePrStore } from "@/stores/usePrStore";
-import type { DiffResult, Paginated, PrDetail, PrSummary, PrMergeReadiness } from "@/types";
+import type {
+  DiffResult,
+  Paginated,
+  PrCommitSummary,
+  PrDetail,
+  PrSummary,
+  PrMergeReadiness,
+} from "@/types";
 
 vi.mock("@/api", () => ({
   prList: vi.fn(),
   prDetail: vi.fn(),
   prDiff: vi.fn(),
+  prCommits: vi.fn(),
+  prCompareDiff: vi.fn(),
   prMerge: vi.fn(),
   prMergeReadiness: vi.fn().mockResolvedValue(null),
   prMetadataUpdate: vi.fn(),
@@ -421,5 +439,143 @@ describe("usePrStore", () => {
 
     expect(store.currentPr?.summary.title).toBe("当前仓库 PR");
     expect(store.diff).toEqual(currentDiff);
+  });
+
+  describe("按 commit 维度查看", () => {
+    const commit = (sha: string, parents: string[] = []): PrCommitSummary => ({
+      sha,
+      title: `提交 ${sha}`,
+      author_name: "Alice",
+      authored_at: "2026-07-19T10:00:00Z",
+      parent_shas: parents,
+    });
+    const rangeDiff: DiffResult = {
+      diff: "range diff",
+      files: [],
+      patch_schema_version: 1,
+      patches: [],
+    };
+
+    async function storeWithCommits() {
+      vi.mocked(prCommits).mockResolvedValueOnce({
+        commits: [commit("c1", ["base0"]), commit("c2", ["c1"]), commit("c3", ["c2"])],
+        truncated_end: null,
+      });
+      const store = usePrStore();
+      await store.fetchPrCommits("github", "owner", "repo", 42);
+      return store;
+    }
+
+    it("按提交区间请求 compare Diff", async () => {
+      const store = await storeWithCommits();
+      vi.mocked(prCompareDiff).mockResolvedValueOnce(rangeDiff);
+
+      await store.selectCommitRange("github", "owner", "repo", { startIndex: 1, endIndex: 2 });
+
+      expect(prCompareDiff).toHaveBeenCalledWith("github", "owner", "repo", "c1", "c3");
+      expect(store.rangeDiff).toEqual(rangeDiff);
+      expect(store.rangeRevisions).toEqual({ baseSha: "c1", headSha: "c3" });
+      expect(store.rangeDiffError).toBeNull();
+    });
+
+    it("无法确定对比基准时不发请求并给出原因", async () => {
+      vi.mocked(prCommits).mockResolvedValueOnce({
+        commits: [commit("only")],
+        truncated_end: null,
+      });
+      const store = usePrStore();
+      await store.fetchPrCommits("github", "owner", "repo", 42);
+      vi.mocked(prCompareDiff).mockClear();
+
+      await store.selectCommitRange("github", "owner", "repo", { startIndex: 0, endIndex: 0 });
+
+      expect(prCompareDiff).not.toHaveBeenCalled();
+      expect(store.rangeDiff).toBeNull();
+      expect(store.rangeRevisions).toBeNull();
+      expect(store.rangeDiffError).toContain("无法确定");
+    });
+
+    it("重复选择同一区间不再重复请求", async () => {
+      const store = await storeWithCommits();
+      vi.mocked(prCompareDiff).mockResolvedValue(rangeDiff);
+      await store.selectCommitRange("github", "owner", "repo", { startIndex: 1, endIndex: 1 });
+      expect(prCompareDiff).toHaveBeenCalledTimes(1);
+
+      await store.selectCommitRange("github", "owner", "repo", { startIndex: 1, endIndex: 1 });
+
+      expect(prCompareDiff).toHaveBeenCalledTimes(1);
+      expect(store.rangeDiff).toEqual(rangeDiff);
+    });
+
+    it("区间 Diff 失败后重新选择同一区间可以重试", async () => {
+      const store = await storeWithCommits();
+      vi.mocked(prCompareDiff)
+        .mockRejectedValueOnce("compare 失败")
+        .mockResolvedValueOnce(rangeDiff);
+      await store.selectCommitRange("github", "owner", "repo", { startIndex: 1, endIndex: 1 });
+      expect(store.rangeDiffError).toBe("compare 失败");
+
+      await store.selectCommitRange("github", "owner", "repo", { startIndex: 1, endIndex: 1 });
+
+      expect(prCompareDiff).toHaveBeenCalledTimes(2);
+      expect(store.rangeDiff).toEqual(rangeDiff);
+      expect(store.rangeDiffError).toBeNull();
+    });
+
+    it("回到整体 Diff 时清空区间状态", async () => {
+      const store = await storeWithCommits();
+      vi.mocked(prCompareDiff).mockResolvedValueOnce(rangeDiff);
+      await store.selectCommitRange("github", "owner", "repo", { startIndex: 0, endIndex: 1 });
+
+      await store.selectCommitRange("github", "owner", "repo", null);
+
+      expect(store.commitRange).toBeNull();
+      expect(store.rangeDiff).toBeNull();
+      expect(store.rangeRevisions).toBeNull();
+    });
+
+    it("迟到的区间 Diff 响应不覆盖新选择", async () => {
+      const store = await storeWithCommits();
+      const stale = deferred<DiffResult>();
+      vi.mocked(prCompareDiff).mockReturnValueOnce(stale.promise).mockResolvedValueOnce(rangeDiff);
+
+      const pending = store.selectCommitRange("github", "owner", "repo", {
+        startIndex: 0,
+        endIndex: 0,
+      });
+      await store.selectCommitRange("github", "owner", "repo", { startIndex: 1, endIndex: 2 });
+      stale.resolve({ diff: "stale diff", files: [], patch_schema_version: 1, patches: [] });
+      await pending;
+
+      expect(store.rangeDiff).toEqual(rangeDiff);
+      expect(store.rangeRevisions).toEqual({ baseSha: "c1", headSha: "c3" });
+    });
+
+    it("提交列表变化后重置已选区间，避免下标错位", async () => {
+      const store = await storeWithCommits();
+      vi.mocked(prCompareDiff).mockResolvedValueOnce(rangeDiff);
+      await store.selectCommitRange("github", "owner", "repo", { startIndex: 0, endIndex: 1 });
+      vi.mocked(prCommits).mockResolvedValueOnce({
+        commits: [commit("c1", ["base0"]), commit("c9", ["c1"])],
+        truncated_end: "newest",
+      });
+
+      await store.fetchPrCommits("github", "owner", "repo", 42);
+
+      expect(store.commitsTruncatedEnd).toBe("newest");
+      expect(store.commitRange).toBeNull();
+      expect(store.rangeDiff).toBeNull();
+    });
+
+    it("提交列表请求失败时保留错误并回到整体 Diff", async () => {
+      const store = await storeWithCommits();
+      vi.mocked(prCommits).mockRejectedValueOnce("读取提交失败");
+
+      await store.fetchPrCommits("github", "owner", "repo", 42);
+
+      expect(store.commits).toEqual([]);
+      expect(store.commitsError).toBe("读取提交失败");
+      expect(store.commitRange).toBeNull();
+    });
   });
 });

@@ -389,6 +389,44 @@ async fn test_gitee_lists_pr_participant_suggestions() {
 }
 
 #[tokio::test]
+async fn test_gitee_lists_pr_commits_oldest_first_with_parents() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/commits"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "sha": "c1",
+                "parents": [{ "sha": "base0" }],
+                "commit": {
+                    "message": "第一个提交\n\n详情",
+                    "author": { "name": "Alice", "date": "2026-07-19T10:00:00Z" }
+                }
+            },
+            {
+                "sha": "c2",
+                "parents": [{ "sha": "c1" }],
+                "commit": {
+                    "message": "第二个提交",
+                    "author": { "name": "Bob", "date": "2026-07-19T11:00:00Z" }
+                }
+            }
+        ])))
+        .mount(&mock_server)
+        .await;
+    let adapter = GiteeAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let list = adapter.list_pr_commits("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(list.truncated_end.is_none());
+    assert_eq!(list.commits.iter().map(|c| c.sha.as_str()).collect::<Vec<_>>(), vec!["c1", "c2"]);
+    assert_eq!(list.commits[0].title, "第一个提交");
+    assert_eq!(list.commits[0].author_name, "Alice");
+    assert_eq!(list.commits[0].parent_shas, vec!["base0".to_string()]);
+    assert_eq!(list.commits[1].parent_shas, vec!["c1".to_string()]);
+}
+
+#[tokio::test]
 async fn test_gitee_previews_a_single_commit() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))

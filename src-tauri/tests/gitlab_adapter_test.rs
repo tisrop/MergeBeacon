@@ -1,9 +1,9 @@
 use mergebeacon_lib::error::AppError;
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
-    MergeQueueState, PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions,
-    PrMetadataUpdate, PrMilestone, PrState, PrSummary, ReadinessState, ReviewEvent, ReviewInboxCategory,
-    ReviewInboxRelationship, User,
+    MergeQueueState, PrCommitTruncatedEnd, PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField,
+    PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary, ReadinessState, ReviewEvent,
+    ReviewInboxCategory, ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{gitlab::GitLabAdapter, GitPlatform};
 use wiremock::matchers::{body_json, header, method, path, query_param};
@@ -577,6 +577,92 @@ async fn test_gitlab_lists_pr_participant_suggestions() {
 
     assert_eq!(users.iter().map(|user| user.login.as_str()).collect::<Vec<_>>(), vec!["alice", "bob"]);
     assert_eq!(users[0].name, "Alice Zhang");
+}
+
+#[tokio::test]
+async fn test_gitlab_lists_mr_commits_reversed_to_oldest_first() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/octocat%2Fhello-world/merge_requests/42/commits"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "id": "c2",
+                "title": "第二个提交",
+                "author_name": "Bob",
+                "authored_date": "2026-07-19T11:00:00Z",
+                "parent_ids": ["c1"]
+            },
+            {
+                "id": "c1",
+                "message": "第一个提交\n\n详情",
+                "author_name": "Alice",
+                "created_at": "2026-07-19T10:00:00Z",
+                "parent_ids": ["base0"]
+            }
+        ])))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let list = adapter.list_pr_commits("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(list.truncated_end.is_none());
+    // GitLab 按最新在前返回，adapter 必须翻转成「最早 → 最新」。
+    assert_eq!(list.commits.iter().map(|c| c.sha.as_str()).collect::<Vec<_>>(), vec!["c1", "c2"]);
+    assert_eq!(list.commits[0].title, "第一个提交");
+    assert_eq!(list.commits[0].authored_at, "2026-07-19T10:00:00Z");
+    assert_eq!(list.commits[0].parent_shas, vec!["base0".to_string()]);
+    assert_eq!(list.commits[1].parent_shas, vec!["c1".to_string()]);
+}
+
+#[tokio::test]
+async fn test_gitlab_marks_mr_commits_truncated_at_the_oldest_end() {
+    let mock_server = MockServer::start().await;
+    for page in 1..=3 {
+        let commits = (0..100)
+            .map(|index| {
+                serde_json::json!({
+                    "id": format!("page{page}-{index}"),
+                    "title": "提交",
+                    "author_name": "Alice",
+                    "authored_date": "2026-07-19T10:00:00Z",
+                    "parent_ids": []
+                })
+            })
+            .collect::<Vec<_>>();
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/octocat%2Fhello-world/merge_requests/42/commits"))
+            .and(query_param("page", page.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!(commits)))
+            .mount(&mock_server)
+            .await;
+    }
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let list = adapter.list_pr_commits("octocat", "hello-world", 42).await.unwrap();
+
+    assert_eq!(list.commits.len(), 300);
+    // GitLab 最新在前，超出上限丢掉的是最早的提交 —— 与 GitHub / Gitee 相反。
+    assert_eq!(list.truncated_end, Some(PrCommitTruncatedEnd::Oldest));
+    // 翻转后末项仍是最新的一页里最新的提交。
+    assert_eq!(list.commits.last().map(|commit| commit.sha.as_str()), Some("page1-0"));
+}
+
+#[tokio::test]
+async fn test_gitlab_encodes_nested_subgroup_when_listing_mr_commits() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Fsub%2Frepo/merge_requests/7/commits"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let list = adapter.list_pr_commits("group/sub", "repo", 7).await.unwrap();
+
+    assert!(list.commits.is_empty());
+    assert!(list.truncated_end.is_none());
 }
 
 #[tokio::test]

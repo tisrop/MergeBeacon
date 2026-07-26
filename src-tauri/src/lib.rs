@@ -191,6 +191,7 @@ pub fn run() {
             pr::pr_metadata_update,
             pr::pr_merge_readiness,
             pr::pr_diff,
+            pr::pr_commits,
             pr::pr_compare_diff,
             pr::pr_file_content,
             pr::pr_merge,

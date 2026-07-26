@@ -1,0 +1,220 @@
+/* 独立的范围控制条，位于 Diff 卡片之上；不与卡片拼接，避免跨组件维护边框接缝。 */
+.diff-commit-scope {
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+}
+
+.commit-scope-row {
+  position: relative;
+  display: flex;
+  min-height: 40px;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+}
+
+.commit-scope-caption {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.commit-scope-trigger {
+  display: inline-flex;
+  max-width: 460px;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text);
+  font-size: 13px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.commit-scope-trigger:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+}
+
+.commit-scope-trigger:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+.commit-scope-trigger:focus-visible,
+.commit-scope-option:focus-visible,
+.commit-scope-reset:focus-visible,
+.commit-scope-search:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.commit-scope-trigger-label {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.commit-scope-caret {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+.commit-scope-reset {
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-primary);
+  font-size: 12px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.commit-scope-reset:hover {
+  background: var(--color-primary-light);
+}
+
+.commit-scope-status,
+.commit-scope-flag {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.commit-scope-flag {
+  color: var(--color-warning);
+}
+
+.commit-scope-error {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 0 var(--space-3) var(--space-2);
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+/* ── 浮层 ── */
+
+.commit-scope-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% - var(--space-1));
+  left: var(--space-3);
+  width: min(560px, calc(100vw - var(--space-8)));
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.commit-scope-search {
+  width: calc(100% - var(--space-4));
+  margin: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text);
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.commit-scope-warning {
+  margin: 0 var(--space-2) var(--space-2);
+  padding: var(--space-2);
+  color: var(--color-warning);
+  font-size: 12px;
+  background: var(--color-warning-light);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-sm);
+}
+
+.commit-scope-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border-top: 1px solid var(--color-border-light);
+}
+
+/* 单行紧凑行：勾选 · 提交号 · 标题（可伸缩省略） · 作者与日期。 */
+.commit-scope-option {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 16px 72px minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 5px var(--space-3);
+  line-height: 1.4;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.commit-scope-option.all-option {
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.commit-scope-option:hover,
+.commit-scope-option.highlighted {
+  background: var(--color-control-highlight);
+}
+
+.commit-scope-option.selected {
+  background: var(--color-primary-light);
+  border-left-color: var(--color-primary);
+}
+
+.commit-scope-check {
+  color: var(--color-primary);
+  font-size: 12px;
+}
+
+.commit-scope-option > code {
+  overflow: hidden;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+}
+
+.commit-scope-title {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--color-text);
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.commit-scope-meta {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.commit-scope-empty,
+.commit-scope-hint {
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.commit-scope-hint {
+  border-top: 1px solid var(--color-border-light);
+}

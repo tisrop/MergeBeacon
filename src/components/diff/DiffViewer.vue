@@ -285,6 +285,8 @@ const selectedFile = computed(
   () => props.diff?.files.find((file) => file.filename === selectedFilePath.value) ?? null,
 );
 const reviewProgressContext = computed(() => {
+  // 只读 Diff（创建预览、按提交查看历史变更）不是评审对象，不参与“已查看”进度。
+  if (props.readOnly) return null;
   if (!props.platform || !props.owner || !props.repo || !props.prNumber || !props.headSha)
     return null;
   return {
@@ -1353,7 +1355,15 @@ watch(
   { immediate: true },
 );
 
-watch(unviewedFileCount, (count) => emit("reviewProgress", count), { immediate: true });
+watch(
+  [unviewedFileCount, () => props.readOnly],
+  ([count, readOnly]) => {
+    // 只读视图里的文件集合不代表整体评审范围，保留调用方基于整体 Diff 的计数。
+    if (readOnly) return;
+    emit("reviewProgress", count);
+  },
+  { immediate: true },
+);
 
 // 同一批文件再次加载（例如切换 PR 但文件名未变）时，也回到第一个文件。
 watch(
@@ -1733,6 +1743,11 @@ onUnmounted(() => {
 
 <template>
   <div class="diff-viewer-wrapper">
+    <!--
+      变更范围等作用于整个 Diff 的控件插槽。
+      放在 hasDiffContent 之外，调用方的控件在无 Diff、加载中和报错时同样可见可操作。
+    -->
+    <slot name="scope" />
     <section
       v-if="hasDiffContent"
       ref="workspaceRef"

@@ -301,6 +301,8 @@ pub(crate) fn create_compare_is_incomplete(json: &serde_json::Value, commit_coun
 pub(crate) const JSON_PAGE_SIZE: usize = 100;
 const MAX_JSON_PAGES: u32 = 1_000;
 const MAX_DEPENDENCY_QUERY_PAGES: u32 = 2;
+/// PR / MR 提交列表的分页上限；三个平台每页 100 条，300 条已覆盖正常评审规模。
+pub(crate) const MAX_PR_COMMIT_PAGES: u32 = 3;
 const MAX_DEPENDENCY_BRANCH_QUERIES: usize = 40;
 const MAX_DEPENDENCY_CANDIDATES: usize = 200;
 
@@ -607,6 +609,11 @@ pub trait GitPlatform: Send + Sync {
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError>;
 
     async fn get_pr_diff(&self, owner: &str, repo: &str, pr_number: u64) -> Result<(String, Vec<PrFile>), AppError>;
+
+    /// 列出 PR / MR 包含的提交，按“最早 → 最新”排序。
+    ///
+    /// 三个平台的原生顺序不一致，adapter 必须归一化到该顺序，前端才能按下标推导提交区间。
+    async fn list_pr_commits(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrCommitList, AppError>;
 
     async fn get_compare_diff(
         &self,

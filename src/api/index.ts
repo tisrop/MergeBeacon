@@ -19,6 +19,7 @@ import type {
   PrTemplate,
   PrDescriptionImageUpload,
   PrCreatePreview,
+  PrCommitList,
   PrCreatePreviewRequest,
   PrMetadataUpdate,
   PrMetadataUpdateOutcome,
@@ -340,6 +341,15 @@ export async function prDiff(
   number: number,
 ): Promise<DiffResult> {
   return invoke("pr_diff", { platform, owner, repo, number });
+}
+
+export async function prCommits(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<PrCommitList> {
+  return invoke("pr_commits", { platform, owner, repo, number });
 }
 
 export async function prCompareDiff(

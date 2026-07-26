@@ -7,6 +7,9 @@ use crate::error::AppError;
 use crate::http_client::HttpClient;
 use crate::models::*;
 
+/// GitHub 的 PR commits 接口最多返回 250 条，且不会用分页游标表达这个上限。
+const GITHUB_PR_COMMIT_LIMIT: usize = 250;
+
 pub struct GitHubAdapter {
     client: HttpClient,
     token: String,
@@ -385,6 +388,32 @@ impl GitHubAdapter {
             patch: Self::compare_file_patch(file),
             additions: file["additions"].as_u64().unwrap_or(0) as u32,
             deletions: file["deletions"].as_u64().unwrap_or(0) as u32,
+        }
+    }
+
+    fn commit_parent_shas(commit: &Value) -> Vec<String> {
+        commit["parents"]
+            .as_array()
+            .map(|parents| parents.iter().filter_map(|parent| parent["sha"].as_str()).map(String::from).collect())
+            .unwrap_or_default()
+    }
+
+    /// 把 GitHub commit 对象映射为统一提交摘要。
+    ///
+    /// 提交列表和单提交详情返回的是同一种结构，`fallback_sha` 只在响应缺少 `sha` 时兜底。
+    fn map_commit_summary(commit: &Value, fallback_sha: &str) -> PrCommitSummary {
+        let detail = &commit["commit"];
+        PrCommitSummary {
+            sha: commit["sha"].as_str().unwrap_or(fallback_sha).to_string(),
+            title: detail["message"].as_str().unwrap_or("").lines().next().unwrap_or("").to_string(),
+            author_name: detail["author"]["name"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .or_else(|| commit["author"]["login"].as_str())
+                .unwrap_or("")
+                .to_string(),
+            authored_at: detail["author"]["date"].as_str().unwrap_or("").to_string(),
+            parent_shas: Self::commit_parent_shas(commit),
         }
     }
 
@@ -1642,20 +1671,10 @@ impl GitPlatform for GitHubAdapter {
                 json["files"].as_array().ok_or_else(|| AppError::Api("GitHub 提交响应缺少 files 字段".into()))?;
             let files = files_json.iter().map(Self::map_compare_file).collect();
             let diff = files_json.iter().map(Self::compare_unified_diff).filter(|patch| !patch.is_empty()).collect();
-            let commit = &json["commit"];
-            let summary = PrCommitSummary {
-                sha: json["sha"].as_str().unwrap_or(commit_sha).to_string(),
-                title: commit["message"].as_str().unwrap_or("").lines().next().unwrap_or("").to_string(),
-                author_name: commit["author"]["name"].as_str().unwrap_or("").to_string(),
-                authored_at: commit["author"]["date"].as_str().unwrap_or("").to_string(),
-            };
+            let summary = Self::map_commit_summary(&json, commit_sha);
             return Ok(PrCreatePreviewData {
+                base_revision: summary.parent_shas.first().cloned(),
                 commits: vec![summary],
-                base_revision: json["parents"]
-                    .as_array()
-                    .and_then(|parents| parents.first())
-                    .and_then(|parent| parent["sha"].as_str())
-                    .map(String::from),
                 diff,
                 files,
                 incomplete: false,
@@ -1680,18 +1699,8 @@ impl GitPlatform for GitHubAdapter {
             .commits
             .iter()
             .filter_map(|commit| {
-                let sha = commit["sha"].as_str()?.to_string();
-                let message = commit["commit"]["message"].as_str().unwrap_or("");
-                Some(PrCommitSummary {
-                    sha,
-                    title: message.lines().next().unwrap_or("").to_string(),
-                    author_name: commit["commit"]["author"]["name"]
-                        .as_str()
-                        .or_else(|| commit["author"]["login"].as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    authored_at: commit["commit"]["author"]["date"].as_str().unwrap_or("").to_string(),
-                })
+                let sha = commit["sha"].as_str()?;
+                Some(Self::map_commit_summary(commit, sha))
             })
             .collect();
         Ok(PrCreatePreviewData {
@@ -2059,6 +2068,27 @@ impl GitPlatform for GitHubAdapter {
             .collect();
 
         Ok((diff, files))
+    }
+
+    async fn list_pr_commits(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrCommitList, AppError> {
+        let endpoint = format!("{}/repos/{}/{}/pulls/{}/commits", self.base_url, owner, repo, pr_number);
+        // GitHub 已按“最早 → 最新”返回，直接沿用。
+        let (items, page_limit_reached) =
+            super::collect_json_pages_limited(self, &endpoint, super::MAX_PR_COMMIT_PAGES).await?;
+        let commits: Vec<PrCommitSummary> = items
+            .iter()
+            .filter_map(|commit| {
+                let sha = commit["sha"].as_str()?;
+                Some(Self::map_commit_summary(commit, sha))
+            })
+            .collect();
+        // 顺序是最早在前，因此截断丢掉的是最新的提交。
+        //
+        // GitHub 对该接口硬性封顶 GITHUB_PR_COMMIT_LIMIT 条且不返回下一页，达到上限时无法区分
+        // “刚好这么多”和“已被平台截断”，一律按不完整处理，避免把缺少 head 的列表当作完整历史。
+        let truncated_end =
+            (page_limit_reached || commits.len() >= GITHUB_PR_COMMIT_LIMIT).then_some(PrCommitTruncatedEnd::Newest);
+        Ok(PrCommitList { commits, truncated_end })
     }
 
     async fn get_compare_diff(

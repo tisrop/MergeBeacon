@@ -15,6 +15,7 @@ import {
   readPrCreateWarnings,
 } from "@/utils/prCreateWarnings";
 import AppLayout from "@/components/layout/AppLayout.vue";
+import DiffCommitSelector from "@/components/diff/DiffCommitSelector.vue";
 import DiffViewer from "@/components/diff/DiffViewer.vue";
 import ReviewForm from "@/components/review/ReviewForm.vue";
 import ReviewList from "@/components/review/ReviewList.vue";
@@ -34,6 +35,7 @@ import type {
   PrMetadataUpdate,
   ReviewThreadSummary,
 } from "@/types";
+import type { CommitRangeSelection } from "@/utils/commitRange";
 
 const route = useRoute();
 const router = useRouter();
@@ -125,10 +127,37 @@ const diffLocationRequest = ref<DiffLocationRequest | null>(null);
 const diffLocationError = ref("");
 let diffLocationRequestId = 0;
 
+// 选中提交区间时展示区间 Diff；未选中（null）时仍是 PR / MR 的整体 Diff。
+const isCommitRangeView = computed(() => pr.commitRange !== null);
+const displayedDiff = computed(() => (isCommitRangeView.value ? pr.rangeDiff : pr.diff));
+// 区间两端都是源分支上的提交，Fork PR 必须在源仓库里比较，base 仓库不一定有这些提交。
+const commitRangeRepository = computed(() => headRepository.value ?? baseRepository.value);
+const displayedBaseRepository = computed(() =>
+  isCommitRangeView.value ? commitRangeRepository.value : baseRepository.value,
+);
+const displayedBaseSha = computed(() =>
+  isCommitRangeView.value ? (pr.rangeRevisions?.baseSha ?? "") : (pr.currentPr?.base_sha ?? ""),
+);
+const displayedHeadSha = computed(() =>
+  isCommitRangeView.value ? (pr.rangeRevisions?.headSha ?? "") : (pr.currentPr?.head_sha ?? ""),
+);
+
+function handleCommitRangeChange(selection: CommitRangeSelection | null): void {
+  diffLocationError.value = "";
+  const target = commitRangeRepository.value;
+  void pr.selectCommitRange(platform, target.owner, target.repo, selection);
+}
+
+function reloadPrCommits(): void {
+  void pr.fetchPrCommits(platform, owner, repo, number);
+}
+
 function handleAiSuggestionLocate(suggestion: AiSuggestion): void {
   const path = suggestion.file.trim();
   aiReviewScrollTop = contentScrollContainer()?.scrollTop ?? null;
   diffLocationError.value = "";
+  // AI 建议基于整体 Diff，定位前先回到整体视图，否则会落在没有该文件的区间里。
+  pr.resetCommitSelection();
   diffLocationRequest.value = {
     id: ++diffLocationRequestId,
     path,
@@ -146,6 +175,8 @@ function handleDiffLocationResult(result: DiffLocationResult): void {
 
 function handleReviewCommentLocate(path: string, line: number | null, side: DiffSide | null): void {
   diffLocationError.value = "";
+  // 评论定位在整体 Diff 上，区间视图里不一定包含该文件。
+  pr.resetCommitSelection();
   diffLocationRequest.value = {
     id: ++diffLocationRequestId,
     path,
@@ -387,6 +418,7 @@ function handleAppCommand(event: Event): void {
   if (!detail) return;
   if (detail.type === "open_diff_file") {
     diffLocationError.value = "";
+    pr.resetCommitSelection();
     diffLocationRequest.value = {
       id: ++diffLocationRequestId,
       path: detail.path,
@@ -429,6 +461,7 @@ onMounted(async () => {
   if (pr.currentPr?.summary.number === number) {
     await Promise.all([
       pr.fetchPrDiff(platform, owner, repo, number),
+      pr.fetchPrCommits(platform, owner, repo, number),
       pr.fetchMergeReadiness(platform, owner, repo, number),
     ]);
   }
@@ -726,26 +759,46 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             {{ diffLocationError }}
           </p>
           <DiffViewer
-            :diff="pr.diff"
+            :diff="displayedDiff"
             :platform="platform"
             :owner="owner"
             :repo="repo"
             :pr-number="number"
-            :base-sha="pr.currentPr?.base_sha ?? ''"
-            :head-sha="pr.currentPr?.head_sha ?? ''"
-            :base-owner="baseRepository.owner"
-            :base-repo="baseRepository.repo"
+            :base-sha="displayedBaseSha"
+            :head-sha="displayedHeadSha"
+            :base-owner="displayedBaseRepository.owner"
+            :base-repo="displayedBaseRepository.repo"
             :head-owner="headRepository?.owner"
             :head-repo="headRepository?.repo"
             :location-request="diffLocationRequest"
-            :thread-summary="reviewThreadSummary"
+            :thread-summary="isCommitRangeView ? null : reviewThreadSummary"
             :can-sync-viewed-files="
-              platformCapabilities?.supports_remote_file_viewed_state ?? false
+              !isCommitRangeView &&
+              (platformCapabilities?.supports_remote_file_viewed_state ?? false)
             "
+            :read-only="isCommitRangeView"
             @add-comment="handleAddComment"
             @location-result="handleDiffLocationResult"
             @review-progress="unviewedFileCount = $event"
-          />
+          >
+            <template #scope>
+              <DiffCommitSelector
+                :commits="pr.commits"
+                :truncated-end="pr.commitsTruncatedEnd"
+                :commits-loading="pr.commitsLoading"
+                :commits-error="pr.commitsError"
+                :selection="pr.commitRange"
+                :range-loading="pr.rangeDiffLoading"
+                :range-error="pr.rangeDiffError"
+                @update:selection="handleCommitRangeChange"
+                @retry="reloadPrCommits"
+              />
+              <p v-if="isCommitRangeView" class="commit-range-note" role="note">
+                当前只显示所选提交的变更。行内评论和「已查看」需要基于整体 Diff 的行号，
+                已在此视图下停用；返回「所有变更」后即可继续评审。
+              </p>
+            </template>
+          </DiffViewer>
           <p v-if="commentError" class="error-msg">{{ commentError }}</p>
           <p v-if="commentSuccess" class="success-msg">✓ 行内评论已提交</p>
           <ReviewForm

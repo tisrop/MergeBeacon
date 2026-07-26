@@ -1,8 +1,16 @@
 import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
-import type { DiffResult, PrDetail, PrMergeReadiness, User } from "@/types";
+import type {
+  DiffResult,
+  PrCommitSummary,
+  PrCommitTruncatedEnd,
+  PrDetail,
+  PrMergeReadiness,
+  User,
+} from "@/types";
 import { APP_COMMAND_EVENT } from "@/types/commands";
+import type { CommitRangeRevisions, CommitRangeSelection } from "@/utils/commitRange";
 import {
   persistPrCreateWarnings,
   PR_CREATE_WARNING_QUERY,
@@ -28,12 +36,24 @@ const mocks = vi.hoisted(() => ({
   prStore: {
     currentPr: null as PrDetail | null,
     diff: null as DiffResult | null,
+    commits: [] as PrCommitSummary[],
+    commitsTruncatedEnd: null as PrCommitTruncatedEnd | null,
+    commitsLoading: false,
+    commitsError: null as string | null,
+    commitRange: null as CommitRangeSelection | null,
+    rangeDiff: null as DiffResult | null,
+    rangeRevisions: null as CommitRangeRevisions | null,
+    rangeDiffLoading: false,
+    rangeDiffError: null as string | null,
     mergeReadiness: null as PrMergeReadiness | null,
     readinessLoading: false,
     readinessError: null as string | null,
     error: null as string | null,
     fetchPrDetail: vi.fn().mockResolvedValue(true),
     fetchPrDiff: vi.fn().mockResolvedValue(undefined),
+    fetchPrCommits: vi.fn().mockResolvedValue(undefined),
+    selectCommitRange: vi.fn().mockResolvedValue(undefined),
+    resetCommitSelection: vi.fn(),
     fetchMergeReadiness: vi.fn().mockResolvedValue(undefined),
     mergePr: vi.fn(),
     closePr: vi.fn().mockResolvedValue(undefined),
@@ -185,6 +205,16 @@ describe("PrDetailPage 关闭权限", () => {
     mocks.prStore.readinessError = null;
     mocks.prStore.error = null;
     mocks.prStore.diff = null;
+    mocks.prStore.commits = [];
+    mocks.prStore.commitsTruncatedEnd = null;
+    mocks.prStore.commitsLoading = false;
+    mocks.prStore.commitsError = null;
+    mocks.prStore.commitRange = null;
+    mocks.prStore.rangeDiff = null;
+    mocks.prStore.rangeRevisions = null;
+    mocks.prStore.rangeDiffLoading = false;
+    mocks.prStore.rangeDiffError = null;
+    mocks.capabilityStore.values.github.supports_remote_file_viewed_state = false;
     mocks.uiSettingsStore.isPrDependenciesVisible = true;
     mocks.uiSettingsStore.isMergeQueueVisible = true;
     mocks.reviewCommentAdd.mockResolvedValue(undefined);
@@ -226,7 +256,149 @@ describe("PrDetailPage 关闭权限", () => {
     await flushPromises();
 
     expect(mocks.prStore.fetchPrDiff).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.fetchPrCommits).toHaveBeenCalledWith("github", "owner", "repo", 42);
     expect(mocks.prStore.fetchMergeReadiness).toHaveBeenCalledWith("github", "owner", "repo", 42);
+  });
+
+  describe("按 commit 维度查看", () => {
+    const diffViewerStub = {
+      props: [
+        "diff",
+        "readOnly",
+        "canSyncViewedFiles",
+        "baseSha",
+        "headSha",
+        "baseOwner",
+        "baseRepo",
+      ],
+      // 变更范围控件通过 scope 插槽挂在 DiffViewer 顶部，stub 必须渲染它。
+      template: `<section
+        data-testid="diff-viewer"
+        :data-read-only="readOnly ? 'true' : 'false'"
+        :data-can-sync="canSyncViewedFiles ? 'true' : 'false'"
+        :data-base-sha="baseSha"
+        :data-head-sha="headSha"
+        :data-base-repo="baseOwner + '/' + baseRepo"
+      ><slot name="scope" />{{ diff?.diff }}</section>`,
+    };
+
+    it("整体视图使用 PR 的 base/head 且允许评审操作", async () => {
+      mocks.prStore.diff = { diff: "整体 diff", files: [], patch_schema_version: 1, patches: [] };
+      mocks.capabilityStore.values.github.supports_remote_file_viewed_state = true;
+
+      const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await flushPromises();
+
+      const viewer = wrapper.get('[data-testid="diff-viewer"]');
+      expect(viewer.text()).toContain("整体 diff");
+      expect(viewer.attributes("data-read-only")).toBe("false");
+      expect(viewer.attributes("data-can-sync")).toBe("true");
+      expect(viewer.attributes("data-base-sha")).toBe(detail.base_sha);
+      expect(viewer.attributes("data-head-sha")).toBe(detail.head_sha);
+      expect(wrapper.find(".commit-range-note").exists()).toBe(false);
+    });
+
+    it("选中提交区间时展示区间 Diff，并停用行内评论与已查看同步", async () => {
+      mocks.prStore.diff = { diff: "整体 diff", files: [], patch_schema_version: 1, patches: [] };
+      mocks.prStore.commitRange = { startIndex: 1, endIndex: 2 };
+      mocks.prStore.rangeDiff = {
+        diff: "区间 diff",
+        files: [],
+        patch_schema_version: 1,
+        patches: [],
+      };
+      mocks.prStore.rangeRevisions = { baseSha: "c1", headSha: "c3" };
+      mocks.capabilityStore.values.github.supports_remote_file_viewed_state = true;
+
+      const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await flushPromises();
+
+      const viewer = wrapper.get('[data-testid="diff-viewer"]');
+      expect(viewer.text()).toContain("区间 diff");
+      expect(viewer.attributes("data-read-only")).toBe("true");
+      expect(viewer.attributes("data-can-sync")).toBe("false");
+      expect(viewer.attributes("data-base-sha")).toBe("c1");
+      expect(viewer.attributes("data-head-sha")).toBe("c3");
+      expect(wrapper.get(".commit-range-note").text()).toContain("停用");
+    });
+
+    it("Fork PR 的区间对比在源仓库上执行", async () => {
+      mocks.prStore.currentPr = {
+        ...detail,
+        base_repository_full_name: "owner/repo",
+        head_repository_full_name: "contributor/repo",
+      };
+
+      const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await flushPromises();
+      wrapper
+        .findComponent({ name: "DiffCommitSelector" })
+        .vm.$emit("update:selection", { startIndex: 0, endIndex: 1 });
+      await flushPromises();
+
+      expect(mocks.prStore.selectCommitRange).toHaveBeenCalledWith(
+        "github",
+        "contributor",
+        "repo",
+        {
+          startIndex: 0,
+          endIndex: 1,
+        },
+      );
+    });
+
+    it("区间 Diff 读取失败时展示原因，且变更范围控件仍在", async () => {
+      mocks.prStore.commits = [
+        {
+          sha: "c1aaaaaa",
+          title: "修复空指针",
+          author_name: "Alice",
+          authored_at: "2026-07-19T10:00:00Z",
+          parent_shas: [],
+        },
+      ];
+      mocks.prStore.commitRange = { startIndex: 0, endIndex: 0 };
+      mocks.prStore.rangeDiffError = "无法确定所选提交的对比基准，请改用整体 Diff。";
+
+      const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await flushPromises();
+
+      expect(wrapper.text()).toContain("无法确定所选提交的对比基准");
+      // 控件挂在 DiffViewer 的 scope 插槽上，出错时不能跟着 Diff 一起消失，
+      // 否则用户没有入口切回整体 Diff。
+      expect(wrapper.findComponent({ name: "DiffCommitSelector" }).exists()).toBe(true);
+      expect(wrapper.get(".commit-scope-reset").text()).toContain("查看所有变更");
+    });
+
+    it("区间 Diff 加载中时变更范围控件仍可操作", async () => {
+      mocks.prStore.commitRange = { startIndex: 0, endIndex: 0 };
+      mocks.prStore.rangeDiffLoading = true;
+
+      const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await flushPromises();
+
+      expect(wrapper.get(".commit-scope-status").text()).toContain("正在读取");
+      expect(wrapper.get(".commit-scope-trigger").attributes("disabled")).toBeUndefined();
+    });
+
+    it("定位 AI 建议前先回到整体 Diff", async () => {
+      mocks.prStore.commitRange = { startIndex: 0, endIndex: 0 };
+      const wrapper = mountPage({
+        AiReviewPanel: {
+          emits: ["locateSuggestion"],
+          template: `<button data-testid="locate" @click="$emit('locateSuggestion', {
+            file: 'src/main.ts', line_start: 1, line_end: 1, severity: 'minor',
+            category: '逻辑', description: '建议', suggestion: null
+          })">定位</button>`,
+        },
+      });
+      await flushPromises();
+      const aiTab = wrapper.findAll(".tabs button").find((button) => button.text() === "AI 评审");
+      await aiTab?.trigger("click");
+      await wrapper.get('[data-testid="locate"]').trigger("click");
+
+      expect(mocks.prStore.resetCommitSelection).toHaveBeenCalled();
+    });
   });
 
   it("将 fork PR 的 base 和 head 仓库分别传给 DiffViewer", () => {

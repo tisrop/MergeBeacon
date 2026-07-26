@@ -559,6 +559,30 @@ impl GitLabAdapter {
         ReviewInboxStatusSummary { status, draft, has_conflicts, checks_status, approvals_status, blocking_reasons }
     }
 
+    /// 把 GitLab commit 对象映射为统一提交摘要。
+    ///
+    /// 提交列表、单提交详情和 compare 响应中的 commit 结构一致，`fallback_sha` 只在缺少 `id` 时兜底。
+    fn map_commit_summary(commit: &Value, fallback_sha: &str) -> PrCommitSummary {
+        PrCommitSummary {
+            sha: commit["id"].as_str().unwrap_or(fallback_sha).to_string(),
+            title: commit["title"]
+                .as_str()
+                .or_else(|| commit["message"].as_str().and_then(|message| message.lines().next()))
+                .unwrap_or("")
+                .to_string(),
+            author_name: commit["author_name"].as_str().unwrap_or("").to_string(),
+            authored_at: commit["authored_date"]
+                .as_str()
+                .or_else(|| commit["created_at"].as_str())
+                .unwrap_or("")
+                .to_string(),
+            parent_shas: commit["parent_ids"]
+                .as_array()
+                .map(|parents| parents.iter().filter_map(Value::as_str).map(String::from).collect())
+                .unwrap_or_default(),
+        }
+    }
+
     fn unified_diff(change: &Value) -> String {
         let patch = change["diff"].as_str().unwrap_or("");
         let old_path = change["old_path"].as_str().unwrap_or("");
@@ -1400,27 +1424,10 @@ impl GitPlatform for GitLabAdapter {
                 })
                 .collect::<Vec<_>>();
             let diff = changes.iter().map(Self::unified_diff).filter(|patch| !patch.is_empty()).collect();
-            let summary = PrCommitSummary {
-                sha: commit["id"].as_str().unwrap_or(commit_sha).to_string(),
-                title: commit["title"]
-                    .as_str()
-                    .or_else(|| commit["message"].as_str().and_then(|message| message.lines().next()))
-                    .unwrap_or("")
-                    .to_string(),
-                author_name: commit["author_name"].as_str().unwrap_or("").to_string(),
-                authored_at: commit["authored_date"]
-                    .as_str()
-                    .or_else(|| commit["created_at"].as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            };
+            let summary = Self::map_commit_summary(&commit, commit_sha);
             return Ok(PrCreatePreviewData {
+                base_revision: summary.parent_shas.first().cloned(),
                 commits: vec![summary],
-                base_revision: commit["parent_ids"]
-                    .as_array()
-                    .and_then(|parents| parents.first())
-                    .and_then(Value::as_str)
-                    .map(String::from),
                 diff,
                 files,
                 incomplete,
@@ -1482,20 +1489,8 @@ impl GitPlatform for GitLabAdapter {
                 items
                     .iter()
                     .filter_map(|commit| {
-                        Some(PrCommitSummary {
-                            sha: commit["id"].as_str()?.to_string(),
-                            title: commit["title"]
-                                .as_str()
-                                .or_else(|| commit["message"].as_str().and_then(|message| message.lines().next()))
-                                .unwrap_or("")
-                                .to_string(),
-                            author_name: commit["author_name"].as_str().unwrap_or("").to_string(),
-                            authored_at: commit["authored_date"]
-                                .as_str()
-                                .or_else(|| commit["created_at"].as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                        })
+                        let sha = commit["id"].as_str()?;
+                        Some(Self::map_commit_summary(commit, sha))
                     })
                     .collect()
             })
@@ -1872,6 +1867,25 @@ impl GitPlatform for GitLabAdapter {
             .unwrap_or_default();
 
         Ok((diff, changes))
+    }
+
+    async fn list_pr_commits(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrCommitList, AppError> {
+        let project_id = urlencoding(owner, repo);
+        let endpoint = format!("{}/projects/{}/merge_requests/{}/commits", self.base_url, project_id, pr_number);
+        let (items, page_limit_reached) =
+            super::collect_json_pages_limited(self, &endpoint, super::MAX_PR_COMMIT_PAGES).await?;
+        let mut commits: Vec<PrCommitSummary> = items
+            .iter()
+            .filter_map(|commit| {
+                let sha = commit["id"].as_str()?;
+                Some(Self::map_commit_summary(commit, sha))
+            })
+            .collect();
+        // GitLab 按“最新 → 最早”返回，统一翻转成 trait 约定的顺序；
+        // 翻转前丢掉的是尾部，因此截断缺失的是最早的提交。
+        commits.reverse();
+        let truncated_end = page_limit_reached.then_some(PrCommitTruncatedEnd::Oldest);
+        Ok(PrCommitList { commits, truncated_end })
     }
 
     async fn get_compare_diff(
