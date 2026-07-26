@@ -3,6 +3,7 @@ use crate::models::*;
 use crate::patch::{standardize_patches, PATCH_SCHEMA_VERSION};
 use crate::platform::capabilities_for;
 use crate::state::AppState;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use tauri::State;
 
@@ -68,6 +69,48 @@ fn validate_metadata_update(mut update: PrMetadataUpdate) -> Result<PrMetadataUp
         return Err("Milestone 名称不能超过 256 个字符".into());
     }
     Ok(update)
+}
+
+const MAX_PR_DESCRIPTION_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_PR_DESCRIPTION_IMAGE_BASE64_CHARS: usize = MAX_PR_DESCRIPTION_IMAGE_BYTES.div_ceil(3) * 4;
+
+fn validate_pr_description_image_upload(
+    file_name: &str,
+    content_type: &str,
+    content_base64: &str,
+) -> Result<(String, String, Vec<u8>), String> {
+    let file_name = file_name.trim();
+    if file_name.is_empty() {
+        return Err("图片文件名不能为空".into());
+    }
+    if file_name.chars().count() > 255 || file_name.contains(['/', '\\', '\0', '\n', '\r', '"']) {
+        return Err("图片文件名过长或包含非法字符".into());
+    }
+
+    let content_type = content_type.trim().to_ascii_lowercase();
+    if !matches!(content_type.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp") {
+        return Err("仅支持 PNG、JPEG、GIF 或 WebP 图片".into());
+    }
+    if content_base64.len() > MAX_PR_DESCRIPTION_IMAGE_BASE64_CHARS {
+        return Err("图片不能超过 5 MiB".into());
+    }
+    let content = STANDARD.decode(content_base64).map_err(|_| "图片数据无效".to_string())?;
+    if content.is_empty() || content.len() > MAX_PR_DESCRIPTION_IMAGE_BYTES {
+        return Err("图片不能为空且不能超过 5 MiB".into());
+    }
+
+    let signature_matches = match content_type.as_str() {
+        "image/png" => content.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]),
+        "image/jpeg" => content.starts_with(&[0xff, 0xd8, 0xff]),
+        "image/gif" => content.starts_with(b"GIF87a") || content.starts_with(b"GIF89a"),
+        "image/webp" => content.len() >= 12 && content.starts_with(b"RIFF") && &content[8..12] == b"WEBP",
+        _ => false,
+    };
+    if !signature_matches {
+        return Err("图片内容与声明的文件类型不一致".into());
+    }
+
+    Ok((file_name.to_string(), content_type, content))
 }
 
 fn validate_create_reference(value: &str, label: &str) -> Result<(), String> {
@@ -489,6 +532,33 @@ pub async fn pr_templates(
 }
 
 #[tauri::command]
+pub async fn pr_description_image_upload(
+    state: State<'_, AppState>,
+    platform: String,
+    owner: String,
+    repo: String,
+    file_name: String,
+    content_type: String,
+    content_base64: String,
+) -> CommandResult<PrDescriptionImageUpload> {
+    let owner = owner.trim().to_string();
+    let repo = repo.trim().to_string();
+    validate_create_reference(&owner, "目标仓库 owner")?;
+    validate_create_reference(&repo, "目标仓库名称")?;
+    let capabilities = capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
+    if !capabilities.supports_pr_description_image_upload {
+        return Err("当前平台不支持通过公开 API 上传 PR / MR 描述图片".into());
+    }
+    let (file_name, content_type, content) =
+        validate_pr_description_image_upload(&file_name, &content_type, &content_base64)?;
+    let adapter = build_platform(&platform, &state).map_err(CommandError::from)?;
+    adapter
+        .upload_pr_description_image(&owner, &repo, &file_name, &content_type, content)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub async fn pr_participant_suggestions(
     state: State<'_, AppState>,
     platform: String,
@@ -827,12 +897,14 @@ mod tests {
     use super::{
         build_pr_dependency_graph, ensure_metadata_field_available, metadata_changed_fields, validate_compare_request,
         validate_create_preview_request, validate_create_request, validate_metadata_update,
+        validate_pr_description_image_upload, MAX_PR_DESCRIPTION_IMAGE_BASE64_CHARS, STANDARD,
     };
     use crate::models::{
         PrCreatePreviewRequest, PrCreateRequest, PrDependencyCandidate, PrDetail, PrMetadataField,
         PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary, User, MAX_PR_TITLE_CHARS,
     };
     use crate::platform::capabilities_for;
+    use base64::Engine as _;
 
     fn detail() -> PrDetail {
         PrDetail {
@@ -1042,6 +1114,45 @@ mod tests {
         assert_eq!(graph.suggested_merge_order, vec![2]);
         assert!(graph.edges.is_empty());
         assert!(graph.blocking_parent_numbers.is_empty());
+    }
+
+    #[test]
+    fn pr_description_image_upload_accepts_valid_png() {
+        let encoded = STANDARD.encode([0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        let (file_name, content_type, content) =
+            validate_pr_description_image_upload(" clipboard.png ", "IMAGE/PNG", &encoded).expect("valid PNG upload");
+
+        assert_eq!(file_name, "clipboard.png");
+        assert_eq!(content_type, "image/png");
+        assert_eq!(content, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+    }
+
+    #[test]
+    fn pr_description_image_upload_rejects_mime_spoofing() {
+        let encoded = STANDARD.encode(b"GIF89a");
+        let error = validate_pr_description_image_upload("clipboard.png", "image/png", &encoded)
+            .expect_err("mismatched signature must fail");
+
+        assert!(error.contains("文件类型不一致"));
+    }
+
+    #[test]
+    fn pr_description_image_upload_rejects_unsupported_type_and_invalid_name() {
+        let encoded = STANDARD.encode([0xff, 0xd8, 0xff]);
+        assert!(validate_pr_description_image_upload("clipboard.svg", "image/svg+xml", &encoded)
+            .expect_err("SVG must fail")
+            .contains("仅支持"));
+        assert!(validate_pr_description_image_upload("../clipboard.jpg", "image/jpeg", &encoded)
+            .expect_err("path-like name must fail")
+            .contains("文件名"));
+    }
+
+    #[test]
+    fn pr_description_image_upload_rejects_oversized_base64_before_decoding() {
+        let encoded = "A".repeat(MAX_PR_DESCRIPTION_IMAGE_BASE64_CHARS + 1);
+        assert!(validate_pr_description_image_upload("clipboard.png", "image/png", &encoded)
+            .expect_err("oversized upload must fail")
+            .contains("5 MiB"));
     }
 
     #[test]

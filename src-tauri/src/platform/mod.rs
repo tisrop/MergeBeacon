@@ -28,6 +28,8 @@ pub struct PlatformCapabilities {
     pub supports_pr_label_management: bool,
     pub supports_pr_milestone_management: bool,
     pub supports_pr_creation: bool,
+    /// 平台公开 API 是否支持上传 PR / MR 描述中的图片。
+    pub supports_pr_description_image_upload: bool,
     /// 平台原生只读合并队列类型；None 表示平台协议不提供该能力。
     pub merge_queue_kind: Option<MergeQueueKind>,
 }
@@ -54,6 +56,7 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_pr_label_management: true,
             supports_pr_milestone_management: true,
             supports_pr_creation: true,
+            supports_pr_description_image_upload: false,
             merge_queue_kind: Some(MergeQueueKind::MergeQueue),
         },
         "gitlab" => PlatformCapabilities {
@@ -72,6 +75,7 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_pr_label_management: true,
             supports_pr_milestone_management: true,
             supports_pr_creation: true,
+            supports_pr_description_image_upload: true,
             merge_queue_kind: Some(MergeQueueKind::MergeTrain),
         },
         "gitee" => PlatformCapabilities {
@@ -90,6 +94,7 @@ pub fn capabilities_for(platform: &str) -> Option<PlatformCapabilities> {
             supports_pr_label_management: true,
             supports_pr_milestone_management: true,
             supports_pr_creation: true,
+            supports_pr_description_image_upload: false,
             merge_queue_kind: None,
         },
         _ => return None,
@@ -568,6 +573,17 @@ pub trait GitPlatform: Send + Sync {
 
     async fn list_pr_templates(&self, owner: &str, repo: &str) -> Result<Vec<PrTemplate>, AppError>;
 
+    async fn upload_pr_description_image(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _file_name: &str,
+        _content_type: &str,
+        _content: Vec<u8>,
+    ) -> Result<PrDescriptionImageUpload, AppError> {
+        Err(AppError::NotImplemented("当前平台不支持通过公开 API 上传 PR / MR 描述图片".into()))
+    }
+
     async fn list_pr_participant_suggestions(&self, owner: &str, repo: &str) -> Result<Vec<User>, AppError>;
 
     async fn create_pull_request(&self, owner: &str, repo: &str, request: &PrCreateRequest) -> Result<u64, AppError>;
@@ -871,6 +887,9 @@ mod tests {
         assert_eq!(github["supports_pr_creation"], serde_json::json!(true));
         assert_eq!(gitlab["supports_pr_creation"], serde_json::json!(true));
         assert_eq!(gitee["supports_pr_creation"], serde_json::json!(true));
+        assert_eq!(github["supports_pr_description_image_upload"], serde_json::json!(false));
+        assert_eq!(gitlab["supports_pr_description_image_upload"], serde_json::json!(true));
+        assert_eq!(gitee["supports_pr_description_image_upload"], serde_json::json!(false));
         assert_eq!(github["merge_queue_kind"], serde_json::json!("merge_queue"));
         assert_eq!(gitlab["merge_queue_kind"], serde_json::json!("merge_train"));
         assert!(gitee["merge_queue_kind"].is_null());

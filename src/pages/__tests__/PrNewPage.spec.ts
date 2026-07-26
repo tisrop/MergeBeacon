@@ -10,6 +10,7 @@ import {
   prBranches,
   prCreate,
   prCreatePreview,
+  prDescriptionImageUpload,
   listRepositoryLabels,
   prParticipantSuggestions,
   prTemplates,
@@ -35,6 +36,7 @@ vi.mock("@/api", () => ({
   prBranches: vi.fn(),
   prCreate: vi.fn(),
   prCreatePreview: vi.fn(),
+  prDescriptionImageUpload: vi.fn(),
   listRepositoryLabels: vi.fn(),
   prParticipantSuggestions: vi.fn(),
   prTemplates: vi.fn(),
@@ -108,6 +110,7 @@ function platformCapabilities(platform: Platform): PlatformCapabilities {
     supports_pr_label_management: true,
     supports_pr_milestone_management: true,
     supports_pr_creation: true,
+    supports_pr_description_image_upload: platform === "gitlab",
     merge_queue_kind:
       platform === "github" ? "merge_queue" : platform === "gitlab" ? "merge_train" : null,
   };
@@ -204,6 +207,11 @@ describe("PrNewPage", () => {
       failures: [],
     });
     vi.mocked(prCreatePreview).mockResolvedValue(createPreview("Add feature"));
+    vi.mocked(prDescriptionImageUpload).mockResolvedValue({
+      markdown: "![clipboard.png](/uploads/hash/clipboard.png)",
+      preview_markdown:
+        "![clipboard.png](https://gitlab.example.com/team/repo/uploads/hash/clipboard.png)",
+    });
     vi.mocked(prTemplates).mockResolvedValue([
       {
         name: "功能变更",
@@ -655,6 +663,335 @@ describe("PrNewPage", () => {
       "repo",
       expect.objectContaining({ body: markdown }),
     );
+  });
+
+  it("GitLab 描述可粘贴图片并在原光标位置插入原生 Markdown", async () => {
+    const { wrapper } = await mountPage("gitlab");
+    const textarea = wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]');
+    await textarea.setValue("开头结尾");
+    textarea.element.setSelectionRange(2, 2);
+    const file = {
+      name: "clipboard.png",
+      type: "image/png",
+      size: 8,
+      arrayBuffer: vi.fn(async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer),
+    } as unknown as File;
+
+    await textarea.trigger("paste", {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file,
+          },
+        ],
+      },
+    });
+    await flushPromises();
+
+    expect(prDescriptionImageUpload).toHaveBeenCalledWith(
+      "gitlab",
+      "team",
+      "repo",
+      "clipboard.png",
+      "image/png",
+      "iVBORw0KGgo=",
+    );
+    expect(textarea.element.value).toBe("开头![clipboard.png](/uploads/hash/clipboard.png)结尾");
+    const modeTabs = wrapper.get('[aria-label="Markdown 描述模式"]');
+    await modeTabs.findAll("button")[1].trigger("click");
+    expect(wrapper.get<HTMLImageElement>(".description-preview img").attributes("src")).toBe(
+      "https://gitlab.example.com/team/repo/uploads/hash/clipboard.png",
+    );
+    await modeTabs.findAll("button")[0].trigger("click");
+    expect(textarea.element.value).toBe("开头![clipboard.png](/uploads/hash/clipboard.png)结尾");
+    expect(wrapper.find(".description-upload-status").exists()).toBe(false);
+    expect(wrapper.find(".description-upload-help").text()).toContain("可直接粘贴");
+  });
+
+  it("GitLab 图片上传失败后清理占位并允许再次粘贴", async () => {
+    vi.mocked(prDescriptionImageUpload)
+      .mockRejectedValueOnce(new Error("upload unavailable"))
+      .mockResolvedValueOnce({
+        markdown: "![clipboard.png](/uploads/hash/clipboard.png)",
+        preview_markdown:
+          "![clipboard.png](https://gitlab.example.com/team/repo/uploads/hash/clipboard.png)",
+      });
+    const { wrapper } = await mountPage("gitlab");
+    const textarea = wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]');
+    await textarea.setValue("说明");
+    textarea.element.setSelectionRange(2, 2);
+    const file = {
+      name: "clipboard.png",
+      type: "image/png",
+      size: 8,
+      arrayBuffer: vi.fn(async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer),
+    } as unknown as File;
+    const pasteImage = () =>
+      textarea.trigger("paste", {
+        clipboardData: {
+          items: [
+            {
+              kind: "file",
+              type: "image/png",
+              getAsFile: () => file,
+            },
+          ],
+        },
+      });
+
+    await pasteImage();
+    await flushPromises();
+
+    expect(textarea.element.value).toBe("说明");
+    expect(textarea.element.value).not.toContain("mergebeacon-image-upload");
+    expect(wrapper.get(".description-field .error-msg").text()).toContain("upload unavailable");
+    expect(wrapper.find(".description-upload-status").exists()).toBe(false);
+
+    textarea.element.setSelectionRange(
+      textarea.element.value.length,
+      textarea.element.value.length,
+    );
+    await pasteImage();
+    await flushPromises();
+
+    expect(prDescriptionImageUpload).toHaveBeenCalledTimes(2);
+    expect(textarea.element.value).toBe("说明![clipboard.png](/uploads/hash/clipboard.png)");
+    expect(textarea.element.value).not.toContain("mergebeacon-image-upload");
+    expect(wrapper.find(".description-field .error-msg").exists()).toBe(false);
+    expect(wrapper.find(".description-upload-status").exists()).toBe(false);
+  });
+
+  it("能力仍在加载时等待完成并继续本次 GitLab 图片粘贴", async () => {
+    let resolveCapabilities!: (value: PlatformCapabilities) => void;
+    vi.mocked(getPlatformCapabilities).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCapabilities = resolve;
+        }),
+    );
+    const { wrapper } = await mountPage("gitlab");
+    const textarea = wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]');
+    const file = {
+      name: "clipboard.png",
+      type: "image/png",
+      size: 8,
+      arrayBuffer: vi.fn(async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer),
+    } as unknown as File;
+
+    expect(wrapper.get(".description-upload-help").text()).toContain("正在加载");
+    expect(wrapper.get(".description-upload-help").text()).not.toContain("不支持");
+    await textarea.trigger("paste", {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file,
+          },
+        ],
+      },
+    });
+    await flushPromises();
+
+    expect(prDescriptionImageUpload).not.toHaveBeenCalled();
+    expect(wrapper.get(".description-upload-status").text()).toContain("正在加载平台能力");
+    expect(wrapper.find(".description-field .error-msg").exists()).toBe(false);
+
+    resolveCapabilities(platformCapabilities("gitlab"));
+    await flushPromises();
+
+    expect(getPlatformCapabilities).toHaveBeenCalledTimes(1);
+    expect(prDescriptionImageUpload).toHaveBeenCalledWith(
+      "gitlab",
+      "team",
+      "repo",
+      "clipboard.png",
+      "image/png",
+      "iVBORw0KGgo=",
+    );
+    expect(textarea.element.value).toBe("![clipboard.png](/uploads/hash/clipboard.png)");
+    expect(wrapper.find(".description-upload-status").exists()).toBe(false);
+  });
+
+  it("图片粘贴等待能力加载失败时提示重试而不是误报不支持", async () => {
+    let rejectCapabilities!: (reason: unknown) => void;
+    vi.mocked(getPlatformCapabilities).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectCapabilities = reject;
+        }),
+    );
+    const { wrapper } = await mountPage("gitlab");
+    const textarea = wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]');
+    const file = {
+      name: "clipboard.png",
+      type: "image/png",
+      size: 8,
+      arrayBuffer: vi.fn(),
+    } as unknown as File;
+
+    await textarea.trigger("paste", {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file,
+          },
+        ],
+      },
+    });
+    rejectCapabilities(new Error("network unavailable"));
+    await flushPromises();
+
+    expect(prDescriptionImageUpload).not.toHaveBeenCalled();
+    expect(textarea.element.value).toBe("");
+    expect(wrapper.get(".description-field .error-msg").text()).toContain("平台能力加载失败");
+    expect(wrapper.get(".description-field .error-msg").text()).not.toContain("不支持");
+    expect(wrapper.get(".description-upload-help").text()).toContain("平台能力加载失败");
+  });
+
+  it("切换目标仓库后清理上传占位并忽略迟到的图片响应", async () => {
+    let resolveUpload!: (value: { markdown: string; preview_markdown: string }) => void;
+    vi.mocked(prDescriptionImageUpload).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUpload = resolve;
+        }),
+    );
+    const { wrapper } = await mountPage(
+      "gitlab",
+      [repository("team/repo"), repository("other/repo")],
+      "gitlab",
+      true,
+    );
+    const textarea = wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]');
+    await textarea.setValue("说明");
+    textarea.element.setSelectionRange(2, 2);
+    const file = {
+      name: "clipboard.png",
+      type: "image/png",
+      size: 8,
+      arrayBuffer: vi.fn(async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer),
+    } as unknown as File;
+
+    await textarea.trigger("paste", {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file,
+          },
+        ],
+      },
+    });
+    await flushPromises();
+    expect(wrapper.get(".description-upload-status").text()).toContain("图片上传中");
+    expect(textarea.element.value).toContain("mergebeacon-image-upload");
+
+    await wrapper.get('[aria-label="目标仓库"]').trigger("click");
+    await wrapper.get(".dropdown-option[data-value='other/repo']").trigger("click");
+    await flushPromises();
+
+    expect(textarea.element.value).toBe("说明");
+    expect(wrapper.find(".description-upload-status").exists()).toBe(false);
+    resolveUpload({
+      markdown: "![stale.png](/uploads/stale.png)",
+      preview_markdown: "![stale.png](https://gitlab.example.com/stale.png)",
+    });
+    await flushPromises();
+    expect(textarea.element.value).toBe("说明");
+  });
+
+  it("GitHub 粘贴图片时明确提示公开 API 不支持上传", async () => {
+    const { wrapper } = await mountPage("github");
+    const file = {
+      name: "clipboard.png",
+      type: "image/png",
+      size: 8,
+      arrayBuffer: vi.fn(),
+    } as unknown as File;
+
+    await wrapper.get('textarea[aria-label="Markdown 描述"]').trigger("paste", {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file,
+          },
+        ],
+      },
+    });
+
+    expect(prDescriptionImageUpload).not.toHaveBeenCalled();
+    expect(wrapper.get(".description-field .error-msg").text()).toContain("公开 API 不支持");
+    expect(wrapper.get(".description-upload-help").text()).toContain("不支持从应用粘贴上传图片");
+  });
+
+  it("拒绝超过 5 MiB 的 GitLab 粘贴图片且不读取内容", async () => {
+    const { wrapper } = await mountPage("gitlab");
+    const file = {
+      name: "large.png",
+      type: "image/png",
+      size: 5 * 1024 * 1024 + 1,
+      arrayBuffer: vi.fn(),
+    } as unknown as File;
+
+    await wrapper.get('textarea[aria-label="Markdown 描述"]').trigger("paste", {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file,
+          },
+        ],
+      },
+    });
+
+    expect(file.arrayBuffer).not.toHaveBeenCalled();
+    expect(prDescriptionImageUpload).not.toHaveBeenCalled();
+    expect(wrapper.get(".description-field .error-msg").text()).toContain("不能超过 5 MiB");
+    expect(wrapper.get(".description-upload-help").text()).toContain("不超过 5 MiB");
+  });
+
+  it("普通文本粘贴不触发图片上传", async () => {
+    const { wrapper } = await mountPage("gitlab");
+
+    await wrapper.get('textarea[aria-label="Markdown 描述"]').trigger("paste", {
+      clipboardData: { items: [{ kind: "string", type: "text/plain" }] },
+    });
+
+    expect(prDescriptionImageUpload).not.toHaveBeenCalled();
+    expect(wrapper.find(".description-field .error-msg").exists()).toBe(false);
+  });
+
+  it("剪贴板同时包含文本和图片时优先保留原生文本粘贴", async () => {
+    const { wrapper } = await mountPage("gitlab");
+    const getAsFile = vi.fn(() => ({
+      name: "clipboard.png",
+      type: "image/png",
+      size: 8,
+      arrayBuffer: vi.fn(),
+    })) as unknown as DataTransferItem["getAsFile"];
+
+    await wrapper.get('textarea[aria-label="Markdown 描述"]').trigger("paste", {
+      clipboardData: {
+        items: [
+          { kind: "string", type: "text/plain" },
+          { kind: "file", type: "image/png", getAsFile },
+        ],
+      },
+    });
+
+    expect(getAsFile).not.toHaveBeenCalled();
+    expect(prDescriptionImageUpload).not.toHaveBeenCalled();
+    expect(wrapper.find(".description-upload-status").exists()).toBe(false);
+    expect(wrapper.find(".description-field .error-msg").exists()).toBe(false);
   });
 
   it("Diff 可以按提交切换，并支持恢复全部提交视图", async () => {

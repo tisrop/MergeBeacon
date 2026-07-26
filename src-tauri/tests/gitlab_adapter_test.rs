@@ -6,7 +6,7 @@ use mergebeacon_lib::models::{
     ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{gitlab::GitLabAdapter, GitPlatform};
-use wiremock::matchers::{body_json, method, path, query_param};
+use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
@@ -2053,6 +2053,80 @@ async fn test_gitlab_lists_issue_templates() {
 
     assert_eq!(templates.iter().map(|item| item.name.as_str()).collect::<Vec<_>>(), vec!["Bug", "Feature request"]);
     assert_eq!(templates[1].body, "## 使用场景");
+}
+
+#[tokio::test]
+async fn test_gitlab_uploads_pr_description_image() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/proxy/api/v4/projects/group%2Frepo/uploads"))
+        .and(header("private-token", "token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "alt": "clipboard.png",
+            "url": "/uploads/hash/clipboard.png",
+            "full_path": "/proxy/group/repo/uploads/hash/clipboard.png",
+            "markdown": "![clipboard.png](/uploads/hash/clipboard.png)"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter =
+        GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(format!("{}/proxy", mock_server.uri()));
+    let upload = adapter
+        .upload_pr_description_image(
+            "group",
+            "repo",
+            "clipboard.png",
+            "image/png",
+            vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(upload.markdown, "![clipboard.png](/uploads/hash/clipboard.png)");
+    assert_eq!(
+        upload.preview_markdown,
+        format!("![clipboard.png]({}/proxy/group/repo/uploads/hash/clipboard.png)", mock_server.uri())
+    );
+
+    let requests = mock_server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    let content_type =
+        request.headers.get("content-type").and_then(|value| value.to_str().ok()).expect("multipart content type");
+    assert!(content_type.starts_with("multipart/form-data; boundary="), "{content_type}");
+    let body_text = String::from_utf8_lossy(&request.body);
+    assert!(body_text.contains("filename=\"clipboard.png\""));
+    assert!(body_text.contains("Content-Type: image/png"));
+    assert!(request.body.windows(8).any(|bytes| bytes == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]));
+}
+
+#[tokio::test]
+async fn test_gitlab_rejects_untrusted_pr_description_image_markdown() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v4/projects/group%2Frepo/uploads"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "url": "/uploads/hash/clipboard.png",
+            "full_path": "/group/repo/uploads/hash/clipboard.png",
+            "markdown": "proxy injected text ![clipboard.png](/uploads/hash/clipboard.png)"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let error = adapter
+        .upload_pr_description_image(
+            "group",
+            "repo",
+            "clipboard.png",
+            "image/png",
+            vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+        )
+        .await
+        .expect_err("unexpected Markdown must be rejected");
+
+    assert!(matches!(error, AppError::Api(message) if message.contains("Markdown 无效")));
 }
 
 #[tokio::test]

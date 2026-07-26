@@ -62,6 +62,7 @@ export interface PlatformCapabilities {
   supports_pr_label_management: boolean;
   supports_pr_milestone_management: boolean;
   supports_pr_creation: boolean;
+  supports_pr_description_image_upload: boolean;
   merge_queue_kind: MergeQueueKind | null;
 }
 
@@ -300,6 +301,11 @@ export interface PrTemplate {
   title: string;
   body: string;
   source_path: string;
+}
+
+export interface PrDescriptionImageUpload {
+  markdown: string;
+  preview_markdown: string;
 }
 
 export interface IssueTemplate {

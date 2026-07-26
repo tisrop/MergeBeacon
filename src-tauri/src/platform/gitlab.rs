@@ -7,6 +7,50 @@ use crate::error::AppError;
 use crate::http_client::HttpClient;
 use crate::models::*;
 
+const MAX_GITLAB_UPLOAD_RESPONSE_FIELD_BYTES: usize = 16 * 1024;
+
+fn is_valid_gitlab_upload_path(value: &str) -> bool {
+    value.len() <= MAX_GITLAB_UPLOAD_RESPONSE_FIELD_BYTES
+        && value.starts_with('/')
+        && !value.starts_with("//")
+        && value.chars().all(|character| {
+            !character.is_control()
+                && !character.is_whitespace()
+                && !matches!(character, '\\' | '(' | ')' | '[' | ']' | '<' | '>' | '"' | '\'')
+        })
+}
+
+fn parse_gitlab_upload_markdown_alt<'a>(markdown: &'a str, upload_path: &str) -> Option<&'a str> {
+    if markdown.len() > MAX_GITLAB_UPLOAD_RESPONSE_FIELD_BYTES {
+        return None;
+    }
+    let content = markdown.strip_prefix("![")?;
+    let suffix = format!("]({upload_path})");
+    let alt = content.strip_suffix(&suffix)?;
+    if alt.is_empty() {
+        return None;
+    }
+
+    let mut escaped = false;
+    for character in alt.chars() {
+        if escaped {
+            if character.is_control() {
+                return None;
+            }
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if character.is_control() || matches!(character, '[' | ']' | '<' | '>') {
+            return None;
+        }
+    }
+    (!escaped).then_some(alt)
+}
+
 pub struct GitLabAdapter {
     client: HttpClient,
     token: String,
@@ -1235,6 +1279,59 @@ impl GitPlatform for GitLabAdapter {
         Ok(templates)
     }
 
+    async fn upload_pr_description_image(
+        &self,
+        owner: &str,
+        repo: &str,
+        file_name: &str,
+        content_type: &str,
+        content: Vec<u8>,
+    ) -> Result<PrDescriptionImageUpload, AppError> {
+        let project = urlencoding(owner, repo);
+        let url = format!("{}/projects/{project}/uploads", self.base_url);
+        let part = reqwest::multipart::Part::bytes(content)
+            .file_name(file_name.to_string())
+            .mime_str(content_type)
+            .map_err(|error| AppError::Api(format!("图片类型无效：{error}")))?;
+        let response = self
+            .client
+            .post(&url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .header("User-Agent", "mergebeacon")
+            .multipart(reqwest::multipart::Form::new().part("file", part))
+            .send()
+            .await?
+            .error_for_status()?;
+        let json: Value = response.json().await?;
+        let markdown = json["markdown"]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AppError::Api("GitLab 图片上传响应缺少 Markdown".into()))?;
+        let upload_path = json["url"]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AppError::Api("GitLab 图片上传响应缺少图片路径".into()))?;
+        let full_path = json["full_path"]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AppError::Api("GitLab 图片上传响应缺少完整图片路径".into()))?;
+        if !is_valid_gitlab_upload_path(upload_path) || !is_valid_gitlab_upload_path(full_path) {
+            return Err(AppError::Api("GitLab 图片上传响应中的路径无效".into()));
+        }
+        let alt = parse_gitlab_upload_markdown_alt(markdown, upload_path)
+            .ok_or_else(|| AppError::Api("GitLab 图片上传响应中的 Markdown 无效".into()))?;
+        let api_url = reqwest::Url::parse(&self.base_url).map_err(|_| AppError::Api("GitLab API 地址无效".into()))?;
+        let preview_url = format!("{}{}", api_url.origin().ascii_serialization(), full_path);
+        let preview_markdown = format!("![{alt}]({preview_url})");
+        if preview_markdown.len() > MAX_GITLAB_UPLOAD_RESPONSE_FIELD_BYTES {
+            return Err(AppError::Api("GitLab 图片上传响应中的预览 Markdown 无效".into()));
+        }
+        Ok(PrDescriptionImageUpload { markdown: markdown.to_string(), preview_markdown })
+    }
+
     async fn list_pr_participant_suggestions(&self, owner: &str, repo: &str) -> Result<Vec<User>, AppError> {
         let project_id = urlencoding(owner, repo);
         let endpoint = format!("{}/projects/{}/members/all", self.base_url, project_id);
@@ -2195,4 +2292,50 @@ impl GitPlatform for GitLabAdapter {
 
 fn urlencoding(owner: &str, repo: &str) -> String {
     urlencoding::encode(&format!("{owner}/{repo}")).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_valid_gitlab_upload_path, parse_gitlab_upload_markdown_alt};
+
+    #[test]
+    fn gitlab_upload_markdown_requires_one_exact_image() {
+        let path = "/uploads/hash/clipboard.png";
+        assert_eq!(
+            parse_gitlab_upload_markdown_alt("![clipboard.png](/uploads/hash/clipboard.png)", path),
+            Some("clipboard.png")
+        );
+        assert_eq!(
+            parse_gitlab_upload_markdown_alt("![截图 \\[1\\].png](/uploads/hash/clipboard.png)", path),
+            Some("截图 \\[1\\].png")
+        );
+
+        for markdown in [
+            "unexpected text",
+            "prefix ![clipboard.png](/uploads/hash/clipboard.png)",
+            "![clipboard.png](https://example.com/evil.png)",
+            "![<img src=x>](/uploads/hash/clipboard.png)",
+            "![clipboard.png](/uploads/hash/clipboard.png) trailing",
+            "![clipboard.png]\n(/uploads/hash/clipboard.png)",
+        ] {
+            assert_eq!(parse_gitlab_upload_markdown_alt(markdown, path), None, "{markdown}");
+        }
+    }
+
+    #[test]
+    fn gitlab_upload_paths_reject_markdown_delimiters_and_whitespace() {
+        assert!(is_valid_gitlab_upload_path("/uploads/hash/clipboard.png"));
+        assert!(is_valid_gitlab_upload_path("/proxy/group/repo/uploads/hash/clipboard.png"));
+
+        for path in [
+            "https://example.com/image.png",
+            "//example.com/image.png",
+            "/uploads/image name.png",
+            "/uploads/image).png",
+            "/uploads/<script>.png",
+            "/uploads\\image.png",
+        ] {
+            assert!(!is_valid_gitlab_upload_path(path), "{path}");
+        }
+    }
 }
