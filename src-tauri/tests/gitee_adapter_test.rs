@@ -2116,3 +2116,85 @@ async fn test_gitee_lists_issue_templates() {
     assert_eq!(templates[0].name, "bug");
     assert_eq!(templates[0].body, "## 复现步骤");
 }
+
+#[tokio::test]
+async fn test_gitee_lists_pr_templates() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/team/repo/contents/.gitee/PULL_REQUEST_TEMPLATE"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "type": "file", "path": ".gitee/PULL_REQUEST_TEMPLATE/feature.md" },
+            { "type": "file", "path": ".gitee/PULL_REQUEST_TEMPLATE/FEATURE.md" }
+        ])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/team/repo/contents/.gitee/PULL_REQUEST_TEMPLATE/feature.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "encoding": "base64",
+            "size": 27,
+            "content": "IyMgQ2hhbmdlcwoKLSBbIF0gVGVzdGVkCg=="
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let templates = adapter.list_pr_templates("team", "repo").await.unwrap();
+
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].name, "feature");
+    assert_eq!(templates[0].body, "## Changes\n\n- [ ] Tested");
+    assert_eq!(templates[0].source_path, ".gitee/PULL_REQUEST_TEMPLATE/feature.md");
+
+    let request_paths = mock_server
+        .received_requests()
+        .await
+        .expect("requests")
+        .into_iter()
+        .map(|request| request.url.path().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        request_paths,
+        vec![
+            "/api/v5/repos/team/repo/contents/.gitee/PULL_REQUEST_TEMPLATE",
+            "/api/v5/repos/team/repo/contents/.gitee/PULL_REQUEST_TEMPLATE/feature.md",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_gitee_pr_template_root_fallback_stops_after_first_match() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/team/repo/contents/.gitee/PULL_REQUEST_TEMPLATE.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "encoding": "base64",
+            "size": 27,
+            "content": "IyMgQ2hhbmdlcwoKLSBbIF0gVGVzdGVkCg=="
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let templates = adapter.list_pr_templates("team", "repo").await.unwrap();
+
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].source_path, ".gitee/PULL_REQUEST_TEMPLATE.md");
+
+    let request_paths = mock_server
+        .received_requests()
+        .await
+        .expect("requests")
+        .into_iter()
+        .map(|request| request.url.path().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        request_paths,
+        vec![
+            "/api/v5/repos/team/repo/contents/.gitee/PULL_REQUEST_TEMPLATE",
+            "/api/v5/repos/team/repo/contents/.github/PULL_REQUEST_TEMPLATE",
+            "/api/v5/repos/team/repo/contents/PULL_REQUEST_TEMPLATE",
+            "/api/v5/repos/team/repo/contents/.gitee/PULL_REQUEST_TEMPLATE.md",
+        ]
+    );
+}

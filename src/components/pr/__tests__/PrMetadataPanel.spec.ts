@@ -282,6 +282,21 @@ describe("PrMetadataPanel", () => {
     expect(wrapper.get('[role="alert"]').text()).toContain("PR 标题不能为空");
   });
 
+  it("标题最多允许 255 个 Unicode 字符", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
+    await flushPromises();
+    const titleInput = wrapper.get<HTMLInputElement>('[data-testid="metadata-title"]');
+
+    expect(titleInput.attributes("maxlength")).toBe("255");
+
+    await titleInput.setValue("界".repeat(256));
+    await wrapper.get("form").trigger("submit");
+
+    expect(wrapper.emitted("save")).toBeUndefined();
+    expect(wrapper.get('[role="alert"]').text()).toContain("PR 标题不能超过 255 个字符");
+  });
+
   it("按平台使用参与者名称：Gitee 显示评审者和测试者", async () => {
     const wrapper = mountPanel({
       capabilities: capabilities({

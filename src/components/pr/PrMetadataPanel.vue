@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { listRepositoryLabels, prParticipantSuggestions } from "@/api";
 import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
+import { MAX_PR_TITLE_CHARS } from "@/constants/pr";
 import type {
   Platform,
   PlatformCapabilities,
@@ -296,6 +297,10 @@ function submit(): void {
     validationError.value = "PR 标题不能为空";
     return;
   }
+  if (Array.from(normalizedTitle).length > MAX_PR_TITLE_CHARS) {
+    validationError.value = `PR 标题不能超过 ${MAX_PR_TITLE_CHARS} 个字符`;
+    return;
+  }
   validationError.value = "";
   emit("save", {
     title: canEditTitleBody.value ? normalizedTitle : props.detail.summary.title,
@@ -385,6 +390,7 @@ onUnmounted(invalidateOptions);
           v-model="title"
           data-testid="metadata-title"
           type="text"
+          :maxlength="MAX_PR_TITLE_CHARS"
           :disabled="!canEditTitleBody || saving"
         />
       </label>

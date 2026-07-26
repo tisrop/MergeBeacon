@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::ai::prompt;
 use crate::error::AppError;
-use crate::models::{AiReviewFocus, AiReviewResult, PrContext};
+use crate::models::{AiPrDraftRequest, AiPrDraftResult, AiReviewFocus, AiReviewResult, PrContext, MAX_PR_TITLE_CHARS};
 
 /// OpenAI-compatible chat client
 pub struct AiClient {
@@ -62,6 +62,18 @@ fn contains_complete_review_json(trailing: &str) -> bool {
         }
         serde_json::Deserializer::from_str(&trailing[index..])
             .into_iter::<AiReviewResult>()
+            .next()
+            .is_some_and(|result| result.is_ok())
+    })
+}
+
+fn contains_complete_pr_draft_json(trailing: &str) -> bool {
+    trailing.char_indices().any(|(index, character)| {
+        if character != '{' {
+            return false;
+        }
+        serde_json::Deserializer::from_str(&trailing[index..])
+            .into_iter::<AiPrDraftResult>()
             .next()
             .is_some_and(|result| result.is_ok())
     })
@@ -168,6 +180,20 @@ impl AiClient {
         self.parse_review_response(&response)
     }
 
+    pub async fn draft_pull_request(
+        &self,
+        request: &AiPrDraftRequest,
+        temperature: f32,
+        max_tokens: u32,
+    ) -> Result<AiPrDraftResult, AppError> {
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": prompt::build_pr_draft_system_prompt()}),
+            serde_json::json!({"role": "user", "content": prompt::build_pr_draft_user_message(request)}),
+        ];
+        let response = self.chat(&messages, temperature, max_tokens).await?;
+        Self::parse_pr_draft_response(&response)
+    }
+
     /// Perform a streaming code review.
     /// Calls `on_token` with each text delta, and returns the final parsed result.
     #[allow(clippy::too_many_arguments)]
@@ -216,6 +242,43 @@ impl AiClient {
             return Err(AppError::Ai("AI 返回了多个评审 JSON，无法确定应使用哪一份结果。请重试本次评审".to_string()));
         }
 
+        Ok(result)
+    }
+
+    fn parse_pr_draft_response(response: &str) -> Result<AiPrDraftResult, AppError> {
+        let candidate = response.find('{').map_or(response.trim(), |start| &response[start..]);
+        if candidate.trim().is_empty() {
+            return Err(AppError::Ai("AI 未返回 PR / MR 草稿 JSON，请重试".to_string()));
+        }
+
+        let mut values = serde_json::Deserializer::from_str(candidate).into_iter::<AiPrDraftResult>();
+        let mut result = values
+            .next()
+            .ok_or_else(|| AppError::Ai("AI 未返回 PR / MR 草稿 JSON，请重试".to_string()))?
+            .map_err(|error| {
+                if error.is_eof() {
+                    AppError::Ai("AI 返回的 PR / MR 草稿 JSON 不完整，请提高 Max Tokens 后重试".to_string())
+                } else {
+                    AppError::Ai(format!("AI 返回的 PR / MR 草稿不是有效 JSON（{error}）"))
+                }
+            })?;
+        let trailing = &candidate[values.byte_offset()..];
+        if contains_complete_pr_draft_json(trailing) {
+            return Err(AppError::Ai("AI 返回了多个 PR / MR 草稿，无法确定应使用哪一份".to_string()));
+        }
+
+        result.title = result.title.trim().to_string();
+        if result.title.is_empty()
+            || result.title.chars().count() > MAX_PR_TITLE_CHARS
+            || result.title.contains(['\0', '\n', '\r'])
+        {
+            return Err(AppError::Ai("AI 返回的 PR / MR 标题为空、过长或包含换行".to_string()));
+        }
+        if result.body.len() > 1_048_576 || result.body.contains('\0') {
+            return Err(AppError::Ai("AI 返回的 PR / MR 描述过长或包含非法字符".to_string()));
+        }
+        // 保留模板可能需要的前导空白，只清理模型常附带的尾部空行。
+        result.body = result.body.trim_end().to_string();
         Ok(result)
     }
 
@@ -276,6 +339,7 @@ mod tests {
     use futures::stream;
 
     use super::{consume_sse_stream, AiClient};
+    use crate::models::MAX_PR_TITLE_CHARS;
 
     fn delta(content: &str) -> String {
         format!(r#"{{"choices":[{{"delta":{{"content":"{content}"}}}}]}}"#)
@@ -360,5 +424,73 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("Max Tokens"));
         assert!(!message.contains("评审结果尚未完成"));
+    }
+
+    #[test]
+    fn parses_pr_draft_wrapped_in_markdown() {
+        let result = AiClient::parse_pr_draft_response(
+            "草稿如下：\n```json\n{\"title\":\"feat: add template\",\"body\":\"## 说明\"}\n```",
+        )
+        .unwrap();
+
+        assert_eq!(result.title, "feat: add template");
+        assert_eq!(result.body, "## 说明");
+    }
+
+    #[test]
+    fn trims_pr_draft_trailing_whitespace_without_removing_leading_content() {
+        let response = serde_json::json!({
+            "title": "  feat: add template  ",
+            "body": "\n## 说明\n\n  ",
+        })
+        .to_string();
+        let result = AiClient::parse_pr_draft_response(&response).unwrap();
+
+        assert_eq!(result.title, "feat: add template");
+        assert_eq!(result.body, "\n## 说明");
+    }
+
+    #[test]
+    fn rejects_multiple_pr_draft_objects_without_echoing_content() {
+        let error = AiClient::parse_pr_draft_response(
+            "{\"title\":\"first\",\"body\":\"one\"}\n{\"title\":\"second\",\"body\":\"two\"}",
+        )
+        .unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains("多个 PR / MR 草稿"));
+        assert!(!message.contains("first"));
+        assert!(!message.contains("second"));
+    }
+
+    #[test]
+    fn rejects_incomplete_pr_draft_without_echoing_content() {
+        let error = AiClient::parse_pr_draft_response("{\"title\":\"unfinished\",\"body\":").unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains("不完整"));
+        assert!(!message.contains("unfinished"));
+    }
+
+    #[test]
+    fn rejects_invalid_pr_draft_title() {
+        let error =
+            AiClient::parse_pr_draft_response("{\"title\":\"line one\\nline two\",\"body\":\"ok\"}").unwrap_err();
+
+        assert!(error.to_string().contains("标题为空、过长或包含换行"));
+
+        let oversized = serde_json::json!({
+            "title": "界".repeat(MAX_PR_TITLE_CHARS + 1),
+            "body": "ok",
+        })
+        .to_string();
+        assert!(AiClient::parse_pr_draft_response(&oversized).is_err());
+
+        let maximum = serde_json::json!({
+            "title": "界".repeat(MAX_PR_TITLE_CHARS),
+            "body": "ok",
+        })
+        .to_string();
+        assert!(AiClient::parse_pr_draft_response(&maximum).is_ok());
     }
 }

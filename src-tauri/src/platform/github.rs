@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::{stream, StreamExt};
 use serde_json::Value;
 
 use super::GitPlatform;
@@ -227,6 +228,24 @@ impl GitHubAdapter {
             return Err(AppError::Api(format!("GitHub API {} ({}): {}", status, url, body)));
         }
         Ok(Some(resp.json().await?))
+    }
+
+    async fn load_pr_template(&self, owner: &str, repo: &str, path: &str) -> Result<Option<PrTemplate>, AppError> {
+        let url = format!(
+            "{}/repos/{}/{}/contents/{}",
+            self.base_url,
+            owner,
+            repo,
+            crate::file_content::encode_path_segments(path)
+        );
+        let Some(json) = self.get_json_optional(&url).await? else {
+            return Ok(None);
+        };
+        let content = crate::file_content::decode_response("GitHub", path, "default", &json)?;
+        if content.binary || content.truncated {
+            return Ok(None);
+        }
+        Ok(crate::pr_template::parse_remote_template(path, &content.content).await)
     }
 
     /// Parse the `Link` header to extract the last page number.
@@ -1514,6 +1533,65 @@ impl GitPlatform for GitHubAdapter {
                 continue;
             }
             if let Some(template) = crate::issue_template::parse_remote_template(&path, &content.content).await {
+                templates.push(template);
+            }
+        }
+        Ok(templates)
+    }
+
+    async fn list_pr_templates(&self, owner: &str, repo: &str) -> Result<Vec<PrTemplate>, AppError> {
+        let mut paths = Vec::new();
+        for directory_path in [".github/PULL_REQUEST_TEMPLATE", "docs/PULL_REQUEST_TEMPLATE", "PULL_REQUEST_TEMPLATE"] {
+            let directory_url = format!(
+                "{}/repos/{}/{}/contents/{}",
+                self.base_url,
+                owner,
+                repo,
+                crate::file_content::encode_path_segments(directory_path)
+            );
+            let directory_paths = self
+                .get_json_optional(&directory_url)
+                .await?
+                .and_then(|value| value.as_array().cloned())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|entry| entry["type"].as_str() == Some("file"))
+                .filter_map(|entry| entry["path"].as_str().map(str::to_string))
+                .filter(|path| crate::pr_template::is_supported_template_path(path))
+                .collect::<Vec<_>>();
+            if !directory_paths.is_empty() {
+                paths = directory_paths;
+                break;
+            }
+        }
+
+        if paths.is_empty() {
+            for path in [
+                ".github/PULL_REQUEST_TEMPLATE.md",
+                ".github/pull_request_template.md",
+                "docs/PULL_REQUEST_TEMPLATE.md",
+                "docs/pull_request_template.md",
+                "PULL_REQUEST_TEMPLATE.md",
+                "pull_request_template.md",
+            ] {
+                if let Some(template) = self.load_pr_template(owner, repo, path).await? {
+                    return Ok(vec![template]);
+                }
+            }
+            return Ok(Vec::new());
+        }
+
+        crate::pr_template::deduplicate_template_paths(&mut paths);
+        paths.truncate(crate::pr_template::MAX_PR_TEMPLATE_FILES);
+
+        let loaded =
+            stream::iter(paths.into_iter().map(|path| async move { self.load_pr_template(owner, repo, &path).await }))
+                .buffered(6)
+                .collect::<Vec<_>>()
+                .await;
+        let mut templates = Vec::new();
+        for template in loaded {
+            if let Some(template) = template? {
                 templates.push(template);
             }
         }

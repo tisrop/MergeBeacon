@@ -126,7 +126,7 @@ async function loadTemplates(context = currentContext()) {
 function applyTemplate() {
   const template = templates.value.find((item) => item.source_path === selectedTemplatePath.value);
   if (!template) return;
-  title.value = template.title;
+  if (template.title.trim()) title.value = template.title;
   body.value = template.body;
   pendingTemplateLabels.value = template.labels;
   if (!labelsLoading.value && !labelsError.value) resolvePendingTemplateLabels();

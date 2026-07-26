@@ -36,6 +36,8 @@ pub struct RepoSummary {
 }
 
 // ── PR / MR ──
+pub const MAX_PR_TITLE_CHARS: usize = 255;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrState {
@@ -363,6 +365,14 @@ pub struct PrLabel {
     pub name: String,
     pub color: Option<String>,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrTemplate {
+    pub name: String,
+    pub title: String,
+    pub body: String,
+    pub source_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -700,6 +710,21 @@ pub struct AiReviewRequest {
     pub context: Option<PrContext>,
     pub file_filter: Option<Vec<String>>,
     pub focus: Option<AiReviewFocus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiPrDraftRequest {
+    pub source_branch: String,
+    pub target_branch: String,
+    pub commits: Vec<PrCommitSummary>,
+    pub diff: String,
+    pub template_body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiPrDraftResult {
+    pub title: String,
+    pub body: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

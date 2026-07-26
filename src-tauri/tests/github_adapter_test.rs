@@ -2453,3 +2453,85 @@ async fn test_github_lists_issue_templates() {
     assert_eq!(templates[0].labels, vec!["bug", "triage"]);
     assert_eq!(templates[0].body, "## 复现步骤");
 }
+
+#[tokio::test]
+async fn test_github_lists_pr_templates() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/contents/.github/PULL_REQUEST_TEMPLATE"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "type": "file", "path": ".github/PULL_REQUEST_TEMPLATE/feature.md" },
+            { "type": "file", "path": ".github/PULL_REQUEST_TEMPLATE/FEATURE.md" }
+        ])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/contents/.github/PULL_REQUEST_TEMPLATE/feature.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "encoding": "base64",
+            "size": 27,
+            "content": "IyMgQ2hhbmdlcwoKLSBbIF0gVGVzdGVkCg=="
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let templates = adapter.list_pr_templates("octocat", "hello-world").await.unwrap();
+
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].name, "feature");
+    assert_eq!(templates[0].body, "## Changes\n\n- [ ] Tested");
+    assert_eq!(templates[0].source_path, ".github/PULL_REQUEST_TEMPLATE/feature.md");
+
+    let request_paths = mock_server
+        .received_requests()
+        .await
+        .expect("requests")
+        .into_iter()
+        .map(|request| request.url.path().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        request_paths,
+        vec![
+            "/repos/octocat/hello-world/contents/.github/PULL_REQUEST_TEMPLATE",
+            "/repos/octocat/hello-world/contents/.github/PULL_REQUEST_TEMPLATE/feature.md",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_github_pr_template_root_fallback_stops_after_first_match() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/contents/.github/PULL_REQUEST_TEMPLATE.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "encoding": "base64",
+            "size": 27,
+            "content": "IyMgQ2hhbmdlcwoKLSBbIF0gVGVzdGVkCg=="
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let templates = adapter.list_pr_templates("octocat", "hello-world").await.unwrap();
+
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].source_path, ".github/PULL_REQUEST_TEMPLATE.md");
+
+    let request_paths = mock_server
+        .received_requests()
+        .await
+        .expect("requests")
+        .into_iter()
+        .map(|request| request.url.path().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        request_paths,
+        vec![
+            "/repos/octocat/hello-world/contents/.github/PULL_REQUEST_TEMPLATE",
+            "/repos/octocat/hello-world/contents/docs/PULL_REQUEST_TEMPLATE",
+            "/repos/octocat/hello-world/contents/PULL_REQUEST_TEMPLATE",
+            "/repos/octocat/hello-world/contents/.github/PULL_REQUEST_TEMPLATE.md",
+        ]
+    );
+}

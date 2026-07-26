@@ -69,6 +69,14 @@ describe("SettingsPage 诊断信息", () => {
     expect(wrapper.get("#app-update").text()).toContain("应用更新");
   });
 
+  it("将 AI 配置明确描述为评审与草稿共用服务", () => {
+    const wrapper = mountPage();
+
+    expect(wrapper.text()).toContain("AI 服务设置");
+    expect(wrapper.text()).toContain("评审与 PR / MR 草稿共用的模型服务和访问凭据");
+    expect(wrapper.text()).not.toContain("AI 评审设置");
+  });
+
   it("持久化 Diff 同步滚动设置并在重新加载后恢复", async () => {
     const firstPage = mountPage();
     const firstToggle = firstPage.get<HTMLInputElement>('input[aria-label="同步 Diff 横向滚动"]');

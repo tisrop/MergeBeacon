@@ -159,7 +159,7 @@ async function copyRecentErrorLogs() {
       <div class="settings-header page-heading">
         <div>
           <h2>设置</h2>
-          <p>管理代码平台显示方式与 AI 评审服务</p>
+          <p>管理代码平台显示方式与 AI 服务</p>
         </div>
       </div>
     </template>
@@ -281,8 +281,8 @@ async function copyRecentErrorLogs() {
             </svg>
           </span>
           <div>
-            <h3>AI 评审设置</h3>
-            <p>配置兼容 OpenAI 协议的模型服务与访问凭据。</p>
+            <h3>AI 服务设置</h3>
+            <p>配置评审与 PR / MR 草稿共用的模型服务和访问凭据。</p>
           </div>
         </div>
         <AiSettings />

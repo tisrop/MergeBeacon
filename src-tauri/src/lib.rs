@@ -10,6 +10,7 @@ pub mod local_store;
 pub mod models;
 pub mod patch;
 pub mod platform;
+pub mod pr_template;
 #[cfg(all(feature = "restart-timing-test", not(debug_assertions)))]
 compile_error!("restart-timing-test is only available in debug builds");
 #[cfg(feature = "restart-timing-test")]
@@ -182,6 +183,7 @@ pub fn run() {
             pr::pr_merge_queue_status,
             pr::pr_branches,
             pr::pr_labels,
+            pr::pr_templates,
             pr::pr_participant_suggestions,
             pr::pr_create_preview,
             pr::pr_create,
@@ -212,6 +214,8 @@ pub fn run() {
             ai_cmds::ai_get_config,
             ai_cmds::ai_save_config,
             ai_cmds::ai_save_api_key,
+            ai_cmds::ai_pr_draft,
+            ai_cmds::ai_pr_draft_cancel,
             ai_cmds::ai_review,
             ai_cmds::ai_review_stream,
             ai_cmds::ai_review_cancel,

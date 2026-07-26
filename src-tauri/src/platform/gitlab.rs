@@ -1204,6 +1204,37 @@ impl GitPlatform for GitLabAdapter {
         Ok(templates)
     }
 
+    async fn list_pr_templates(&self, owner: &str, repo: &str) -> Result<Vec<PrTemplate>, AppError> {
+        let project_id = urlencoding(owner, repo);
+        let list_url = format!("{}/projects/{}/templates/merge_requests", self.base_url, project_id);
+        let items =
+            self.get_json_optional(&list_url).await?.and_then(|value| value.as_array().cloned()).unwrap_or_default();
+        let mut templates = Vec::new();
+        for item in items.into_iter().take(crate::pr_template::MAX_PR_TEMPLATE_FILES) {
+            let Some(name) = item["name"].as_str().filter(|value| !value.trim().is_empty()) else {
+                continue;
+            };
+            let url = format!(
+                "{}/projects/{}/templates/merge_requests/{}",
+                self.base_url,
+                project_id,
+                urlencoding::encode(name)
+            );
+            let Some(value) = self.get_json_optional(&url).await? else {
+                continue;
+            };
+            let Some(content) = value["content"].as_str() else {
+                continue;
+            };
+            let path = format!(".gitlab/merge_request_templates/{name}.md");
+            if let Some(mut template) = crate::pr_template::parse_remote_template(&path, content).await {
+                template.name = name.to_string();
+                templates.push(template);
+            }
+        }
+        Ok(templates)
+    }
+
     async fn list_pr_participant_suggestions(&self, owner: &str, repo: &str) -> Result<Vec<User>, AppError> {
         let project_id = urlencoding(owner, repo);
         let endpoint = format!("{}/projects/{}/members/all", self.base_url, project_id);

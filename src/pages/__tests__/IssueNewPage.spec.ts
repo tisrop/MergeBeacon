@@ -99,6 +99,29 @@ describe("IssueNewPage", () => {
     expect(wrapper.get('[aria-label="选择 Issue 标签"]').text()).not.toContain("missing");
   });
 
+  it("模板未预设标题时保留用户已有标题", async () => {
+    const bodyOnlyTemplate: IssueTemplate = {
+      ...bugTemplate,
+      name: "仅正文",
+      title: "",
+      body: "## 变更说明",
+      source_path: ".github/ISSUE_TEMPLATE/body-only.md",
+    };
+    vi.mocked(issueTemplates).mockResolvedValue([bodyOnlyTemplate]);
+    const { wrapper } = await mountPage();
+    await wrapper.get("#issue-title").setValue("用户已有标题");
+    await wrapper.get("#issue-body").setValue("用户已有正文");
+
+    await wrapper.get('[aria-label="选择 Issue 创建模板"]').trigger("click");
+    await wrapper
+      .get('.dropdown-option[data-value=".github/ISSUE_TEMPLATE/body-only.md"]')
+      .trigger("click");
+    await wrapper.get(".template-controls .btn").trigger("click");
+
+    expect(wrapper.get<HTMLInputElement>("#issue-title").element.value).toBe("用户已有标题");
+    expect(wrapper.get<HTMLTextAreaElement>("#issue-body").element.value).toBe("## 变更说明");
+  });
+
   it("标签晚于模板返回时在标签加载完成后应用模板预置标签", async () => {
     let resolveLabels!: (labels: PrLabel[]) => void;
     vi.mocked(listRepositoryLabels).mockImplementation(

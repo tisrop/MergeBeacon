@@ -4,12 +4,15 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PrNewPage from "@/pages/PrNewPage.vue";
 import {
+  aiPrDraft,
+  aiPrDraftCancel,
   getPlatformCapabilities,
   prBranches,
   prCreate,
   prCreatePreview,
   listRepositoryLabels,
   prParticipantSuggestions,
+  prTemplates,
   repoList,
 } from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
@@ -20,17 +23,21 @@ import type {
   PlatformCapabilities,
   PrCreatePreview,
   PrLabel,
+  PrTemplate,
   RepoSummary,
   User,
 } from "@/types";
 
 vi.mock("@/api", () => ({
+  aiPrDraft: vi.fn(),
+  aiPrDraftCancel: vi.fn(),
   getPlatformCapabilities: vi.fn(),
   prBranches: vi.fn(),
   prCreate: vi.fn(),
   prCreatePreview: vi.fn(),
   listRepositoryLabels: vi.fn(),
   prParticipantSuggestions: vi.fn(),
+  prTemplates: vi.fn(),
   repoList: vi.fn(),
 }));
 
@@ -182,6 +189,7 @@ describe("PrNewPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "draft-request") });
     vi.mocked(getPlatformCapabilities).mockImplementation(async (platform) =>
       platformCapabilities(platform),
     );
@@ -196,6 +204,19 @@ describe("PrNewPage", () => {
       failures: [],
     });
     vi.mocked(prCreatePreview).mockResolvedValue(createPreview("Add feature"));
+    vi.mocked(prTemplates).mockResolvedValue([
+      {
+        name: "功能变更",
+        title: "feat: ",
+        body: "## 变更说明\n\n<!-- 请填写 -->",
+        source_path: ".github/PULL_REQUEST_TEMPLATE/feature.md",
+      },
+    ]);
+    vi.mocked(aiPrDraft).mockResolvedValue({
+      title: "feat: add feature",
+      body: "## 变更说明\n\n新增功能。",
+    });
+    vi.mocked(aiPrDraftCancel).mockResolvedValue(undefined);
     vi.mocked(listRepositoryLabels).mockResolvedValue([
       { name: "bug", color: "#d73a4a", description: "需要修复的问题" },
       { name: "feature", color: "b60205", description: "新功能" },
@@ -219,6 +240,20 @@ describe("PrNewPage", () => {
     expect(wrapper.get('[data-testid="app-layout"]').attributes("data-compact-sidebar")).toBe(
       "true",
     );
+  });
+
+  it("标题最多允许 255 个 Unicode 字符", async () => {
+    const { wrapper } = await mountPage();
+    const titleInput = wrapper.get<HTMLInputElement>("input[placeholder='简要说明这次变更']");
+    const submitButton = wrapper.get<HTMLButtonElement>("button[type='submit']");
+
+    expect(titleInput.attributes("maxlength")).toBe("255");
+
+    await titleInput.setValue("界".repeat(256));
+    expect(submitButton.element.disabled).toBe(true);
+
+    await titleInput.setValue("界".repeat(255));
+    expect(submitButton.element.disabled).toBe(false);
   });
 
   it("使用语义标题组织创建流程而不显示装饰编号", async () => {
@@ -952,5 +987,269 @@ describe("PrNewPage", () => {
 
     expect(wrapper.get('[role="status"]').text()).toBe("当前平台不支持创建 PR。");
     expect(wrapper.get<HTMLButtonElement>("button[type='submit']").element.disabled).toBe(true);
+  });
+
+  it("规范化模板选项时不修改 API 返回对象", async () => {
+    const remoteTemplate: PrTemplate = {
+      name: "  功能变更  ",
+      title: "feat: ",
+      body: "## 变更说明",
+      source_path: "  .github/PULL_REQUEST_TEMPLATE/feature.md  ",
+    };
+    vi.mocked(prTemplates).mockResolvedValueOnce([remoteTemplate]);
+
+    const { wrapper } = await mountPage();
+
+    expect(remoteTemplate).toEqual({
+      name: "  功能变更  ",
+      title: "feat: ",
+      body: "## 变更说明",
+      source_path: "  .github/PULL_REQUEST_TEMPLATE/feature.md  ",
+    });
+    await wrapper.get('[aria-label="PR 模板"]').trigger("click");
+    expect(
+      wrapper.get(".dropdown-option[data-value='.github/PULL_REQUEST_TEMPLATE/feature.md']").text(),
+    ).toContain("功能变更");
+  });
+
+  it("从目标仓库加载并显式应用 PR 模板", async () => {
+    const { wrapper } = await mountPage();
+
+    expect(prTemplates).toHaveBeenCalledWith("github", "team", "repo");
+    const templateSelect = wrapper.get('[aria-label="PR 模板"]');
+    await templateSelect.trigger("click");
+    await wrapper
+      .get(".dropdown-option[data-value='.github/PULL_REQUEST_TEMPLATE/feature.md']")
+      .trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "应用模板")!
+      .trigger("click");
+
+    expect(
+      wrapper.get<HTMLInputElement>("input[placeholder='简要说明这次变更']").element.value,
+    ).toBe("feat: ");
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]').element.value,
+    ).toBe("## 变更说明\n\n<!-- 请填写 -->");
+  });
+
+  it("模板默认仅填充空字段并保留用户已有内容", async () => {
+    const { wrapper } = await mountPage();
+    await wrapper.get("input[placeholder='简要说明这次变更']").setValue("用户已写标题");
+    await wrapper.get('[aria-label="PR 模板"]').trigger("click");
+    await wrapper
+      .get(".dropdown-option[data-value='.github/PULL_REQUEST_TEMPLATE/feature.md']")
+      .trigger("click");
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "应用模板")!
+      .trigger("click");
+
+    expect(
+      wrapper.get<HTMLInputElement>("input[placeholder='简要说明这次变更']").element.value,
+    ).toBe("用户已写标题");
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]').element.value,
+    ).toBe("## 变更说明\n\n<!-- 请填写 -->");
+    expect(wrapper.get(".draft-assistant-notice").text()).toContain("模板未覆盖已有标题");
+  });
+
+  it("AI 使用当前预览和所选模板填充标题与描述", async () => {
+    const { wrapper } = await mountPage();
+    await wrapper.get('[aria-label="PR 模板"]').trigger("click");
+    await wrapper
+      .get(".dropdown-option[data-value='.github/PULL_REQUEST_TEMPLATE/feature.md']")
+      .trigger("click");
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "AI 填充")!
+      .trigger("click");
+    await flushPromises();
+
+    expect(aiPrDraft).toHaveBeenCalledWith("draft-request", {
+      source_branch: "feature",
+      target_branch: "main",
+      commits: createPreview("Add feature").commits,
+      diff: "diff --git a/src/a.ts b/src/a.ts",
+      template_body: "## 变更说明\n\n<!-- 请填写 -->",
+    });
+    expect(
+      wrapper.get<HTMLInputElement>("input[placeholder='简要说明这次变更']").element.value,
+    ).toBe("feat: add feature");
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]').element.value,
+    ).toBe("## 变更说明\n\n新增功能。");
+  });
+
+  it("Diff 超过 64 KiB 时提示 AI 只基于前 64 KiB 生成", async () => {
+    const preview = createPreview("Add feature");
+    preview.diff.diff = "中".repeat(Math.floor((64 * 1024) / 3) + 1);
+    vi.mocked(prCreatePreview).mockResolvedValue(preview);
+
+    const { wrapper } = await mountPage();
+
+    expect(wrapper.get(".draft-assistant-warning").text()).toBe(
+      "Diff 较长，AI 仅基于前 64 KiB 生成草稿。",
+    );
+  });
+
+  it("Diff 超过 1 MiB 时提示分层截断并按 UTF-8 字节限制请求", async () => {
+    const preview = createPreview("Add feature");
+    preview.diff.diff = "中".repeat(Math.floor(1_048_576 / 3) + 1);
+    vi.mocked(prCreatePreview).mockResolvedValue(preview);
+
+    const { wrapper } = await mountPage();
+
+    expect(wrapper.get(".draft-assistant-warning").text()).toBe(
+      "当前 Diff 超过 1 MiB，发送前会先截断；AI 最终仅基于前 64 KiB 生成草稿。",
+    );
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "AI 填充")!
+      .trigger("click");
+    await flushPromises();
+
+    const request = vi.mocked(aiPrDraft).mock.calls[0]?.[1];
+    expect(request).toBeDefined();
+    expect(new TextEncoder().encode(request!.diff).length).toBeLessThanOrEqual(1_048_576);
+    expect(request!.diff).not.toContain("�");
+  });
+
+  it("AI 默认只生成空字段并保留用户长描述", async () => {
+    const { wrapper } = await mountPage();
+    await wrapper
+      .get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]')
+      .setValue("用户已经写好的长描述，不应被 AI 覆盖。".repeat(20));
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "AI 填充")!
+      .trigger("click");
+    await flushPromises();
+
+    expect(
+      wrapper.get<HTMLInputElement>("input[placeholder='简要说明这次变更']").element.value,
+    ).toBe("feat: add feature");
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]').element.value,
+    ).toBe("用户已经写好的长描述，不应被 AI 覆盖。".repeat(20));
+    expect(wrapper.get(".draft-assistant-notice").text()).toContain("AI未覆盖已有描述");
+  });
+
+  it("标题和描述均有内容时不发起无效 AI 请求", async () => {
+    const { wrapper } = await mountPage();
+    await wrapper.get("input[placeholder='简要说明这次变更']").setValue("用户标题");
+    await wrapper
+      .get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]')
+      .setValue("用户描述");
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "AI 填充")!
+      .trigger("click");
+    await flushPromises();
+
+    expect(aiPrDraft).not.toHaveBeenCalled();
+    expect(wrapper.get(".draft-assistant-notice").text()).toContain("AI未覆盖已有标题和描述");
+  });
+
+  it("显式选择覆盖全部后允许 AI 替换现有草稿", async () => {
+    const { wrapper } = await mountPage();
+    await wrapper.get("input[placeholder='简要说明这次变更']").setValue("用户标题");
+    await wrapper
+      .get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]')
+      .setValue("用户描述");
+    await wrapper.get('[aria-label="草稿写入方式"]').trigger("click");
+    await wrapper.get(".dropdown-option[data-value='overwrite']").trigger("click");
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "AI 填充")!
+      .trigger("click");
+    await flushPromises();
+
+    expect(
+      wrapper.get<HTMLInputElement>("input[placeholder='简要说明这次变更']").element.value,
+    ).toBe("feat: add feature");
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]').element.value,
+    ).toBe("## 变更说明\n\n新增功能。");
+    expect(wrapper.find(".draft-assistant-notice").exists()).toBe(false);
+  });
+
+  it("分支变化时取消仍在运行的 AI 草稿请求", async () => {
+    vi.mocked(aiPrDraft).mockImplementation(() => new Promise(() => {}));
+    const { wrapper } = await mountPage();
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "AI 填充")!
+      .trigger("click");
+    expect(wrapper.findAll("button").some((button) => button.text() === "取消生成")).toBe(true);
+
+    await wrapper.get('[aria-label="源分支"]').trigger("click");
+    await wrapper.get(".dropdown-option[data-value='main']").trigger("click");
+    await flushPromises();
+
+    expect(aiPrDraftCancel).toHaveBeenCalledWith("draft-request");
+    expect(wrapper.findAll("button").some((button) => button.text() === "取消生成")).toBe(false);
+  });
+
+  it("分支变化后忽略迟到的 AI 草稿", async () => {
+    let resolveDraft!: (value: { title: string; body: string }) => void;
+    vi.mocked(aiPrDraft).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDraft = resolve;
+        }),
+    );
+    const { wrapper } = await mountPage();
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "AI 填充")!
+      .trigger("click");
+    const sourceSelect = wrapper.get('[aria-label="源分支"]');
+    await sourceSelect.trigger("click");
+    await wrapper.get(".dropdown-option[data-value='main']").trigger("click");
+    await flushPromises();
+
+    resolveDraft({ title: "stale title", body: "stale body" });
+    await flushPromises();
+
+    expect(
+      wrapper.get<HTMLInputElement>("input[placeholder='简要说明这次变更']").element.value,
+    ).toBe("");
+    expect(
+      wrapper.get<HTMLTextAreaElement>('textarea[aria-label="Markdown 描述"]').element.value,
+    ).toBe("");
+  });
+
+  it("模板重载后清理已不存在的选择", async () => {
+    const { wrapper } = await mountPage();
+    const templateSelect = wrapper.get('[aria-label="PR 模板"]');
+    await templateSelect.trigger("click");
+    await wrapper
+      .get(".dropdown-option[data-value='.github/PULL_REQUEST_TEMPLATE/feature.md']")
+      .trigger("click");
+    vi.mocked(prTemplates).mockResolvedValueOnce([] as PrTemplate[]);
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "重新加载")!
+      .trigger("click");
+    await flushPromises();
+
+    expect(templateSelect.text()).toContain("仓库暂无模板");
+    expect(
+      wrapper
+        .findAll("button")
+        .find((button) => button.text() === "应用模板")!
+        .attributes("disabled"),
+    ).toBeDefined();
   });
 });
