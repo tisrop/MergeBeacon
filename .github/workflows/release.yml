@@ -381,16 +381,12 @@ jobs:
           path: updater-fragments
           merge-multiple: true
 
-      - name: Fetch draft release data
+      - name: Fetch draft release assets
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ needs.prepare-release.outputs.release-id }}
         run: |
-          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-            > "$RUNNER_TEMP/release.json"
-          jq -r '.body // ""' "$RUNNER_TEMP/release.json" \
-            > "$RUNNER_TEMP/release-notes.txt"
           gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100" \
             | jq -s 'add' > "$RUNNER_TEMP/release-assets.json"
@@ -401,7 +397,7 @@ jobs:
           node .github/checks/updater-metadata.mjs assemble \
             --fragments updater-fragments \
             --assets "$RUNNER_TEMP/release-assets.json" \
-            --notes "$RUNNER_TEMP/release-notes.txt" \
+            --changelog docs/changelogs/latest.md \
             --version "${GITHUB_REF_NAME#v}" \
             --asset-download-url-prefix \
               "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \

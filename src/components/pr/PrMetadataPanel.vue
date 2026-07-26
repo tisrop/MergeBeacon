@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from "vue";
-import { prLabels, prParticipantSuggestions } from "@/api";
+import { listRepositoryLabels, prParticipantSuggestions } from "@/api";
 import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
+import { MAX_PR_TITLE_CHARS } from "@/constants/pr";
 import type {
   Platform,
   PlatformCapabilities,
@@ -238,7 +239,7 @@ async function loadLabelOptions(sequence: number): Promise<void> {
   if (!canManageLabels.value) return;
   labelsLoading.value = true;
   try {
-    const result = await prLabels(props.platform, props.owner, props.repo);
+    const result = await listRepositoryLabels(props.platform, props.owner, props.repo);
     if (sequence !== optionsSequence) return;
     const seen = new Set<string>();
     availableLabels.value = result.filter((label) => {
@@ -294,6 +295,10 @@ function submit(): void {
   const normalizedTitle = title.value.trim();
   if (!normalizedTitle) {
     validationError.value = "PR 标题不能为空";
+    return;
+  }
+  if (Array.from(normalizedTitle).length > MAX_PR_TITLE_CHARS) {
+    validationError.value = `PR 标题不能超过 ${MAX_PR_TITLE_CHARS} 个字符`;
     return;
   }
   validationError.value = "";
@@ -385,6 +390,7 @@ onUnmounted(invalidateOptions);
           v-model="title"
           data-testid="metadata-title"
           type="text"
+          :maxlength="MAX_PR_TITLE_CHARS"
           :disabled="!canEditTitleBody || saving"
         />
       </label>

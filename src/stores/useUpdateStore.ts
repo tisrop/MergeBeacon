@@ -12,6 +12,7 @@ import { getErrorMessage } from "@/utils/error";
 
 const AUTO_UPDATE_CHECK_KEY = "mergebeacon:auto-update-check";
 const LAST_UPDATE_CHECK_KEY = "mergebeacon:last-update-check";
+const DISMISSED_UPDATE_VERSION_KEY = "mergebeacon:dismissed-update-version";
 const LEGACY_KEY_PREFIX = "mergepilot:";
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -43,6 +44,7 @@ export const useUpdateStore = defineStore("update", () => {
   const isAutoUpdateCheckEnabled = ref(readUpdateStorage(AUTO_UPDATE_CHECK_KEY) !== "false");
   const isCheckingUpdate = ref(false);
   const updateResult = ref<UpdateCheckResult | null>(null);
+  const updatePromptVersion = ref<string | null>(null);
   const updateError = ref("");
   const isInstallingUpdate = ref(false);
   const isRestartingUpdate = ref(false);
@@ -83,11 +85,18 @@ export const useUpdateStore = defineStore("update", () => {
       writeUpdateStorage(LAST_UPDATE_CHECK_KEY, String(Date.now()));
       updateError.value = "";
       updateResult.value = null;
+      updatePromptVersion.value = null;
     }
 
     isCheckingUpdate.value = true;
     try {
-      updateResult.value = await checkForUpdates();
+      const result = await checkForUpdates();
+      updateResult.value = result;
+      if (isBackground) {
+        const dismissedVersion = readUpdateStorage(DISMISSED_UPDATE_VERSION_KEY);
+        updatePromptVersion.value =
+          result.available && result.version !== dismissedVersion ? result.version : null;
+      }
     } catch (error) {
       if (!isBackground) {
         updateError.value = getErrorMessage(error, "检查更新失败，请稍后重试");
@@ -101,6 +110,14 @@ export const useUpdateStore = defineStore("update", () => {
     if (!isAutoUpdateCheckEnabled.value || !isBackgroundCheckDue()) return;
     writeUpdateStorage(LAST_UPDATE_CHECK_KEY, String(Date.now()));
     await checkUpdate(true);
+  }
+
+  function dismissUpdatePrompt() {
+    const dismissedVersion = updatePromptVersion.value;
+    updatePromptVersion.value = null;
+    if (dismissedVersion) {
+      writeUpdateStorage(DISMISSED_UPDATE_VERSION_KEY, dismissedVersion);
+    }
   }
 
   async function setAutoUpdateCheckEnabled(enabled: boolean) {
@@ -123,6 +140,8 @@ export const useUpdateStore = defineStore("update", () => {
     ) {
       return;
     }
+
+    updatePromptVersion.value = null;
 
     if (result.update_mode === "portable") {
       if (!result.portable_download_url) {
@@ -202,6 +221,7 @@ export const useUpdateStore = defineStore("update", () => {
     isAutoUpdateCheckEnabled,
     isCheckingUpdate,
     updateResult,
+    updatePromptVersion,
     updateError,
     isInstallingUpdate,
     isRestartingUpdate,
@@ -211,6 +231,7 @@ export const useUpdateStore = defineStore("update", () => {
     updatePhase,
     checkUpdate,
     maybeCheckForUpdatesInBackground,
+    dismissUpdatePrompt,
     setAutoUpdateCheckEnabled,
     installUpdate,
     restartUpdate,

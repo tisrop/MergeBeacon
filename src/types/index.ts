@@ -295,6 +295,22 @@ export interface PrLabel {
   description: string | null;
 }
 
+export interface PrTemplate {
+  name: string;
+  title: string;
+  body: string;
+  source_path: string;
+}
+
+export interface IssueTemplate {
+  name: string;
+  description: string | null;
+  title: string;
+  body: string;
+  labels: string[];
+  source_path: string;
+}
+
 export interface PrCreateOutcome {
   number: number;
   detail: PrDetail | null;
@@ -569,6 +585,19 @@ export interface AiReviewRequest {
   context: PrContext | null;
   file_filter: string[] | null;
   focus: AiReviewFocus | null;
+}
+
+export interface AiPrDraftRequest {
+  source_branch: string;
+  target_branch: string;
+  commits: PrCommitSummary[];
+  diff: string;
+  template_body: string;
+}
+
+export interface AiPrDraftResult {
+  title: string;
+  body: string;
 }
 
 export interface AiStreamEvent<T> {

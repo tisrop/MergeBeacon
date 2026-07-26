@@ -27,6 +27,39 @@ function assertNonEmptyString(value, label) {
   }
 }
 
+export function extractAppUpdateNotes(changelog, version) {
+  assertNonEmptyString(changelog, "应用更新日志");
+  assertNonEmptyString(version, "version");
+
+  const lines = changelog
+    .replace(/^\uFEFF/, "")
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n")
+    .split("\n");
+  const targetHeadings = [];
+
+  for (const [index, line] of lines.entries()) {
+    const match = line.match(/^##\s+v?([0-9A-Za-z.+-]+)(?:\s|（|\(|$)/);
+    if (match?.[1] === version) targetHeadings.push(index);
+  }
+
+  if (targetHeadings.length === 0) {
+    throw new Error(`docs/changelogs/latest.md 缺少 v${version} 的应用更新说明`);
+  }
+  if (targetHeadings.length > 1) {
+    throw new Error(`docs/changelogs/latest.md 存在多个 v${version} 章节`);
+  }
+
+  const start = targetHeadings[0] + 1;
+  const nextHeadingOffset = lines.slice(start).findIndex((line) => /^##\s+/.test(line));
+  const end = nextHeadingOffset < 0 ? lines.length : start + nextHeadingOffset;
+  const notes = lines.slice(start, end).join("\n").trim();
+  if (!notes) {
+    throw new Error(`docs/changelogs/latest.md 中 v${version} 的应用更新说明为空`);
+  }
+  return notes;
+}
+
 function githubAssetName(label) {
   return label
     .trim()
@@ -257,16 +290,16 @@ async function main() {
   }
 
   if (command === "assemble") {
-    const [fragments, assets, notes] = await Promise.all([
+    const [fragments, assets, changelog] = await Promise.all([
       readFragments(options.fragments),
       readFile(options.assets, "utf8").then(JSON.parse),
-      readFile(options.notes, "utf8"),
+      readFile(options.changelog, "utf8"),
     ]);
     const metadata = assembleUpdaterMetadata({
       fragments,
       assets,
       version: options.version,
-      notes,
+      notes: extractAppUpdateNotes(changelog, options.version),
       pubDate: options["pub-date"] ?? new Date().toISOString(),
       assetDownloadUrlPrefix: options["asset-download-url-prefix"],
     });

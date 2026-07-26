@@ -4,12 +4,13 @@ use crate::vault::TokenVault;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 
 const UPDATE_OPERATION_ACTIVE_ERROR: &str = "已有更新安装或重启操作正在进行，请稍候";
-const AI_OPERATION_ACTIVE_ERROR: &str = "存在进行中的 AI 评审，请等待完成或取消后再安装更新";
-const UPDATE_BLOCKS_AI_ERROR: &str = "正在安装更新或准备重启，暂时无法开始 AI 评审";
+const AI_OPERATION_ACTIVE_ERROR: &str = "存在进行中的 AI 任务，请等待完成或取消后再安装更新";
+const UPDATE_BLOCKS_AI_ERROR: &str = "正在安装更新或准备重启，暂时无法开始 AI 任务";
 
 pub struct OperationCoordinator {
     transition: Mutex<()>,
@@ -73,14 +74,22 @@ struct AiTaskEntry {
     abort_handle: AbortHandle,
 }
 
+const AI_CANCEL_RACE_WINDOW: Duration = Duration::from_secs(30);
+
+#[derive(Default)]
+struct AiTaskRegistryState {
+    tasks: HashMap<String, AiTaskEntry>,
+    pending_cancellations: HashMap<String, Instant>,
+}
+
 pub struct AiTaskRegistry {
-    tasks: Mutex<HashMap<String, AiTaskEntry>>,
+    state: Mutex<AiTaskRegistryState>,
     next_generation: AtomicU64,
 }
 
 impl AiTaskRegistry {
     fn new() -> Self {
-        Self { tasks: Mutex::new(HashMap::new()), next_generation: AtomicU64::new(1) }
+        Self { state: Mutex::new(AiTaskRegistryState::default()), next_generation: AtomicU64::new(1) }
     }
 
     pub fn next_generation(&self) -> u64 {
@@ -88,22 +97,36 @@ impl AiTaskRegistry {
     }
 
     pub async fn replace(&self, request_id: String, generation: u64, abort_handle: AbortHandle) {
-        if let Some(previous) = self.tasks.lock().await.insert(request_id, AiTaskEntry { generation, abort_handle }) {
+        let mut state = self.state.lock().await;
+        Self::remove_expired_cancellations(&mut state);
+        if state.pending_cancellations.remove(&request_id).is_some() {
+            abort_handle.abort();
+            return;
+        }
+        if let Some(previous) = state.tasks.insert(request_id, AiTaskEntry { generation, abort_handle }) {
             previous.abort_handle.abort();
         }
     }
 
     pub async fn cancel(&self, request_id: &str) {
-        if let Some(task) = self.tasks.lock().await.remove(request_id) {
+        let mut state = self.state.lock().await;
+        Self::remove_expired_cancellations(&mut state);
+        if let Some(task) = state.tasks.remove(request_id) {
             task.abort_handle.abort();
+        } else {
+            state.pending_cancellations.insert(request_id.to_string(), Instant::now());
         }
     }
 
     pub async fn remove_if_current(&self, request_id: &str, generation: u64) {
-        let mut tasks = self.tasks.lock().await;
-        if tasks.get(request_id).is_some_and(|entry| entry.generation == generation) {
-            tasks.remove(request_id);
+        let mut state = self.state.lock().await;
+        if state.tasks.get(request_id).is_some_and(|entry| entry.generation == generation) {
+            state.tasks.remove(request_id);
         }
+    }
+
+    fn remove_expired_cancellations(state: &mut AiTaskRegistryState) {
+        state.pending_cancellations.retain(|_, cancelled_at| cancelled_at.elapsed() <= AI_CANCEL_RACE_WINDOW);
     }
 }
 
@@ -131,9 +154,34 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::{
-        OperationCoordinator, AI_OPERATION_ACTIVE_ERROR, UPDATE_BLOCKS_AI_ERROR, UPDATE_OPERATION_ACTIVE_ERROR,
+        AiTaskRegistry, OperationCoordinator, AI_OPERATION_ACTIVE_ERROR, UPDATE_BLOCKS_AI_ERROR,
+        UPDATE_OPERATION_ACTIVE_ERROR,
     };
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn cancellation_before_registration_aborts_late_ai_task() {
+        let registry = AiTaskRegistry::new();
+        let request_id = "draft-request".to_string();
+        registry.cancel(&request_id).await;
+        let task = tokio::spawn(std::future::pending::<()>());
+
+        registry.replace(request_id, registry.next_generation(), task.abort_handle()).await;
+
+        assert!(task.await.expect_err("task should be cancelled").is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn cancellation_aborts_registered_ai_task() {
+        let registry = AiTaskRegistry::new();
+        let request_id = "review-request".to_string();
+        let task = tokio::spawn(std::future::pending::<()>());
+        registry.replace(request_id.clone(), registry.next_generation(), task.abort_handle()).await;
+
+        registry.cancel(&request_id).await;
+
+        assert!(task.await.expect_err("task should be cancelled").is_cancelled());
+    }
 
     #[tokio::test]
     async fn update_is_rejected_until_all_ai_operations_finish() {

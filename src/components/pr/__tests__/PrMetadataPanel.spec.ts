@@ -1,11 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PrMetadataPanel from "../PrMetadataPanel.vue";
-import { prLabels, prParticipantSuggestions } from "@/api";
+import { listRepositoryLabels, prParticipantSuggestions } from "@/api";
 import type { PlatformCapabilities, PrDetail, PrLabel, PrMetadataUpdate, User } from "@/types";
 
 vi.mock("@/api", () => ({
-  prLabels: vi.fn(),
+  listRepositoryLabels: vi.fn(),
   prParticipantSuggestions: vi.fn(),
 }));
 
@@ -97,7 +97,7 @@ describe("PrMetadataPanel", () => {
       { id: 5, login: "Bob", name: "Bob", avatar_url: "" },
       { id: 6, login: "carol", name: "Carol", avatar_url: "" },
     ]);
-    vi.mocked(prLabels).mockResolvedValue([
+    vi.mocked(listRepositoryLabels).mockResolvedValue([
       { name: "bug", color: "d73a4a", description: "需要修复的问题" },
       { name: "feature", color: "a2eeef", description: "新功能" },
       { name: "documentation", color: null, description: null },
@@ -190,7 +190,7 @@ describe("PrMetadataPanel", () => {
         }),
       )
       .mockResolvedValueOnce([{ id: 8, login: "new-member", name: "New Member", avatar_url: "" }]);
-    vi.mocked(prLabels)
+    vi.mocked(listRepositoryLabels)
       .mockReturnValueOnce(
         new Promise<PrLabel[]>((resolve) => {
           resolveOldLabels = resolve;
@@ -280,6 +280,21 @@ describe("PrMetadataPanel", () => {
 
     expect(wrapper.emitted("save")).toBeUndefined();
     expect(wrapper.get('[role="alert"]').text()).toContain("PR 标题不能为空");
+  });
+
+  it("标题最多允许 255 个 Unicode 字符", async () => {
+    const wrapper = mountPanel();
+    await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
+    await flushPromises();
+    const titleInput = wrapper.get<HTMLInputElement>('[data-testid="metadata-title"]');
+
+    expect(titleInput.attributes("maxlength")).toBe("255");
+
+    await titleInput.setValue("界".repeat(256));
+    await wrapper.get("form").trigger("submit");
+
+    expect(wrapper.emitted("save")).toBeUndefined();
+    expect(wrapper.get('[role="alert"]').text()).toContain("PR 标题不能超过 255 个字符");
   });
 
   it("按平台使用参与者名称：Gitee 显示评审者和测试者", async () => {

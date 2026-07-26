@@ -6,7 +6,17 @@ import DiffViewer from "@/components/diff/DiffViewer.vue";
 import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 import AppSelect from "@/components/shared/AppSelect.vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
-import { prBranches, prCreate, prCreatePreview, prLabels, prParticipantSuggestions } from "@/api";
+import { MAX_PR_TITLE_CHARS } from "@/constants/pr";
+import {
+  aiPrDraft,
+  aiPrDraftCancel,
+  prBranches,
+  prCreate,
+  prCreatePreview,
+  listRepositoryLabels,
+  prParticipantSuggestions,
+  prTemplates,
+} from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { usePrStore } from "@/stores/usePrStore";
@@ -17,6 +27,7 @@ import type {
   PrBranchOptions,
   PrCreatePreview,
   PrLabel,
+  PrTemplate,
   User,
 } from "@/types";
 import { getErrorMessage } from "@/utils/error";
@@ -66,6 +77,14 @@ const labels = ref<string[]>([]);
 const availableLabels = ref<PrLabel[]>([]);
 const labelsLoading = ref(false);
 const labelsError = ref("");
+const templates = ref<PrTemplate[]>([]);
+const selectedTemplatePath = ref("");
+const templatesLoading = ref(false);
+const templatesError = ref("");
+const draftFillMode = ref<"empty" | "overwrite">("empty");
+const draftAssistantNotice = ref("");
+const aiDraftLoading = ref(false);
+const aiDraftError = ref("");
 const submitting = ref(false);
 const error = ref("");
 let branchSequence = 0;
@@ -73,6 +92,13 @@ let previewSequence = 0;
 let commitPreviewSequence = 0;
 let labelsSequence = 0;
 let participantsSequence = 0;
+let templatesSequence = 0;
+let aiDraftSequence = 0;
+let activeAiDraftRequestId: string | null = null;
+
+// Keep these limits aligned with validate_pr_draft_request and MAX_PR_DRAFT_DIFF_BYTES in Rust.
+const AI_DRAFT_REQUEST_DIFF_LIMIT_BYTES = 1_048_576;
+const AI_DRAFT_MODEL_DIFF_LIMIT_BYTES = 64 * 1024;
 
 function parsePlatform(value: unknown): Platform | null {
   return value === "github" || value === "gitlab" || value === "gitee" ? value : null;
@@ -212,6 +238,37 @@ const participantOptions = computed(() =>
     avatarUrl: participant.avatar_url,
   })),
 );
+const templateOptions = computed(() =>
+  templates.value.map((template) => ({
+    value: template.source_path,
+    label: template.name,
+  })),
+);
+const draftFillModeOptions = [
+  { value: "empty", label: "仅填空字段" },
+  { value: "overwrite", label: "覆盖全部" },
+];
+const selectedTemplate = computed(() =>
+  templates.value.find((template) => template.source_path === selectedTemplatePath.value),
+);
+const canFillWithAi = computed(
+  () =>
+    Boolean(preview.value?.commits.length) &&
+    Boolean(preview.value?.diff.diff.trim()) &&
+    !previewLoading.value &&
+    !aiDraftLoading.value,
+);
+const aiDraftDiffLimitNotice = computed(() => {
+  const diff = preview.value?.diff.diff ?? "";
+  const bytes = new TextEncoder().encode(diff).length;
+  if (bytes > AI_DRAFT_REQUEST_DIFF_LIMIT_BYTES) {
+    return "当前 Diff 超过 1 MiB，发送前会先截断；AI 最终仅基于前 64 KiB 生成草稿。";
+  }
+  if (bytes > AI_DRAFT_MODEL_DIFF_LIMIT_BYTES) {
+    return "Diff 较长，AI 仅基于前 64 KiB 生成草稿。";
+  }
+  return "";
+});
 const previewAdditions = computed(() =>
   preview.value?.diff.files.reduce((total, file) => total + file.additions, 0),
 );
@@ -280,6 +337,33 @@ function commitDate(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+function truncateUtf8Input(value: string, maxBytes: number): string {
+  const encoded = new TextEncoder().encode(value);
+  if (encoded.length <= maxBytes) return value;
+  return new TextDecoder().decode(encoded.subarray(0, maxBytes), { stream: true });
+}
+
+function cancelActiveAiDraft(): void {
+  const requestId = activeAiDraftRequestId;
+  activeAiDraftRequestId = null;
+  if (!requestId) return;
+  void aiPrDraftCancel(requestId).catch(() => {
+    // Cancellation is best-effort and must not be presented as an AI draft error.
+  });
+}
+
+function invalidateAiDraft(): void {
+  aiDraftSequence += 1;
+  aiDraftLoading.value = false;
+  cancelActiveAiDraft();
+}
+
+function cancelAiDraftByUser(): void {
+  invalidateAiDraft();
+  aiDraftError.value = "";
+  draftAssistantNotice.value = "已取消 AI 草稿生成。";
+}
+
 async function loadPreview(): Promise<void> {
   const target = targetRepository.value;
   const source = sourceRepository.value;
@@ -287,6 +371,9 @@ async function loadPreview(): Promise<void> {
   const nextSourceBranch = sourceBranch.value;
   const nextTargetBranch = targetBranch.value;
   const sequence = ++previewSequence;
+  invalidateAiDraft();
+  aiDraftError.value = "";
+  draftAssistantNotice.value = "";
   commitPreviewSequence += 1;
   preview.value = null;
   selectedDiffCommitSha.value = "";
@@ -319,6 +406,136 @@ async function loadPreview(): Promise<void> {
     previewError.value = getErrorMessage(cause, "无法生成 " + requestType.value + " 预览");
   } finally {
     if (sequence === previewSequence) previewLoading.value = false;
+  }
+}
+
+async function loadTemplates(): Promise<void> {
+  const target = targetRepository.value;
+  const platform = creationPlatform.value;
+  const sequence = ++templatesSequence;
+  templatesError.value = "";
+  if (!target) {
+    templatesLoading.value = false;
+    return;
+  }
+  templatesLoading.value = true;
+  try {
+    const result = await prTemplates(platform, target.owner, target.repo);
+    if (
+      sequence !== templatesSequence ||
+      platform !== creationPlatform.value ||
+      target.fullName !== targetRepository.value?.fullName
+    ) {
+      return;
+    }
+    const seen = new Set<string>();
+    templates.value = result.flatMap((template) => {
+      const path = template.source_path.trim();
+      if (!path || seen.has(path)) return [];
+      seen.add(path);
+      return [
+        {
+          ...template,
+          source_path: path,
+          name: template.name.trim() || path.split("/").at(-1) || path,
+        },
+      ];
+    });
+    if (!templates.value.some((template) => template.source_path === selectedTemplatePath.value)) {
+      selectedTemplatePath.value = "";
+    }
+  } catch (cause) {
+    if (sequence !== templatesSequence) return;
+    templatesError.value = getErrorMessage(cause, `无法读取仓库 ${requestType.value} 模板`);
+  } finally {
+    if (sequence === templatesSequence) templatesLoading.value = false;
+  }
+}
+
+function preservedDraftFieldsNotice(
+  source: string,
+  preserveTitle: boolean,
+  preserveBody: boolean,
+): string {
+  const fields = [preserveTitle ? "标题" : "", preserveBody ? "描述" : ""].filter(Boolean);
+  if (fields.length === 0) return "";
+  return `${source}未覆盖已有${fields.join("和")}；如需替换，请选择“覆盖全部”。`;
+}
+
+function applyTemplate(): void {
+  const template = selectedTemplate.value;
+  if (!template) return;
+  const overwrite = draftFillMode.value === "overwrite";
+  const preserveTitle = !overwrite && Boolean(template.title.trim()) && Boolean(title.value.trim());
+  const preserveBody = !overwrite && Boolean(body.value.trim());
+  if (template.title.trim() && !preserveTitle) title.value = template.title;
+  if (!preserveBody) {
+    body.value = template.body;
+    descriptionMode.value = "edit";
+  }
+  aiDraftError.value = "";
+  draftAssistantNotice.value = preservedDraftFieldsNotice("模板", preserveTitle, preserveBody);
+}
+
+async function fillWithAi(): Promise<void> {
+  const currentPreview = preview.value;
+  const target = targetRepository.value;
+  const source = sourceRepository.value;
+  if (!currentPreview || !target || !source || !canFillWithAi.value) return;
+
+  const platform = creationPlatform.value;
+  const nextSourceBranch = sourceBranch.value;
+  const nextTargetBranch = targetBranch.value;
+  const nextTemplatePath = selectedTemplatePath.value;
+  const nextFillMode = draftFillMode.value;
+  const currentTitle = title.value;
+  const currentBody = body.value;
+  const preserveTitle = nextFillMode === "empty" && Boolean(currentTitle.trim());
+  const preserveBody = nextFillMode === "empty" && Boolean(currentBody.trim());
+  aiDraftError.value = "";
+  draftAssistantNotice.value = preservedDraftFieldsNotice("AI", preserveTitle, preserveBody);
+  if (preserveTitle && preserveBody) return;
+
+  const sequence = ++aiDraftSequence;
+  const requestId = crypto.randomUUID();
+  activeAiDraftRequestId = requestId;
+  aiDraftLoading.value = true;
+  try {
+    const result = await aiPrDraft(requestId, {
+      source_branch: nextSourceBranch,
+      target_branch: nextTargetBranch,
+      commits: currentPreview.commits.slice(0, 100),
+      diff: truncateUtf8Input(currentPreview.diff.diff, AI_DRAFT_REQUEST_DIFF_LIMIT_BYTES),
+      template_body: selectedTemplate.value?.body ?? "",
+    });
+    if (
+      !result ||
+      sequence !== aiDraftSequence ||
+      platform !== creationPlatform.value ||
+      target.fullName !== targetRepository.value?.fullName ||
+      source.fullName !== sourceRepository.value?.fullName ||
+      nextSourceBranch !== sourceBranch.value ||
+      nextTargetBranch !== targetBranch.value ||
+      nextTemplatePath !== selectedTemplatePath.value ||
+      nextFillMode !== draftFillMode.value ||
+      currentTitle !== title.value ||
+      currentBody !== body.value ||
+      currentPreview !== preview.value
+    ) {
+      return;
+    }
+    if (!preserveTitle) title.value = result.title;
+    if (!preserveBody) {
+      body.value = result.body;
+      descriptionMode.value = "edit";
+    }
+    draftAssistantNotice.value = preservedDraftFieldsNotice("AI", preserveTitle, preserveBody);
+  } catch (cause) {
+    if (sequence !== aiDraftSequence) return;
+    aiDraftError.value = getErrorMessage(cause, `AI 生成 ${requestType.value} 草稿失败`);
+  } finally {
+    if (activeAiDraftRequestId === requestId) activeAiDraftRequestId = null;
+    if (sequence === aiDraftSequence) aiDraftLoading.value = false;
   }
 }
 
@@ -407,7 +624,7 @@ async function loadLabels(): Promise<void> {
   }
   labelsLoading.value = true;
   try {
-    const result = await prLabels(platform, target.owner, target.repo);
+    const result = await listRepositoryLabels(platform, target.owner, target.repo);
     if (sequence !== labelsSequence) return;
     const seen = new Set<string>();
     availableLabels.value = result.filter((label) => {
@@ -506,7 +723,14 @@ const canSubmit = computed(() => {
   const target = targetRepository.value;
   const source = sourceRepository.value;
   if (!target || !source || !platformCapabilities.value?.supports_pr_creation) return false;
-  if (!title.value.trim() || !sourceBranch.value || !targetBranch.value) return false;
+  const normalizedTitle = title.value.trim();
+  if (
+    !normalizedTitle ||
+    Array.from(normalizedTitle).length > MAX_PR_TITLE_CHARS ||
+    !sourceBranch.value ||
+    !targetBranch.value
+  )
+    return false;
   if (
     branchesLoading.value ||
     previewLoading.value ||
@@ -597,10 +821,25 @@ watch(
   () => void loadPreview(),
 );
 watch(selectedDiffCommitSha, () => void loadCommitPreview());
+watch(selectedTemplatePath, () => {
+  if (aiDraftLoading.value) invalidateAiDraft();
+});
+watch([title, body], () => {
+  if (aiDraftLoading.value) invalidateAiDraft();
+});
+watch(draftFillMode, () => {
+  draftAssistantNotice.value = "";
+  if (aiDraftLoading.value) invalidateAiDraft();
+});
 watch(
   () => [creationPlatform.value, targetRepository.value?.fullName] as const,
   async () => {
     const sequence = ++branchSequence;
+    templatesSequence += 1;
+    selectedTemplatePath.value = "";
+    templates.value = [];
+    templatesError.value = "";
+    void loadTemplates();
     void loadLabels();
     void loadParticipantSuggestions();
     sourceBranches.value = [];
@@ -628,6 +867,8 @@ onUnmounted(() => {
   commitPreviewSequence += 1;
   labelsSequence += 1;
   participantsSequence += 1;
+  templatesSequence += 1;
+  invalidateAiDraft();
 });
 </script>
 
@@ -838,12 +1079,93 @@ onUnmounted(() => {
         <div class="section-heading">
           <div>
             <h3>说明变更内容</h3>
-            <p>创建后仍可在详情页继续修改标题、描述和 Draft 状态。</p>
+            <p>可应用仓库模板，或让 AI 根据当前提交和 Diff 生成草稿。</p>
           </div>
         </div>
+        <div class="draft-assistant">
+          <div class="template-picker field">
+            <span>{{ requestType }} 模板</span>
+            <AppSelect
+              v-model="selectedTemplatePath"
+              :options="templateOptions"
+              :placeholder="
+                templatesLoading && templates.length === 0
+                  ? '加载模板中…'
+                  : templates.length
+                    ? '选择仓库模板'
+                    : '仓库暂无模板'
+              "
+              searchable
+              search-placeholder="搜索模板"
+              :aria-label="`${requestType} 模板`"
+            />
+          </div>
+          <div class="draft-fill-mode field">
+            <span>写入方式</span>
+            <AppSelect
+              v-model="draftFillMode"
+              :options="draftFillModeOptions"
+              size="sm"
+              aria-label="草稿写入方式"
+            />
+          </div>
+          <div class="draft-assistant-actions">
+            <button
+              class="btn btn-sm"
+              type="button"
+              :disabled="!selectedTemplate"
+              @click="applyTemplate"
+            >
+              应用模板
+            </button>
+            <button
+              class="btn btn-sm"
+              type="button"
+              :disabled="templatesLoading || !targetRepository"
+              @click="loadTemplates"
+            >
+              {{ templatesLoading ? "正在加载…" : "重新加载" }}
+            </button>
+            <button
+              class="btn btn-sm ai-draft-button"
+              type="button"
+              :disabled="!canFillWithAi"
+              @click="fillWithAi"
+            >
+              {{ aiDraftLoading ? "AI 生成中…" : "AI 填充" }}
+            </button>
+            <button
+              v-if="aiDraftLoading"
+              class="btn btn-sm"
+              type="button"
+              @click="cancelAiDraftByUser"
+            >
+              取消生成
+            </button>
+          </div>
+        </div>
+        <p v-if="templatesError" class="error-msg" role="alert">{{ templatesError }}</p>
+        <p v-if="aiDraftError" class="error-msg" role="alert">{{ aiDraftError }}</p>
+        <p v-if="aiDraftDiffLimitNotice" class="draft-assistant-warning" role="status">
+          {{ aiDraftDiffLimitNotice }}
+        </p>
+        <p v-if="draftAssistantNotice" class="draft-assistant-notice" role="status">
+          {{ draftAssistantNotice }}
+        </p>
+        <p class="draft-assistant-help">
+          默认仅填充空白字段；选择“覆盖全部”后，允许模板或 AI 替换已有内容。AI 填充复用 AI
+          服务设置中的模型与凭证，仅使用当前预览中的提交和
+          Diff；选择模板后会保留模板结构，不会自动创建
+          {{ requestType }}。
+        </p>
         <label class="field field-wide">
           <span>标题</span>
-          <input v-model="title" type="text" maxlength="1024" placeholder="简要说明这次变更" />
+          <input
+            v-model="title"
+            type="text"
+            :maxlength="MAX_PR_TITLE_CHARS"
+            placeholder="简要说明这次变更"
+          />
         </label>
         <div class="field field-wide description-field">
           <div class="description-toolbar">

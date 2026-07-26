@@ -13,6 +13,7 @@ import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import AiSettings from "@/components/ai/AiSettings.vue";
 import NotificationSettings from "@/components/notification/NotificationSettings.vue";
+import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
 import type { Platform } from "@/types";
 
 const auth = useAuthStore();
@@ -158,7 +159,7 @@ async function copyRecentErrorLogs() {
       <div class="settings-header page-heading">
         <div>
           <h2>设置</h2>
-          <p>管理代码平台显示方式与 AI 评审服务</p>
+          <p>管理代码平台显示方式与 AI 服务</p>
         </div>
       </div>
     </template>
@@ -280,14 +281,14 @@ async function copyRecentErrorLogs() {
             </svg>
           </span>
           <div>
-            <h3>AI 评审设置</h3>
-            <p>配置兼容 OpenAI 协议的模型服务与访问凭据。</p>
+            <h3>AI 服务设置</h3>
+            <p>配置评审与 PR / MR 草稿共用的模型服务和访问凭据。</p>
           </div>
         </div>
         <AiSettings />
       </section>
 
-      <section class="section">
+      <section id="app-update" class="section">
         <div class="section-heading update-heading">
           <span class="section-icon update" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -338,7 +339,12 @@ async function copyRecentErrorLogs() {
           </p>
           <p v-else-if="!isUpdateInstalled">下载完成后将安装更新，并由你确认何时重启应用。</p>
           <p v-else>更新已安装，重启应用后生效。</p>
-          <pre v-if="updateResult.notes" class="update-notes">{{ updateResult.notes }}</pre>
+          <MarkdownRenderer
+            v-if="updateResult.notes"
+            class="update-notes"
+            :content="updateResult.notes"
+            :breaks="false"
+          />
           <div v-if="isInstallingUpdate" class="update-progress" aria-live="polite">
             <progress
               v-if="updateProgressPercent !== null"

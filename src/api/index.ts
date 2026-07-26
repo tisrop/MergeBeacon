@@ -16,6 +16,7 @@ import type {
   PrMergeQueueStatus,
   PrBranchOptions,
   PrLabel,
+  PrTemplate,
   PrCreatePreview,
   PrCreatePreviewRequest,
   PrMetadataUpdate,
@@ -32,11 +33,14 @@ import type {
   IssueState,
   IssueSummary,
   Issue,
+  IssueTemplate,
   Paginated,
   RepoSummary,
   User,
   AuthLoginResult,
   AiConfig,
+  AiPrDraftRequest,
+  AiPrDraftResult,
   AiReviewRequest,
   AiReviewResult,
   SupportInfo,
@@ -248,12 +252,21 @@ export async function prBranches(
   return invoke("pr_branches", { platform, owner, repo });
 }
 
-export async function prLabels(
+// PR 与 Issue 共用仓库标签能力；后端命令沿用已有的 `pr_labels` 名称。
+export async function listRepositoryLabels(
   platform: Platform,
   owner: string,
   repo: string,
 ): Promise<PrLabel[]> {
   return invoke("pr_labels", { platform, owner, repo });
+}
+
+export async function prTemplates(
+  platform: Platform,
+  owner: string,
+  repo: string,
+): Promise<PrTemplate[]> {
+  return invoke("pr_templates", { platform, owner, repo });
 }
 
 export async function prParticipantSuggestions(
@@ -547,6 +560,14 @@ export async function issueCreate(
   return invoke("issue_create", { platform, owner, repo, title, body, labels });
 }
 
+export async function issueTemplates(
+  platform: string,
+  owner: string,
+  repo: string,
+): Promise<IssueTemplate[]> {
+  return invoke("issue_templates", { platform, owner, repo });
+}
+
 // ── AI ──
 export async function aiGetConfig(): Promise<AiConfig> {
   return invoke("ai_get_config");
@@ -558,6 +579,17 @@ export async function aiSaveConfig(config: AiConfig): Promise<void> {
 
 export async function aiSaveApiKey(apiKey: string): Promise<void> {
   return invoke("ai_save_api_key", { apiKey });
+}
+
+export async function aiPrDraft(
+  requestId: string,
+  request: AiPrDraftRequest,
+): Promise<AiPrDraftResult | null> {
+  return invoke("ai_pr_draft", { requestId, request });
+}
+
+export async function aiPrDraftCancel(requestId: string): Promise<void> {
+  return invoke("ai_pr_draft_cancel", { requestId });
 }
 
 export async function aiReview(request: AiReviewRequest): Promise<AiReviewResult> {

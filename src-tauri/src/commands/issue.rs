@@ -36,3 +36,14 @@ pub async fn issue_create(
     let p = build_platform(&platform, &state).map_err(CommandError::from)?;
     p.create_issue(&owner, &repo, &title, &body, &labels).await.map_err(CommandError::from)
 }
+
+#[tauri::command]
+pub async fn issue_templates(
+    platform: String,
+    owner: String,
+    repo: String,
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<IssueTemplate>> {
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.list_issue_templates(&owner, &repo).await.map_err(CommandError::from)
+}

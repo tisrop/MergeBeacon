@@ -36,6 +36,15 @@ const noUpdate: UpdateCheckResult = {
   update_mode: "installer",
 };
 
+const availableUpdate: UpdateCheckResult = {
+  current_version: "0.3.5",
+  available: true,
+  version: "0.4.0",
+  notes: "更新说明",
+  published_at: "2026-07-13",
+  update_mode: "installer",
+};
+
 describe("useUpdateStore", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -69,6 +78,55 @@ describe("useUpdateStore", () => {
     expect(checkForUpdates).toHaveBeenCalledOnce();
     expect(storage.get("mergebeacon:last-update-check")).toBeTruthy();
     expect(store.updateResult).toEqual(noUpdate);
+  });
+
+  it("稍后处理后持久化忽略当前版本，但新版本仍会提示", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue(availableUpdate);
+    const firstStore = useUpdateStore();
+
+    await firstStore.maybeCheckForUpdatesInBackground();
+
+    expect(firstStore.updatePromptVersion).toBe("0.4.0");
+    firstStore.dismissUpdatePrompt();
+    expect(firstStore.updatePromptVersion).toBeNull();
+    expect(storage.get("mergebeacon:dismissed-update-version")).toBe("0.4.0");
+
+    storage.set("mergebeacon:last-update-check", "1");
+    setActivePinia(createPinia());
+    const sameVersionStore = useUpdateStore();
+
+    await sameVersionStore.maybeCheckForUpdatesInBackground();
+
+    expect(sameVersionStore.updateResult).toEqual(availableUpdate);
+    expect(sameVersionStore.updatePromptVersion).toBeNull();
+
+    storage.set("mergebeacon:last-update-check", "1");
+    vi.mocked(checkForUpdates).mockResolvedValue({ ...availableUpdate, version: "0.5.0" });
+    setActivePinia(createPinia());
+    const newerVersionStore = useUpdateStore();
+
+    await newerVersionStore.maybeCheckForUpdatesInBackground();
+
+    expect(newerVersionStore.updatePromptVersion).toBe("0.5.0");
+  });
+
+  it("后台未发现新版本时不显示提示", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue(noUpdate);
+    const store = useUpdateStore();
+
+    await store.maybeCheckForUpdatesInBackground();
+
+    expect(store.updatePromptVersion).toBeNull();
+  });
+
+  it("手动检查发现新版本时继续使用设置页结果，不显示全局提示", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue(availableUpdate);
+    const store = useUpdateStore();
+
+    await store.checkUpdate();
+
+    expect(store.updateResult).toEqual(availableUpdate);
+    expect(store.updatePromptVersion).toBeNull();
   });
 
   it("用户关闭自动检查后启动不发起请求", async () => {

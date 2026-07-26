@@ -564,6 +564,10 @@ pub trait GitPlatform: Send + Sync {
 
     async fn list_labels(&self, owner: &str, repo: &str) -> Result<Vec<PrLabel>, AppError>;
 
+    async fn list_issue_templates(&self, owner: &str, repo: &str) -> Result<Vec<IssueTemplate>, AppError>;
+
+    async fn list_pr_templates(&self, owner: &str, repo: &str) -> Result<Vec<PrTemplate>, AppError>;
+
     async fn list_pr_participant_suggestions(&self, owner: &str, repo: &str) -> Result<Vec<User>, AppError>;
 
     async fn create_pull_request(&self, owner: &str, repo: &str, request: &PrCreateRequest) -> Result<u64, AppError>;

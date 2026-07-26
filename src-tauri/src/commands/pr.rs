@@ -51,8 +51,8 @@ fn validate_metadata_update(mut update: PrMetadataUpdate) -> Result<PrMetadataUp
     if update.title.is_empty() {
         return Err("PR 标题不能为空".into());
     }
-    if update.title.chars().count() > 1024 || update.title.contains(['\0', '\n', '\r']) {
-        return Err("PR 标题过长或包含非法字符".into());
+    if update.title.chars().count() > MAX_PR_TITLE_CHARS || update.title.contains(['\0', '\n', '\r']) {
+        return Err(format!("PR 标题不能超过 {MAX_PR_TITLE_CHARS} 个字符或包含非法字符"));
     }
     if update.body.len() > 1_048_576 || update.body.contains('\0') {
         return Err("PR 描述过长或包含非法字符".into());
@@ -119,8 +119,8 @@ fn validate_create_request(mut request: PrCreateRequest) -> Result<PrCreateReque
     if request.title.is_empty() {
         return Err("PR 标题不能为空".into());
     }
-    if request.title.chars().count() > 1024 || request.title.contains(['\0', '\n', '\r']) {
-        return Err("PR 标题过长或包含非法字符".into());
+    if request.title.chars().count() > MAX_PR_TITLE_CHARS || request.title.contains(['\0', '\n', '\r']) {
+        return Err(format!("PR 标题不能超过 {MAX_PR_TITLE_CHARS} 个字符或包含非法字符"));
     }
     if request.body.len() > 1_048_576 || request.body.contains('\0') {
         return Err("PR 描述过长或包含非法字符".into());
@@ -473,6 +473,22 @@ pub async fn pr_labels(
 }
 
 #[tauri::command]
+pub async fn pr_templates(
+    state: State<'_, AppState>,
+    platform: String,
+    owner: String,
+    repo: String,
+) -> CommandResult<Vec<PrTemplate>> {
+    let owner = owner.trim().to_string();
+    let repo = repo.trim().to_string();
+    if owner.is_empty() || repo.is_empty() {
+        return Err("仓库 owner 和名称不能为空".into());
+    }
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.list_pr_templates(&owner, &repo).await.map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub async fn pr_participant_suggestions(
     state: State<'_, AppState>,
     platform: String,
@@ -814,7 +830,7 @@ mod tests {
     };
     use crate::models::{
         PrCreatePreviewRequest, PrCreateRequest, PrDependencyCandidate, PrDetail, PrMetadataField,
-        PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary, User,
+        PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary, User, MAX_PR_TITLE_CHARS,
     };
     use crate::platform::capabilities_for;
 
@@ -1083,6 +1099,14 @@ mod tests {
         let mut candidate = create_request();
         candidate.title = "bad\ntitle".into();
         assert!(validate_create_request(candidate).unwrap_err().contains("标题"));
+
+        let mut candidate = create_request();
+        candidate.title = "a".repeat(MAX_PR_TITLE_CHARS + 1);
+        assert!(validate_create_request(candidate).unwrap_err().contains("不能超过 255 个字符"));
+
+        let mut candidate = create_request();
+        candidate.title = "界".repeat(MAX_PR_TITLE_CHARS);
+        assert!(validate_create_request(candidate).is_ok());
     }
 
     #[test]
@@ -1118,6 +1142,14 @@ mod tests {
         let mut candidate = update();
         candidate.body = "invalid\0body".into();
         assert!(validate_metadata_update(candidate).unwrap_err().contains("描述"));
+
+        let mut candidate = update();
+        candidate.title = "界".repeat(MAX_PR_TITLE_CHARS + 1);
+        assert!(validate_metadata_update(candidate).unwrap_err().contains("不能超过 255 个字符"));
+
+        let mut candidate = update();
+        candidate.title = "界".repeat(MAX_PR_TITLE_CHARS);
+        assert!(validate_metadata_update(candidate).is_ok());
 
         let mut candidate = update();
         candidate.reviewers = (0..101).map(|index| format!("user-{index}")).collect();
