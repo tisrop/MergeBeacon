@@ -17,6 +17,7 @@ import type {
   PrBranchOptions,
   PrLabel,
   PrTemplate,
+  PrDescriptionImageUpload,
   PrCreatePreview,
   PrCreatePreviewRequest,
   PrMetadataUpdate,
@@ -267,6 +268,24 @@ export async function prTemplates(
   repo: string,
 ): Promise<PrTemplate[]> {
   return invoke("pr_templates", { platform, owner, repo });
+}
+
+export async function prDescriptionImageUpload(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  fileName: string,
+  contentType: string,
+  contentBase64: string,
+): Promise<PrDescriptionImageUpload> {
+  return invoke("pr_description_image_upload", {
+    platform,
+    owner,
+    repo,
+    fileName,
+    contentType,
+    contentBase64,
+  });
 }
 
 export async function prParticipantSuggestions(

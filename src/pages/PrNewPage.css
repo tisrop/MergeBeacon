@@ -415,6 +415,21 @@
   caret-color: var(--color-primary);
 }
 
+.description-upload-status,
+.description-upload-help {
+  margin: var(--space-1) 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.description-upload-status {
+  color: var(--color-text-secondary);
+}
+
+.description-upload-help {
+  color: var(--color-text-tertiary);
+}
+
 .description-preview {
   min-height: 226px;
   padding: 10px 12px;

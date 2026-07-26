@@ -184,6 +184,7 @@ pub fn run() {
             pr::pr_branches,
             pr::pr_labels,
             pr::pr_templates,
+            pr::pr_description_image_upload,
             pr::pr_participant_suggestions,
             pr::pr_create_preview,
             pr::pr_create,

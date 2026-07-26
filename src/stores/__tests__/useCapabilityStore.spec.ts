@@ -22,6 +22,7 @@ const github: PlatformCapabilities = {
   supports_pr_label_management: true,
   supports_pr_milestone_management: true,
   supports_pr_creation: true,
+  supports_pr_description_image_upload: false,
   merge_queue_kind: "merge_queue",
 };
 

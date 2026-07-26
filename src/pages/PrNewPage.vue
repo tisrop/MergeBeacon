@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import DiffViewer from "@/components/diff/DiffViewer.vue";
@@ -13,6 +13,7 @@ import {
   prBranches,
   prCreate,
   prCreatePreview,
+  prDescriptionImageUpload,
   listRepositoryLabels,
   prParticipantSuggestions,
   prTemplates,
@@ -67,6 +68,10 @@ const commitPreviewError = ref("");
 const title = ref("");
 const body = ref("");
 const descriptionMode = ref<"edit" | "preview">("edit");
+const descriptionTextarea = ref<HTMLTextAreaElement | null>(null);
+const descriptionImageUploading = ref(false);
+const descriptionImageError = ref("");
+const descriptionImagePreviews = ref<Array<{ markdown: string; previewMarkdown: string }>>([]);
 const draft = ref(false);
 const reviewers = ref<string[]>([]);
 const assignees = ref<string[]>([]);
@@ -95,10 +100,25 @@ let participantsSequence = 0;
 let templatesSequence = 0;
 let aiDraftSequence = 0;
 let activeAiDraftRequestId: string | null = null;
+let descriptionImageSequence = 0;
+let activeDescriptionImageMarker = "";
 
 // Keep these limits aligned with validate_pr_draft_request and MAX_PR_DRAFT_DIFF_BYTES in Rust.
 const AI_DRAFT_REQUEST_DIFF_LIMIT_BYTES = 1_048_576;
 const AI_DRAFT_MODEL_DIFF_LIMIT_BYTES = 64 * 1024;
+const MAX_DESCRIPTION_IMAGE_BYTES = 5 * 1024 * 1024;
+const SUPPORTED_DESCRIPTION_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
+const DESCRIPTION_IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
 
 function parsePlatform(value: unknown): Platform | null {
   return value === "github" || value === "gitlab" || value === "gitee" ? value : null;
@@ -258,6 +278,12 @@ const canFillWithAi = computed(
     !previewLoading.value &&
     !aiDraftLoading.value,
 );
+const descriptionPreviewBody = computed(() =>
+  descriptionImagePreviews.value.reduce(
+    (content, image) => content.split(image.markdown).join(image.previewMarkdown),
+    body.value,
+  ),
+);
 const aiDraftDiffLimitNotice = computed(() => {
   const diff = preview.value?.diff.diff ?? "";
   const bytes = new TextEncoder().encode(diff).length;
@@ -341,6 +367,147 @@ function truncateUtf8Input(value: string, maxBytes: number): string {
   const encoded = new TextEncoder().encode(value);
   if (encoded.length <= maxBytes) return value;
   return new TextDecoder().decode(encoded.subarray(0, maxBytes), { stream: true });
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function descriptionImageFileName(file: File): string {
+  const fallback = `pasted-image-${Date.now()}.${DESCRIPTION_IMAGE_EXTENSIONS[file.type] ?? "png"}`;
+  const forbidden = new Set(["/", "\\", "\0", "\n", "\r", '"']);
+  const normalized = Array.from(file.name.trim())
+    .slice(0, 255)
+    .map((character) => (forbidden.has(character) ? "-" : character))
+    .join("");
+  return normalized || fallback;
+}
+
+function removeDescriptionImageMarker(marker: string): void {
+  if (marker && body.value.includes(marker)) body.value = body.value.replace(marker, "");
+}
+
+function invalidateDescriptionImageUpload(): void {
+  descriptionImageSequence += 1;
+  descriptionImageUploading.value = false;
+  removeDescriptionImageMarker(activeDescriptionImageMarker);
+  activeDescriptionImageMarker = "";
+  descriptionImagePreviews.value = [];
+}
+
+async function handleDescriptionPaste(event: ClipboardEvent): Promise<void> {
+  const clipboardItems = Array.from(event.clipboardData?.items ?? []);
+  if (clipboardItems.some((item) => item.kind === "string" && item.type === "text/plain")) {
+    return;
+  }
+  const imageItem = clipboardItems.find(
+    (item) => item.kind === "file" && item.type.startsWith("image/"),
+  );
+  if (!imageItem) return;
+  event.preventDefault();
+
+  if (descriptionImageUploading.value) {
+    descriptionImageError.value = "请等待当前图片上传完成后再粘贴下一张图片。";
+    return;
+  }
+  const target = targetRepository.value;
+  const file = imageItem.getAsFile();
+  if (!target || !file) {
+    descriptionImageError.value = "无法读取剪贴板中的图片。";
+    return;
+  }
+  if (!SUPPORTED_DESCRIPTION_IMAGE_TYPES.has(file.type)) {
+    descriptionImageError.value = "仅支持 PNG、JPEG、GIF 或 WebP 图片。";
+    return;
+  }
+  if (file.size <= 0 || file.size > MAX_DESCRIPTION_IMAGE_BYTES) {
+    descriptionImageError.value = "图片不能为空且单张不能超过 5 MiB。";
+    return;
+  }
+
+  const textarea = descriptionTextarea.value;
+  const start = textarea?.selectionStart ?? body.value.length;
+  const end = textarea?.selectionEnd ?? start;
+  const platform = creationPlatform.value;
+  const sequence = ++descriptionImageSequence;
+  const marker = `<!-- mergebeacon-image-upload:${sequence}-${Date.now()} -->`;
+  activeDescriptionImageMarker = marker;
+  descriptionImageError.value = "";
+  descriptionImageUploading.value = true;
+  body.value = `${body.value.slice(0, start)}${marker}${body.value.slice(end)}`;
+  await nextTick();
+  descriptionTextarea.value?.setSelectionRange(start + marker.length, start + marker.length);
+
+  try {
+    let uploadCapabilities = platformCapabilities.value;
+    if (!uploadCapabilities) {
+      try {
+        uploadCapabilities = await capabilities.load(platform);
+      } catch {
+        if (
+          sequence !== descriptionImageSequence ||
+          platform !== creationPlatform.value ||
+          target.fullName !== targetRepository.value?.fullName
+        ) {
+          return;
+        }
+        removeDescriptionImageMarker(marker);
+        activeDescriptionImageMarker = "";
+        descriptionImageError.value = "平台能力加载失败，请重试后重新粘贴图片。";
+        return;
+      }
+    }
+    if (
+      sequence !== descriptionImageSequence ||
+      platform !== creationPlatform.value ||
+      target.fullName !== targetRepository.value?.fullName ||
+      !body.value.includes(marker)
+    ) {
+      return;
+    }
+    if (!uploadCapabilities.supports_pr_description_image_upload) {
+      removeDescriptionImageMarker(marker);
+      activeDescriptionImageMarker = "";
+      descriptionImageError.value = `当前平台公开 API 不支持从应用粘贴上传 ${requestType.value} 描述图片。`;
+      return;
+    }
+
+    const content = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+    const result = await prDescriptionImageUpload(
+      platform,
+      target.owner,
+      target.repo,
+      descriptionImageFileName(file),
+      file.type,
+      content,
+    );
+    if (
+      sequence !== descriptionImageSequence ||
+      platform !== creationPlatform.value ||
+      target.fullName !== targetRepository.value?.fullName ||
+      !body.value.includes(marker)
+    ) {
+      return;
+    }
+    descriptionImagePreviews.value.push({
+      markdown: result.markdown,
+      previewMarkdown: result.preview_markdown,
+    });
+    body.value = body.value.replace(marker, result.markdown);
+    activeDescriptionImageMarker = "";
+  } catch (cause) {
+    if (sequence !== descriptionImageSequence) return;
+    removeDescriptionImageMarker(marker);
+    activeDescriptionImageMarker = "";
+    descriptionImageError.value = getErrorMessage(cause, "图片上传失败");
+  } finally {
+    if (sequence === descriptionImageSequence) descriptionImageUploading.value = false;
+  }
 }
 
 function cancelActiveAiDraft(): void {
@@ -734,6 +901,7 @@ const canSubmit = computed(() => {
   if (
     branchesLoading.value ||
     previewLoading.value ||
+    descriptionImageUploading.value ||
     submitting.value ||
     branchError.value ||
     previewError.value ||
@@ -793,16 +961,15 @@ async function handleSubmit(): Promise<void> {
 
 onMounted(async () => {
   const platform = creationPlatform.value;
-  try {
-    await capabilities.load(platform);
-  } catch {
+  const capabilitiesRequest = capabilities.load(platform).catch(() => {
     // Capability store exposes the loading error below.
-  }
+  });
   if (isGlobalCreation.value) await loadInitialRepositories(platform);
   selectInitialTarget();
   const previousSource = sourceFullName.value;
   selectInitialSource();
   if (sourceFullName.value === previousSource) await loadBranches();
+  await capabilitiesRequest;
 });
 
 watch(sourceFullName, () => {
@@ -826,6 +993,11 @@ watch(selectedTemplatePath, () => {
 });
 watch([title, body], () => {
   if (aiDraftLoading.value) invalidateAiDraft();
+  if (activeDescriptionImageMarker && !body.value.includes(activeDescriptionImageMarker)) {
+    descriptionImageSequence += 1;
+    activeDescriptionImageMarker = "";
+    descriptionImageUploading.value = false;
+  }
 });
 watch(draftFillMode, () => {
   draftAssistantNotice.value = "";
@@ -834,6 +1006,8 @@ watch(draftFillMode, () => {
 watch(
   () => [creationPlatform.value, targetRepository.value?.fullName] as const,
   async () => {
+    invalidateDescriptionImageUpload();
+    descriptionImageError.value = "";
     const sequence = ++branchSequence;
     templatesSequence += 1;
     selectedTemplatePath.value = "";
@@ -868,6 +1042,7 @@ onUnmounted(() => {
   labelsSequence += 1;
   participantsSequence += 1;
   templatesSequence += 1;
+  invalidateDescriptionImageUpload();
   invalidateAiDraft();
 });
 </script>
@@ -1191,15 +1366,39 @@ onUnmounted(() => {
               </button>
             </div>
           </div>
-          <textarea
-            v-if="descriptionMode === 'edit'"
-            v-model="body"
-            rows="10"
-            aria-label="Markdown 描述"
-            placeholder="说明背景、实现方式和验证结果…"
-          />
+          <template v-if="descriptionMode === 'edit'">
+            <textarea
+              ref="descriptionTextarea"
+              v-model="body"
+              rows="10"
+              aria-label="Markdown 描述"
+              placeholder="说明背景、实现方式和验证结果…"
+              @paste="handleDescriptionPaste"
+            />
+            <p v-if="descriptionImageUploading" class="description-upload-status" role="status">
+              <template v-if="platformCapabilities">图片上传中，请稍候…</template>
+              <template v-else>正在加载平台能力，完成后将继续上传…</template>
+            </p>
+            <p v-if="descriptionImageError" class="error-msg" role="alert">
+              {{ descriptionImageError }}
+            </p>
+            <p class="description-upload-help">
+              <template v-if="!platformCapabilities">
+                <template v-if="capabilities.errors[creationPlatform]">
+                  支持 Markdown；平台能力加载失败，粘贴图片时可重试加载。
+                </template>
+                <template v-else>支持 Markdown；正在加载当前平台的图片上传能力。</template>
+              </template>
+              <template v-else-if="platformCapabilities.supports_pr_description_image_upload">
+                支持 Markdown，可直接粘贴 PNG、JPEG、GIF 或 WebP 图片，单张不超过 5 MiB。
+              </template>
+              <template v-else>
+                支持 Markdown；当前平台公开 API 不支持从应用粘贴上传图片。
+              </template>
+            </p>
+          </template>
           <div v-else class="description-preview" role="tabpanel">
-            <MarkdownRenderer v-if="body.trim()" :content="body" />
+            <MarkdownRenderer v-if="body.trim()" :content="descriptionPreviewBody" />
             <p v-else class="description-preview-empty">暂无预览内容</p>
           </div>
         </div>

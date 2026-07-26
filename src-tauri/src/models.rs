@@ -376,6 +376,12 @@ pub struct PrTemplate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrDescriptionImageUpload {
+    pub markdown: String,
+    pub preview_markdown: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrCreateOutcome {
     pub number: u64,
     pub detail: Option<PrDetail>,
