@@ -94,12 +94,14 @@ describe("Release smoke 检查", () => {
     );
   });
 
-  it("发布必须在 smoke-check 通过后清理签名并发布", async () => {
+  it("发布必须在 smoke-check 通过后清理签名、添加下载引导并发布", async () => {
     const workflow = await readFile(".github/workflows/release.yml", "utf8");
     expect(workflow).toContain("release-smoke:");
     expect(workflow).toContain("release-smoke-windows-portable:");
     expect(workflow).toContain("needs: [release-smoke, release-smoke-windows-portable]");
     expect(workflow).toContain("needs: [cleanup-release-signatures, prepare-release]");
+    expect(workflow).toContain("node .github/checks/release-download-guide.mjs");
+    expect(workflow).toContain('-f body="$RELEASE_BODY"');
   });
 
   it("读取 Draft Release 资源的 smoke job 必须拥有 contents write 权限", async () => {
