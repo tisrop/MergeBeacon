@@ -163,6 +163,7 @@ pub fn run() {
             support::support_info,
             support::copy_support_info,
             support::copy_recent_error_logs,
+            support::clipboard_write_text,
             support::app_version,
             error_log_cmds::error_log_record,
             update::update_check,

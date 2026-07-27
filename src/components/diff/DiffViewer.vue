@@ -29,6 +29,7 @@ import { findPatchLocation as findStandardPatchLocation } from "@/utils/diffHunk
 import CodeSearchBar from "./CodeSearchBar.vue";
 import { useDiffCodeSearch } from "./useDiffCodeSearch";
 import { useDiffPopupStyle, useDiffViewportStyles } from "./useDiffLayoutStyles";
+import { useCopyToClipboard } from "@/composables/useCopyToClipboard";
 import { useDocumentStateClass } from "@/composables/useDynamicCssClass";
 
 const props = defineProps<{
@@ -1096,6 +1097,27 @@ function isFileViewed(path: string): boolean {
   return viewedFilePaths.value.has(path);
 }
 
+const {
+  copying: copyingFilePath,
+  copied: filePathCopied,
+  errorMessage: filePathCopyError,
+  copy: copyText,
+  resetCopyState: resetFilePathCopyState,
+} = useCopyToClipboard("无法写入系统剪贴板");
+const filePathCopyTitle = computed(() => {
+  if (copyingFilePath.value) return "正在复制文件路径";
+  if (filePathCopied.value) return "文件路径已复制";
+  return "复制文件路径";
+});
+
+async function copySelectedFilePath(): Promise<void> {
+  const path = selectedFile.value?.filename;
+  if (path) await copyText(path);
+}
+
+// 切换文件后，上一个文件的复制结果不能继续挂在新文件的路径旁边。
+watch(selectedFilePath, resetFilePathCopyState);
+
 async function toggleSelectedFileViewed(): Promise<void> {
   const context = reviewProgressContext.value;
   const path = selectedFile.value?.filename;
@@ -1917,8 +1939,61 @@ onUnmounted(() => {
             <span class="selected-file-name" :title="selectedFile?.filename">
               {{ selectedFile?.filename ?? "全部变更" }}
             </span>
+            <button
+              v-if="selectedFile"
+              class="navigator-toggle copy-file-path-button"
+              :class="{ copied: filePathCopied }"
+              type="button"
+              :disabled="copyingFilePath"
+              :title="filePathCopyTitle"
+              :aria-label="filePathCopyTitle"
+              @click="copySelectedFilePath"
+            >
+              <svg
+                v-if="filePathCopied"
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="m3.5 8.5 3 3 6-6.5"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect
+                  x="5.75"
+                  y="5.75"
+                  width="7.5"
+                  height="7.5"
+                  rx="1.5"
+                  stroke="currentColor"
+                  stroke-width="1.3"
+                />
+                <path
+                  d="M10.25 5.75V4.25a1.5 1.5 0 0 0-1.5-1.5h-4.5a1.5 1.5 0 0 0-1.5 1.5v4.5a1.5 1.5 0 0 0 1.5 1.5h1.5"
+                  stroke="currentColor"
+                  stroke-width="1.3"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
             <span v-if="selectedFile" class="selected-file-status">
               {{ statusDescriptions[selectedFile.status] }}
+            </span>
+            <span
+              v-if="filePathCopyError"
+              class="file-path-copy-error"
+              role="alert"
+              aria-atomic="true"
+              :title="filePathCopyError"
+            >
+              {{ filePathCopyError }}
             </span>
           </div>
           <div v-if="selectedFile" class="selected-file-stats" aria-label="当前文件变更统计">

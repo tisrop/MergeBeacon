@@ -190,6 +190,10 @@ export async function copyRecentErrorLogs(): Promise<number> {
   return invoke("copy_recent_error_logs");
 }
 
+export async function clipboardWriteText(text: string): Promise<void> {
+  return invoke("clipboard_write_text", { text });
+}
+
 // ── Repo ──
 export async function repoList(
   platform: Platform,
