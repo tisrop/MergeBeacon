@@ -19,6 +19,7 @@ import type {
   PrTemplate,
   PrDescriptionImageUpload,
   PrCreatePreview,
+  PrCommitList,
   PrCreatePreviewRequest,
   PrMetadataUpdate,
   PrMetadataUpdateOutcome,
@@ -189,6 +190,10 @@ export async function copyRecentErrorLogs(): Promise<number> {
   return invoke("copy_recent_error_logs");
 }
 
+export async function clipboardWriteText(text: string): Promise<void> {
+  return invoke("clipboard_write_text", { text });
+}
+
 // ── Repo ──
 export async function repoList(
   platform: Platform,
@@ -340,6 +345,15 @@ export async function prDiff(
   number: number,
 ): Promise<DiffResult> {
   return invoke("pr_diff", { platform, owner, repo, number });
+}
+
+export async function prCommits(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<PrCommitList> {
+  return invoke("pr_commits", { platform, owner, repo, number });
 }
 
 export async function prCompareDiff(

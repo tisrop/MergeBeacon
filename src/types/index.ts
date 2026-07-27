@@ -283,6 +283,23 @@ export interface PrCommitSummary {
   title: string;
   author_name: string;
   authored_at: string;
+  /** 父提交，按平台返回顺序保留；第一个元素是第一父提交。缺失时为空数组，不能当作“没有父提交”。 */
+  parent_shas: string[];
+}
+
+/**
+ * 提交列表被截断时缺失的是哪一端。
+ *
+ * 三个平台的原生顺序不同，丢弃方向也不同（GitHub / Gitee 丢最新，GitLab 丢最早），
+ * 因此由后端明确给出，前端不得假设丢的总是最早的提交。
+ */
+export type PrCommitTruncatedEnd = "oldest" | "newest";
+
+/** PR / MR 的提交列表，按「最早 → 最新」排序。 */
+export interface PrCommitList {
+  commits: PrCommitSummary[];
+  /** null 表示列表完整；否则说明缺失的一端。 */
+  truncated_end: PrCommitTruncatedEnd | null;
 }
 
 export interface PrBranchOptions {

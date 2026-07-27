@@ -74,6 +74,7 @@ function createPreview(
         title,
         author_name: "Alice",
         authored_at: "2026-07-19T10:00:00Z",
+        parent_shas: [],
       },
     ],
     diff: {

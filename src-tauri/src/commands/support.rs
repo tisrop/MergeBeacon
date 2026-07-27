@@ -9,6 +9,8 @@ use crate::state::AppState;
 use crate::vault::CredentialStorage;
 
 const SUPPORTED_PLATFORMS: [&str; 3] = ["github", "gitlab", "gitee"];
+/// 剪贴板只服务于界面上可见的短文本（文件路径、提交哈希、诊断信息），不做大文本导出通道。
+const MAX_CLIPBOARD_TEXT_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct SupportInfo {
@@ -31,6 +33,16 @@ struct SupportInfoInput<'a> {
     ai_configured: bool,
     ai_endpoint: &'a str,
     local_cache_available: bool,
+}
+
+fn validate_clipboard_text(text: &str) -> CommandResult<()> {
+    if text.trim().is_empty() {
+        return Err("没有可复制的内容".into());
+    }
+    if text.len() > MAX_CLIPBOARD_TEXT_BYTES {
+        return Err("内容过长，无法写入系统剪贴板".into());
+    }
+    Ok(())
 }
 
 fn platform_label(platform: &str) -> &str {
@@ -144,9 +156,19 @@ pub fn copy_recent_error_logs(app: AppHandle, error_logs: State<'_, ErrorLogStor
     Ok(count)
 }
 
+/// 界面里的复制动作统一走原生剪贴板插件：WebView 的 `navigator.clipboard`
+/// 在 macOS / Windows / Linux 三端可用性不一致，不能作为桌面端唯一路径。
+#[tauri::command]
+pub fn clipboard_write_text(app: AppHandle, text: String) -> CommandResult<()> {
+    validate_clipboard_text(&text)?;
+    app.clipboard().write_text(text).map_err(|error| CommandError::from(format!("写入系统剪贴板失败：{error}")))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_support_info, sanitized_ai_endpoint, SupportInfoInput};
+    use super::{
+        build_support_info, sanitized_ai_endpoint, validate_clipboard_text, SupportInfoInput, MAX_CLIPBOARD_TEXT_BYTES,
+    };
     use crate::vault::CredentialStorage;
 
     #[test]
@@ -191,5 +213,14 @@ mod tests {
         assert_eq!(info.credential_storage, "未配置");
         assert!(info.formatted.contains("AI 配置：未配置"));
         assert!(info.formatted.contains("本地评论缓存：不可用"));
+    }
+
+    #[test]
+    fn rejects_empty_and_oversized_clipboard_text() {
+        assert!(validate_clipboard_text("src/components/diff/DiffViewer.vue").is_ok());
+        assert!(validate_clipboard_text("").is_err());
+        assert!(validate_clipboard_text("   \n\t ").is_err());
+        assert!(validate_clipboard_text(&"a".repeat(MAX_CLIPBOARD_TEXT_BYTES)).is_ok());
+        assert!(validate_clipboard_text(&"a".repeat(MAX_CLIPBOARD_TEXT_BYTES + 1)).is_err());
     }
 }

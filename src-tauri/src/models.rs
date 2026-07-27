@@ -334,6 +334,35 @@ pub struct PrCommitSummary {
     pub title: String,
     pub author_name: String,
     pub authored_at: String,
+    /// 该提交的父提交，按平台返回顺序保留；第一个元素是第一父提交。
+    ///
+    /// 用于按 commit 维度查看变更时确定 compare 的 base：没有父提交信息时，
+    /// 前端只能回退到相邻提交或 PR base，不得把缺失当作“没有父提交”。
+    #[serde(default)]
+    pub parent_shas: Vec<String>,
+}
+
+/// 提交列表被截断时，缺失的是哪一端。
+///
+/// 三个平台的原生顺序不同，截断丢弃的方向也不同，因此必须由 adapter 明确给出，
+/// 前端不能假设丢的总是最早的提交。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrCommitTruncatedEnd {
+    /// 缺少更早的提交：列表首项不一定是 PR / MR 的第一个提交。
+    Oldest,
+    /// 缺少更新的提交：列表末项不一定是 PR / MR 的 head 提交。
+    Newest,
+}
+
+/// PR / MR 的提交列表，按“最早 → 最新”排序。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrCommitList {
+    pub commits: Vec<PrCommitSummary>,
+    /// `None` 表示列表完整；否则说明缺失的一端。
+    ///
+    /// 截断时前端必须显式提示范围不完整，并说明缺的是哪一端。
+    pub truncated_end: Option<PrCommitTruncatedEnd>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

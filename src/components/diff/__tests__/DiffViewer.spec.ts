@@ -5,18 +5,23 @@ import DiffViewer from "@/components/diff/DiffViewer.vue";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import type { DiffLocationRequest, DiffResult, Platform, PrFileContent } from "@/types";
 
-const { prFileContentMock, reviewViewedFilesListMock, reviewFileSetViewedMock } = vi.hoisted(
-  () => ({
-    prFileContentMock: vi.fn(),
-    reviewViewedFilesListMock: vi.fn(),
-    reviewFileSetViewedMock: vi.fn(),
-  }),
-);
+const {
+  prFileContentMock,
+  reviewViewedFilesListMock,
+  reviewFileSetViewedMock,
+  clipboardWriteTextMock,
+} = vi.hoisted(() => ({
+  prFileContentMock: vi.fn(),
+  reviewViewedFilesListMock: vi.fn(),
+  reviewFileSetViewedMock: vi.fn(),
+  clipboardWriteTextMock: vi.fn(),
+}));
 
 vi.mock("@/api", () => ({
   prFileContent: prFileContentMock,
   reviewViewedFilesList: reviewViewedFilesListMock,
   reviewFileSetViewed: reviewFileSetViewedMock,
+  clipboardWriteText: clipboardWriteTextMock,
 }));
 
 const storage = new Map<string, string>();
@@ -2042,6 +2047,54 @@ describe("DiffViewer 文件树", () => {
     expect(wrapper.get(".navigator-header").text()).toContain("-1");
   });
 
+  it("没有 Diff 内容时仍渲染 scope 插槽", async () => {
+    // 变更范围控件挂在这个插槽上。插槽必须位于 hasDiffContent 判断之外，
+    // 否则 compare 加载中、失败或结果为空时控件会跟着消失，
+    // 用户就没有入口切回整体 Diff。
+    const wrapper = mount(DiffViewer, {
+      props: { diff: null },
+      slots: { scope: '<div data-testid="scope-slot">变更范围</div>' },
+    });
+    await flushPromises();
+
+    expect(wrapper.find(".diff-empty").exists()).toBe(true);
+    expect(wrapper.get('[data-testid="scope-slot"]').text()).toBe("变更范围");
+  });
+
+  it("有 Diff 内容时 scope 插槽渲染在工作区之前", async () => {
+    const wrapper = mount(DiffViewer, {
+      props: { diff: standardizedDiff },
+      slots: { scope: '<div data-testid="scope-slot">变更范围</div>' },
+    });
+    await flushPromises();
+
+    const slot = wrapper.get('[data-testid="scope-slot"]');
+    // 插槽是 Diff 卡片的兄弟节点而不是其内部元素，才能在卡片消失时留存。
+    expect(slot.element.parentElement?.classList.contains("diff-viewer-wrapper")).toBe(true);
+    expect(
+      slot.element.compareDocumentPosition(wrapper.get(".diff-workspace").element) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("只读 Diff 不参与已查看进度，也不上报评审进度", async () => {
+    const wrapper = await mountViewer(standardizedDiff, {
+      platform: "github",
+      owner: "octocat",
+      repo: "hello-world",
+      prNumber: 42,
+      headSha: "range-head",
+      readOnly: true,
+    });
+
+    expect(wrapper.find(".viewed-toggle-button").exists()).toBe(false);
+    expect(wrapper.find(".review-progress-actions").exists()).toBe(false);
+    expect(wrapper.emitted("reviewProgress")).toBeUndefined();
+    expect(
+      storage.get("mergebeacon:review-progress:github:octocat:hello-world:42:range-head"),
+    ).toBe(undefined);
+  });
+
   it("按 PR 和 head SHA 保存本地文件已查看状态并显示进度", async () => {
     const wrapper = await mountViewer(standardizedDiff, {
       platform: "github",
@@ -2386,6 +2439,67 @@ index 1111111..2222222 100644
     expect(wrapper.get(".diff2html-container").text()).toContain("<safe>");
     expect(wrapper.find(".diff2html-container script").exists()).toBe(false);
     expect(wrapper.find(".diff2html-container safe").exists()).toBe(false);
+  });
+
+  it("文件名右侧的复制按钮把当前文件路径写入系统剪贴板", async () => {
+    clipboardWriteTextMock.mockReset();
+    clipboardWriteTextMock.mockResolvedValue(undefined);
+    const wrapper = await mountViewer();
+    const copyButton = wrapper.get(".copy-file-path-button");
+
+    // 按钮必须紧跟在文件名之后，复制的内容就是标题里展示的完整路径。
+    expect(
+      copyButton.element.previousElementSibling?.classList.contains("selected-file-name"),
+    ).toBe(true);
+    expect(copyButton.attributes("aria-label")).toBe("复制文件路径");
+
+    await copyButton.trigger("click");
+    await flushPromises();
+
+    expect(clipboardWriteTextMock).toHaveBeenCalledWith("src/components/App.ts");
+    expect(wrapper.get(".copy-file-path-button").classes()).toContain("copied");
+    expect(wrapper.get(".copy-file-path-button").attributes("aria-label")).toBe("文件路径已复制");
+    expect(wrapper.find(".file-path-copy-error").exists()).toBe(false);
+  });
+
+  it("切换文件后复制按钮回到初始状态并复制新文件路径", async () => {
+    clipboardWriteTextMock.mockReset();
+    clipboardWriteTextMock.mockResolvedValue(undefined);
+    const wrapper = await mountViewer();
+
+    await wrapper.get(".copy-file-path-button").trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".copy-file-path-button").classes()).toContain("copied");
+
+    await wrapper.get('[data-file-path="tests/App.spec.ts"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".copy-file-path-button").classes()).not.toContain("copied");
+
+    await wrapper.get(".copy-file-path-button").trigger("click");
+    await flushPromises();
+    expect(clipboardWriteTextMock).toHaveBeenLastCalledWith("tests/App.spec.ts");
+  });
+
+  it("剪贴板写入失败时就近提示且不显示已复制状态", async () => {
+    clipboardWriteTextMock.mockReset();
+    clipboardWriteTextMock.mockRejectedValue(new Error("clipboard denied"));
+    const wrapper = await mountViewer();
+
+    await wrapper.get(".copy-file-path-button").trigger("click");
+    await flushPromises();
+
+    const error = wrapper.get(".file-path-copy-error");
+    expect(error.attributes("role")).toBe("alert");
+    expect(error.attributes("aria-atomic")).toBe("true");
+    expect(error.text()).toContain("clipboard denied");
+    expect(wrapper.get(".copy-file-path-button").classes()).not.toContain("copied");
+  });
+
+  it("没有选中文件时不渲染复制按钮", async () => {
+    const wrapper = mount(DiffViewer, { props: { diff: null } });
+    await flushPromises();
+
+    expect(wrapper.find(".copy-file-path-button").exists()).toBe(false);
   });
 
   it("可以隐藏和恢复文件导航栏", async () => {

@@ -1,8 +1,8 @@
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
-    MergeQueueState, PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions,
-    PrMetadataUpdate, PrMilestone, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship,
-    User,
+    MergeQueueState, PrCommitTruncatedEnd, PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField,
+    PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary, ReadinessState, ReviewInboxCategory,
+    ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
 use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
@@ -426,6 +426,108 @@ async fn test_github_previews_a_single_commit() {
     assert_eq!(preview.commits[0].title, "Only this commit");
     assert_eq!(preview.base_revision.as_deref(), Some("parent123"));
     assert_eq!(preview.files[0].filename, "src/commit.rs");
+}
+
+#[tokio::test]
+async fn test_github_lists_pr_commits_oldest_first_with_parents() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/pulls/42/commits"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "sha": "c1",
+                "parents": [{ "sha": "base0" }],
+                "commit": {
+                    "message": "第一个提交\n\n详情",
+                    "author": { "name": "Alice", "date": "2026-07-19T10:00:00Z" }
+                }
+            },
+            {
+                "sha": "c2",
+                "parents": [{ "sha": "c1" }],
+                "commit": {
+                    "message": "第二个提交",
+                    "author": { "name": "", "date": "2026-07-19T11:00:00Z" }
+                },
+                "author": { "login": "bob" }
+            }
+        ])))
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let list = adapter.list_pr_commits("octocat", "hello-world", 42).await.unwrap();
+
+    assert!(list.truncated_end.is_none());
+    assert_eq!(list.commits.len(), 2);
+    assert_eq!(list.commits[0].sha, "c1");
+    assert_eq!(list.commits[0].title, "第一个提交");
+    assert_eq!(list.commits[0].author_name, "Alice");
+    assert_eq!(list.commits[0].parent_shas, vec!["base0".to_string()]);
+    assert_eq!(list.commits[1].sha, "c2");
+    // GitHub 提交作者缺少 name 时回退到登录名，避免展示空作者。
+    assert_eq!(list.commits[1].author_name, "bob");
+    assert_eq!(list.commits[1].parent_shas, vec!["c1".to_string()]);
+}
+
+#[tokio::test]
+async fn test_github_marks_pr_commits_truncated_beyond_the_page_limit() {
+    let mock_server = MockServer::start().await;
+    for page in 1..=3 {
+        let commits = (0..100)
+            .map(|index| {
+                serde_json::json!({
+                    "sha": format!("page{page}-{index}"),
+                    "parents": [],
+                    "commit": { "message": "提交", "author": { "name": "Alice", "date": "2026-07-19T10:00:00Z" } }
+                })
+            })
+            .collect::<Vec<_>>();
+        Mock::given(method("GET"))
+            .and(path("/repos/octocat/hello-world/pulls/42/commits"))
+            .and(query_param("page", page.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!(commits)))
+            .mount(&mock_server)
+            .await;
+    }
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let list = adapter.list_pr_commits("octocat", "hello-world", 42).await.unwrap();
+
+    // GitHub 最早在前，超出上限丢掉的是最新的提交。
+    assert_eq!(list.truncated_end, Some(PrCommitTruncatedEnd::Newest));
+    assert_eq!(list.commits.len(), 300);
+}
+
+#[tokio::test]
+async fn test_github_marks_pr_commits_truncated_at_the_platform_hard_limit() {
+    let mock_server = MockServer::start().await;
+    // GitHub 对该接口封顶 250 条：第 3 页只返回 50 条且没有下一页，
+    // 分页游标看起来是“正常结束”，但列表其实缺少最新的提交。
+    for (page, count) in [(1, 100), (2, 100), (3, 50)] {
+        let commits = (0..count)
+            .map(|index| {
+                serde_json::json!({
+                    "sha": format!("page{page}-{index}"),
+                    "parents": [],
+                    "commit": { "message": "提交", "author": { "name": "Alice", "date": "2026-07-19T10:00:00Z" } }
+                })
+            })
+            .collect::<Vec<_>>();
+        Mock::given(method("GET"))
+            .and(path("/repos/octocat/hello-world/pulls/42/commits"))
+            .and(query_param("page", page.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!(commits)))
+            .mount(&mock_server)
+            .await;
+    }
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let list = adapter.list_pr_commits("octocat", "hello-world", 42).await.unwrap();
+
+    assert_eq!(list.commits.len(), 250);
+    assert_eq!(list.truncated_end, Some(PrCommitTruncatedEnd::Newest));
 }
 
 #[tokio::test]

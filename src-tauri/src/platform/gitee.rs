@@ -344,6 +344,39 @@ impl GiteeAdapter {
         }
     }
 
+    /// 把 Gitee commit 对象映射为统一提交摘要。
+    ///
+    /// Gitee 在不同接口上分别使用 `sha`/`id` 和嵌套 `commit` 字段，这里统一兼容两种形状；
+    /// `fallback_sha` 只在两个标识都缺失时兜底。
+    fn map_commit_summary(commit: &Value, fallback_sha: &str) -> PrCommitSummary {
+        let detail = &commit["commit"];
+        let message = detail["message"].as_str().or_else(|| commit["message"].as_str()).unwrap_or("");
+        PrCommitSummary {
+            sha: commit["sha"].as_str().or_else(|| commit["id"].as_str()).unwrap_or(fallback_sha).to_string(),
+            title: message.lines().next().unwrap_or("").to_string(),
+            author_name: detail["author"]["name"]
+                .as_str()
+                .or_else(|| commit["author"]["name"].as_str())
+                .unwrap_or("")
+                .to_string(),
+            authored_at: detail["author"]["date"]
+                .as_str()
+                .or_else(|| commit["author"]["date"].as_str())
+                .unwrap_or("")
+                .to_string(),
+            parent_shas: commit["parents"]
+                .as_array()
+                .map(|parents| {
+                    parents
+                        .iter()
+                        .filter_map(|parent| parent["sha"].as_str().or_else(|| parent["id"].as_str()))
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
     fn unified_diff(value: &Value) -> String {
         let patch = Self::file_patch(value);
         if patch.is_empty() {
@@ -1284,20 +1317,10 @@ impl GitPlatform for GiteeAdapter {
                 })
                 .collect::<Vec<_>>();
             let diff = files_json.iter().map(Self::unified_diff).filter(|patch| !patch.is_empty()).collect();
-            let commit = &json["commit"];
-            let summary = PrCommitSummary {
-                sha: json["sha"].as_str().or_else(|| json["id"].as_str()).unwrap_or(commit_sha).to_string(),
-                title: commit["message"].as_str().unwrap_or("").lines().next().unwrap_or("").to_string(),
-                author_name: commit["author"]["name"].as_str().unwrap_or("").to_string(),
-                authored_at: commit["author"]["date"].as_str().unwrap_or("").to_string(),
-            };
+            let summary = Self::map_commit_summary(&json, commit_sha);
             return Ok(PrCreatePreviewData {
+                base_revision: summary.parent_shas.first().cloned(),
                 commits: vec![summary],
-                base_revision: json["parents"]
-                    .as_array()
-                    .and_then(|parents| parents.first())
-                    .and_then(|parent| parent["sha"].as_str().or_else(|| parent["id"].as_str()))
-                    .map(String::from),
                 diff,
                 files,
                 incomplete: false,
@@ -1347,22 +1370,8 @@ impl GitPlatform for GiteeAdapter {
             .commits
             .iter()
             .filter_map(|commit| {
-                let sha = commit["sha"].as_str().or_else(|| commit["id"].as_str())?.to_string();
-                let message = commit["commit"]["message"].as_str().or_else(|| commit["message"].as_str()).unwrap_or("");
-                Some(PrCommitSummary {
-                    sha,
-                    title: message.lines().next().unwrap_or("").to_string(),
-                    author_name: commit["commit"]["author"]["name"]
-                        .as_str()
-                        .or_else(|| commit["author"]["name"].as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    authored_at: commit["commit"]["author"]["date"]
-                        .as_str()
-                        .or_else(|| commit["author"]["date"].as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                })
+                let sha = commit["sha"].as_str().or_else(|| commit["id"].as_str())?;
+                Some(Self::map_commit_summary(commit, sha))
             })
             .collect();
         Ok(PrCreatePreviewData {
@@ -1691,6 +1700,23 @@ impl GitPlatform for GiteeAdapter {
         let diff = files_json.iter().map(Self::unified_diff).filter(|patch| !patch.is_empty()).collect::<String>();
 
         Ok((diff, files))
+    }
+
+    async fn list_pr_commits(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrCommitList, AppError> {
+        let endpoint = format!("{}/repos/{}/{}/pulls/{}/commits", self.base_url, owner, repo, pr_number);
+        // Gitee 与 GitHub 一致，已按“最早 → 最新”返回。
+        let (items, page_limit_reached) =
+            super::collect_json_pages_limited(self, &endpoint, super::MAX_PR_COMMIT_PAGES).await?;
+        let commits = items
+            .iter()
+            .filter_map(|commit| {
+                let sha = commit["sha"].as_str().or_else(|| commit["id"].as_str())?;
+                Some(Self::map_commit_summary(commit, sha))
+            })
+            .collect();
+        // 顺序是最早在前，因此截断丢掉的是最新的提交。
+        let truncated_end = page_limit_reached.then_some(PrCommitTruncatedEnd::Newest);
+        Ok(PrCommitList { commits, truncated_end })
     }
 
     async fn get_compare_diff(

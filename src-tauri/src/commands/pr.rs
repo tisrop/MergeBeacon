@@ -795,6 +795,21 @@ pub async fn pr_diff(
 }
 
 #[tauri::command]
+pub async fn pr_commits(
+    state: State<'_, AppState>,
+    platform: String,
+    owner: String,
+    repo: String,
+    number: u64,
+) -> CommandResult<PrCommitList> {
+    if owner.trim().is_empty() || repo.trim().is_empty() {
+        return Err("仓库 owner 和名称不能为空".into());
+    }
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    p.list_pr_commits(&owner, &repo, number).await.map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub async fn pr_compare_diff(
     state: State<'_, AppState>,
     platform: String,
