@@ -4,6 +4,7 @@ import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useRepoStore } from "@/stores/useRepoStore";
 import { usePrStore } from "@/stores/usePrStore";
+import type { Platform } from "@/types";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import PrFilterBar from "@/components/pr/PrFilterBar.vue";
 import PrCard from "@/components/pr/PrCard.vue";
@@ -14,6 +15,7 @@ const route = useRoute();
 const auth = useAuthStore();
 const repo = useRepoStore();
 const pr = usePrStore();
+let ignoreNextFilterChange = false;
 const createLabel = computed(() => (auth.activePlatform === "gitlab" ? "创建 MR" : "创建 PR"));
 const pageInput = ref("1");
 const pageJumpTarget = computed(() => Number(pageInput.value));
@@ -37,18 +39,30 @@ const truncatedListNotice = computed(() => {
   return "Gitee 当前仅返回部分 Pull Request，更多历史记录暂不可分页查看。";
 });
 
+function isCurrentRepoContext(platform: Platform, owner: string, repoName: string): boolean {
+  return (
+    auth.activePlatform === platform &&
+    repo.activeRepo?.owner === owner &&
+    repo.activeRepo.repo === repoName
+  );
+}
+
 async function fetchPrs() {
   if (!auth.isLoggedIn || !repo.activeRepo) return;
   const { owner, repo: repoName } = repo.activeRepo;
   const platform = auth.activePlatform;
-  await pr.fetchStateCounts(platform, owner, repoName);
   await pr.fetchPrList(platform, owner, repoName);
+  if (!isCurrentRepoContext(platform, owner, repoName)) return;
+  await pr.fetchStateCounts(platform, owner, repoName);
 }
 
-async function fetchPrPage() {
+async function fetchPrPage(refreshStateCounts = false) {
   if (!auth.isLoggedIn || !repo.activeRepo) return;
   const { owner, repo: repoName } = repo.activeRepo;
-  await pr.fetchPrList(auth.activePlatform, owner, repoName);
+  const platform = auth.activePlatform;
+  await pr.fetchPrList(platform, owner, repoName);
+  if (!refreshStateCounts || !isCurrentRepoContext(platform, owner, repoName)) return;
+  await pr.fetchStateCounts(platform, owner, repoName);
 }
 
 function switchToFork() {
@@ -91,18 +105,20 @@ watch(
 watch(
   () => [auth.activePlatform, repo.activeRepo] as const,
   () => {
-    pr.clearContext();
+    if (pr.clearContext()) {
+      ignoreNextFilterChange = true;
+    }
     fetchPrs();
   },
 );
 watch(
   () => [pr.filters.state, pr.filters.page, pr.perPage] as const,
   ([state], [previousState]) => {
-    if (state !== previousState) {
-      fetchPrs();
+    if (ignoreNextFilterChange) {
+      ignoreNextFilterChange = false;
       return;
     }
-    fetchPrPage();
+    fetchPrPage(state !== previousState);
   },
 );
 watch(

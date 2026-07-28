@@ -14,6 +14,14 @@ const item: PrSummary = {
   labels: [],
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 const mocks = vi.hoisted(() => ({
   router: { push: vi.fn() },
   route: { query: {} as Record<string, string> },
@@ -42,7 +50,7 @@ const mocks = vi.hoisted(() => ({
     stateCounts: { open: 1, closed: 1, merged: 0, all: 2 },
     fetchStateCounts: vi.fn(),
     fetchPrList: vi.fn(),
-    clearContext: vi.fn(),
+    clearContext: vi.fn(() => false),
     prevPage: vi.fn(),
     nextPage: vi.fn(),
     setPage: vi.fn(),
@@ -52,6 +60,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const reactivePrStore = reactive(mocks.prStore);
+const reactiveRepoStore = reactive(mocks.repoStore);
 
 enableAutoUnmount(afterEach);
 
@@ -60,7 +69,7 @@ vi.mock("vue-router", () => ({
   useRoute: () => mocks.route,
 }));
 vi.mock("@/stores/useAuthStore", () => ({ useAuthStore: () => mocks.authStore }));
-vi.mock("@/stores/useRepoStore", () => ({ useRepoStore: () => mocks.repoStore }));
+vi.mock("@/stores/useRepoStore", () => ({ useRepoStore: () => reactiveRepoStore }));
 vi.mock("@/stores/usePrStore", () => ({ usePrStore: () => reactivePrStore }));
 
 function mountPage(platform: Platform) {
@@ -104,6 +113,8 @@ describe("PrListPage 截断提示", () => {
   afterEach(() => {
     mocks.authStore.activePlatform = "github";
     mocks.authStore.isLoggedIn = false;
+    mocks.repoStore.activeRepo = { owner: "team", repo: "repo" };
+    mocks.repoStore.activeFullName = "team/repo";
     mocks.prStore.list = [];
     mocks.prStore.listTruncated = true;
     mocks.prStore.listTotalCount = 1234;
@@ -113,6 +124,8 @@ describe("PrListPage 截断提示", () => {
     mocks.prStore.perPage = 20;
     mocks.prStore.fetchPrList.mockReset();
     mocks.prStore.fetchStateCounts.mockReset();
+    mocks.prStore.clearContext.mockReset();
+    mocks.prStore.clearContext.mockReturnValue(false);
     mocks.prStore.setPage.mockReset();
     mocks.prStore.setFilter.mockReset();
     mocks.prStore.prevPage.mockReset();
@@ -185,6 +198,91 @@ describe("PrListPage 截断提示", () => {
     expect(mocks.prStore.filters.page).toBe(1);
     expect(mocks.prStore.fetchPrList).toHaveBeenCalledWith("github", "team", "repo");
     expect(mocks.prStore.fetchStateCounts).not.toHaveBeenCalled();
+  });
+
+  it("优先完成 PR 列表请求后再刷新状态计数", async () => {
+    mocks.authStore.isLoggedIn = true;
+    const listRequest = deferred<void>();
+    mocks.prStore.fetchPrList.mockReturnValueOnce(listRequest.promise);
+
+    mountPage("github");
+    await Promise.resolve();
+
+    expect(mocks.prStore.fetchPrList).toHaveBeenCalledOnce();
+    expect(mocks.prStore.fetchStateCounts).not.toHaveBeenCalled();
+
+    listRequest.resolve();
+    await flushPromises();
+
+    expect(mocks.prStore.fetchStateCounts).toHaveBeenCalledOnce();
+  });
+
+  it("切换状态筛选时优先请求 PR 列表，完成后刷新状态计数", async () => {
+    mocks.authStore.isLoggedIn = true;
+    mocks.prStore.filters.state = "open";
+    const wrapper = mountPage("github");
+    await flushPromises();
+    mocks.prStore.fetchPrList.mockClear();
+    mocks.prStore.fetchStateCounts.mockClear();
+    const listRequest = deferred<void>();
+    mocks.prStore.fetchPrList.mockReturnValueOnce(listRequest.promise);
+
+    await wrapper.findAll(".filters button")[1].trigger("click");
+    await Promise.resolve();
+
+    expect(mocks.prStore.setFilter).toHaveBeenCalledWith("closed");
+    expect(mocks.prStore.fetchPrList).toHaveBeenCalledOnce();
+    expect(mocks.prStore.fetchStateCounts).not.toHaveBeenCalled();
+
+    listRequest.resolve();
+    await flushPromises();
+
+    expect(mocks.prStore.fetchStateCounts).toHaveBeenCalledOnce();
+    expect(mocks.prStore.fetchStateCounts).toHaveBeenCalledWith("github", "team", "repo");
+  });
+
+  it("切换仓库后不再刷新迟到列表所属仓库的状态计数", async () => {
+    mocks.authStore.isLoggedIn = true;
+    const oldListRequest = deferred<void>();
+    mocks.prStore.fetchPrList
+      .mockReturnValueOnce(oldListRequest.promise)
+      .mockResolvedValueOnce(undefined);
+    mountPage("github");
+    await Promise.resolve();
+
+    reactiveRepoStore.activeRepo = { owner: "other", repo: "repo" };
+    await flushPromises();
+
+    expect(mocks.prStore.fetchStateCounts).toHaveBeenCalledOnce();
+    expect(mocks.prStore.fetchStateCounts).toHaveBeenCalledWith("github", "other", "repo");
+
+    oldListRequest.resolve();
+    await flushPromises();
+
+    expect(mocks.prStore.fetchStateCounts).toHaveBeenCalledOnce();
+  });
+
+  it("进入不同仓库时恢复开放状态且只请求一次列表", async () => {
+    mocks.authStore.isLoggedIn = true;
+    mountPage("github");
+    await flushPromises();
+    mocks.prStore.fetchPrList.mockClear();
+    mocks.prStore.fetchStateCounts.mockClear();
+    mocks.prStore.filters.state = "closed";
+    mocks.prStore.filters.page = 3;
+    mocks.prStore.clearContext.mockImplementationOnce(() => {
+      reactivePrStore.filters.state = "open";
+      reactivePrStore.filters.page = 1;
+      return true;
+    });
+
+    reactiveRepoStore.activeRepo = { owner: "other", repo: "repo" };
+    await flushPromises();
+
+    expect(mocks.prStore.clearContext).toHaveBeenCalledOnce();
+    expect(mocks.prStore.filters).toEqual({ state: "open", page: 1 });
+    expect(mocks.prStore.fetchPrList).toHaveBeenCalledOnce();
+    expect(mocks.prStore.fetchPrList).toHaveBeenCalledWith("github", "other", "repo");
   });
 
   it.each([

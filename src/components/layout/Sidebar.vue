@@ -146,6 +146,7 @@ function selectPlatform(p: Platform) {
 function selectRepo(r: { owner: string; repo: string }, platform: Platform) {
   auth.setActivePlatform(platform);
   repo.setActiveRepo(r.owner, r.repo, platform);
+  pr.clearContext();
   router.push({ path: "/pr", query: { _t: Date.now().toString() } });
 }
 

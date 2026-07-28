@@ -143,6 +143,36 @@ describe("usePrStore", () => {
     await pending;
   });
 
+  it("切换仓库时恢复开放状态筛选和第一页", async () => {
+    vi.mocked(prList)
+      .mockResolvedValueOnce({ items: [], page: 1, total_pages: 5, total_count: 0 })
+      .mockResolvedValueOnce({ items: [], page: 1, total_pages: 1, total_count: 0 });
+    const store = usePrStore();
+    await store.fetchPrList("github", "first", "repo");
+    store.setFilter("closed");
+    store.setPage(3);
+    store.clearContext();
+
+    await store.fetchPrList("github", "second", "repo");
+
+    expect(store.filters).toEqual({ state: "open", page: 1 });
+    expect(prList).toHaveBeenLastCalledWith("github", "second", "repo", "open", 1, 20);
+  });
+
+  it("刷新同一仓库时保留当前状态筛选", async () => {
+    vi.mocked(prList)
+      .mockResolvedValueOnce({ items: [], page: 1, total_pages: 1, total_count: 0 })
+      .mockResolvedValueOnce({ items: [], page: 1, total_pages: 1, total_count: 0 });
+    const store = usePrStore();
+    await store.fetchPrList("github", "owner", "repo");
+    store.setFilter("merged");
+
+    await store.fetchPrList("github", "owner", "repo");
+
+    expect(store.filters.state).toBe("merged");
+    expect(prList).toHaveBeenLastCalledWith("github", "owner", "repo", "merged", 1, 20);
+  });
+
   it("详情上下文变化且请求返回 404 时清除旧详情并显示明确提示", async () => {
     const oldDetail: PrDetail = {
       summary: {
