@@ -107,6 +107,7 @@ export interface PrSummary {
   created_at: string;
   updated_at: string;
   labels: string[];
+  label_colors?: Record<string, string>;
   status?: PrStatusSummary | null;
 }
 

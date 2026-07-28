@@ -935,6 +935,7 @@ mod tests {
                 state: PrState::Open,
                 created_at: String::new(),
                 updated_at: "2026-07-18T00:00:00Z".into(),
+                label_colors: Default::default(),
                 labels: vec!["bug".into()],
                 status: None,
             },

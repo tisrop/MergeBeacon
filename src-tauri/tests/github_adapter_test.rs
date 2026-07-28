@@ -548,7 +548,10 @@ async fn test_github_list_prs() {
                 "created_at": "2025-01-01T00:00:00Z",
                 "updated_at": "2025-01-02T00:00:00Z",
                 "user": { "id": 1, "login": "dev1", "name": "", "avatar_url": "" },
-                "labels": [{ "name": "bug" }, { "name": "priority" }]
+                "labels": [
+                    { "name": "bug", "color": "d73a4a" },
+                    { "name": "priority", "color": "fbca04" }
+                ]
             },
             {
                 "number": 43,
@@ -594,6 +597,8 @@ async fn test_github_list_prs() {
     assert_eq!(result.items.len(), 2);
     assert_eq!(result.items[0].number, 42);
     assert_eq!(result.items[0].title, "Fix bug in parser");
+    assert_eq!(result.items[0].label_colors.get("bug").map(String::as_str), Some("d73a4a"));
+    assert_eq!(result.items[0].label_colors.get("priority").map(String::as_str), Some("fbca04"));
     assert!(matches!(result.items[0].state, mergebeacon_lib::models::PrState::Open));
     let status = result.items[0].status.as_ref().expect("open PR should expose status summary");
     assert_eq!(status.status, ReadinessState::Ready);
@@ -2468,6 +2473,7 @@ async fn test_github_updates_pull_request_metadata() {
             state: PrState::Open,
             created_at: "2026-07-16T00:00:00Z".into(),
             updated_at: "2026-07-17T00:00:00Z".into(),
+            label_colors: Default::default(),
             labels: vec!["old-label".into()],
             status: None,
         },

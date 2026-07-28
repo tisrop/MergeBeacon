@@ -36,6 +36,31 @@ describe("PrCard", () => {
     expect(wrapper.get(".status-summary").attributes("title")).toBe("可合并");
   });
 
+  it("使用 GitHub 返回的标签背景色并自动选择可读文字色", () => {
+    const wrapper = mount(PrCard, {
+      props: {
+        pr: pr({
+          labels: ["priority", "documentation"],
+          label_colors: { priority: "fbca04", documentation: "0075ca" },
+        }),
+      },
+    });
+
+    const tags = wrapper.findAll(".label-tag");
+    expect(tags).toHaveLength(2);
+    expect(
+      tags.every((tag) =>
+        tag.classes().some((name) => name.startsWith("mb-static-label-tag-color-")),
+      ),
+    ).toBe(true);
+    expect(document.querySelector("style[data-mergebeacon-dynamic-css]")?.textContent).toContain(
+      "--label-tag-background: #fbca04; --label-tag-foreground: #1f2328",
+    );
+    expect(document.querySelector("style[data-mergebeacon-dynamic-css]")?.textContent).toContain(
+      "--label-tag-background: #0075ca; --label-tag-foreground: #ffffff",
+    );
+  });
+
   it("被阻塞的 Open PR 展示 Draft、冲突和具体阻塞原因", () => {
     const wrapper = mount(PrCard, {
       props: {
