@@ -117,7 +117,10 @@ describe("ReviewInboxPage", () => {
     expect(wrapper.text()).toContain("可合并");
     expect(wrapper.text()).toContain("被阻塞");
 
-    await wrapper.get('input[type="search"]').setValue("github-repo");
+    const repositoryFilter = wrapper.get('input[type="search"]');
+    expect(repositoryFilter.classes()).toContain("input");
+
+    await repositoryFilter.setValue("github-repo");
     expect(wrapper.findAll(".inbox-card")).toHaveLength(1);
     expect(wrapper.get(".repository-name").text()).toBe("team/github-repo");
   });

@@ -65,8 +65,14 @@ describe("SettingsPage 诊断信息", () => {
 
   it("为应用更新区块提供稳定的路由锚点", () => {
     const wrapper = mountPage();
+    const sections = wrapper.findAll(".section");
 
+    expect(sections).toHaveLength(5);
+    expect(sections.every((section) => section.classes().includes("card"))).toBe(true);
     expect(wrapper.get("#app-update").text()).toContain("应用更新");
+    expect(wrapper.get("#app-update").classes()).toEqual(
+      expect.arrayContaining(["card", "section"]),
+    );
   });
 
   it("将 AI 配置明确描述为评审与草稿共用服务", () => {

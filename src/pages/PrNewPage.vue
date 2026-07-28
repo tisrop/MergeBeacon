@@ -1061,7 +1061,7 @@ onUnmounted(() => {
     </template>
 
     <form class="pr-create-form" @submit.prevent="handleSubmit">
-      <section class="form-section">
+      <section class="card form-section">
         <div class="section-heading">
           <div>
             <h3>选择变更来源</h3>
@@ -1146,7 +1146,7 @@ onUnmounted(() => {
             sourceBranch === targetBranch
           )
         "
-        class="form-section preview-section"
+        class="card form-section preview-section"
       >
         <div class="section-heading preview-heading">
           <div>
@@ -1250,7 +1250,7 @@ onUnmounted(() => {
         </template>
       </section>
 
-      <section class="form-section">
+      <section class="card form-section">
         <div class="section-heading">
           <div>
             <h3>说明变更内容</h3>
@@ -1337,6 +1337,7 @@ onUnmounted(() => {
           <span>标题</span>
           <input
             v-model="title"
+            class="input"
             type="text"
             :maxlength="MAX_PR_TITLE_CHARS"
             placeholder="简要说明这次变更"
@@ -1370,6 +1371,7 @@ onUnmounted(() => {
             <textarea
               ref="descriptionTextarea"
               v-model="body"
+              class="input"
               rows="10"
               aria-label="Markdown 描述"
               placeholder="说明背景、实现方式和验证结果…"
@@ -1411,7 +1413,7 @@ onUnmounted(() => {
         </label>
       </section>
 
-      <section class="form-section">
+      <section class="card form-section">
         <div class="section-heading">
           <div>
             <h3>参与者与分类</h3>
@@ -1446,7 +1448,7 @@ onUnmounted(() => {
             />
           </label>
           <label v-if="platformCapabilities?.supports_pr_label_management" class="field">
-            <span>{{ isGitee ? "标签" : "Labels" }}</span>
+            <span>标签</span>
             <AppMultiSelect
               v-model="labels"
               :options="labelOptions"
@@ -1454,7 +1456,7 @@ onUnmounted(() => {
               search-placeholder="搜索标签"
               empty-text="仓库暂无标签"
               empty-search-text="没有匹配标签"
-              aria-label="Labels"
+              aria-label="标签"
               :disabled="labelsLoading || Boolean(labelsError)"
             />
           </label>

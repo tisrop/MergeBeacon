@@ -20,10 +20,6 @@
 
 .form-section {
   padding: var(--space-5);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  box-shadow: none;
 }
 
 .section-heading {
@@ -232,9 +228,14 @@
 }
 
 .branch-arrow {
-  padding-bottom: 10px;
+  display: flex;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
   color: var(--color-text-tertiary);
   font-size: 18px;
+  line-height: 1;
+  transform: translateY(1px);
 }
 
 .metadata-grid {
@@ -372,20 +373,6 @@
     box-shadow var(--transition-fast);
 }
 
-.field input,
-.field textarea {
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font: inherit;
-  transition:
-    border-color var(--transition-fast),
-    background-color var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
 .field input {
   height: 34px;
   min-height: 34px;
@@ -395,16 +382,12 @@
 
 .field textarea {
   padding: 8px 10px;
-  resize: vertical;
-  line-height: 1.6;
 }
 
 .pr-create-form :deep(.app-select:focus-visible),
 .pr-create-form :deep(.app-multi-select:focus-visible),
 .pr-create-form :deep(.dropdown-search:focus-visible),
-.pr-create-form :deep(.multi-select-search:focus-visible),
-.field input:focus-visible,
-.field textarea:focus-visible {
+.pr-create-form :deep(.multi-select-search:focus-visible) {
   outline: 2px solid transparent;
   outline-offset: 0;
   border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border));

@@ -165,7 +165,7 @@ async function copyRecentErrorLogs() {
     </template>
 
     <div class="settings-page">
-      <section class="section">
+      <section class="card section">
         <div class="section-heading">
           <span class="section-icon" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -255,7 +255,7 @@ async function copyRecentErrorLogs() {
         </div>
       </section>
 
-      <section class="section">
+      <section class="card section">
         <div class="section-heading">
           <span class="section-icon notification" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -271,7 +271,7 @@ async function copyRecentErrorLogs() {
         <NotificationSettings />
       </section>
 
-      <section class="section">
+      <section class="card section">
         <div class="section-heading">
           <span class="section-icon ai" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -288,7 +288,7 @@ async function copyRecentErrorLogs() {
         <AiSettings />
       </section>
 
-      <section id="app-update" class="section">
+      <section id="app-update" class="card section">
         <div class="section-heading update-heading">
           <span class="section-icon update" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -404,7 +404,7 @@ async function copyRecentErrorLogs() {
         <p v-else class="privacy-note">仅从 MergeBeacon 官方签名更新源读取元数据。</p>
       </section>
 
-      <section class="section">
+      <section class="card section">
         <div class="section-heading support-heading">
           <span class="section-icon support" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">

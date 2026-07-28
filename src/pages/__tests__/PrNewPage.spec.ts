@@ -251,6 +251,13 @@ describe("PrNewPage", () => {
     );
   });
 
+  it("标题和描述复用共享输入基础类", async () => {
+    const { wrapper } = await mountPage();
+
+    expect(wrapper.get("input[placeholder='简要说明这次变更']").classes()).toContain("input");
+    expect(wrapper.get('textarea[aria-label="Markdown 描述"]').classes()).toContain("input");
+  });
+
   it("标题最多允许 255 个 Unicode 字符", async () => {
     const { wrapper } = await mountPage();
     const titleInput = wrapper.get<HTMLInputElement>("input[placeholder='简要说明这次变更']");
@@ -269,7 +276,10 @@ describe("PrNewPage", () => {
     const { wrapper } = await mountPage();
 
     const headings = wrapper.findAll(".section-heading h3").map((heading) => heading.text());
+    const sections = wrapper.findAll(".form-section");
     expect(headings).toEqual(["选择变更来源", "变更预览", "说明变更内容", "参与者与分类"]);
+    expect(sections).toHaveLength(4);
+    expect(sections.every((section) => section.classes().includes("card"))).toBe(true);
     expect(wrapper.findAll(".section-heading > span")).toHaveLength(0);
   });
 
@@ -372,7 +382,8 @@ describe("PrNewPage", () => {
     const { wrapper } = await mountPage();
 
     expect(listRepositoryLabels).toHaveBeenCalledWith("github", "team", "repo");
-    const labelsSelect = wrapper.get('[aria-label="Labels"]');
+    const labelsSelect = wrapper.get('[aria-label="标签"]');
+    expect(labelsSelect.element.closest("label")?.querySelector("span")?.textContent).toBe("标签");
     await labelsSelect.trigger("click");
     await wrapper.get('input[placeholder="搜索标签"]').setValue("feature");
     await wrapper.get(".multi-select-option[data-value='feature']").trigger("click");
@@ -417,7 +428,7 @@ describe("PrNewPage", () => {
     await flushPromises();
 
     expect(listRepositoryLabels).toHaveBeenLastCalledWith("github", "other", "repo");
-    await wrapper.get('[aria-label="Labels"]').trigger("click");
+    await wrapper.get('[aria-label="标签"]').trigger("click");
     expect(
       wrapper.findAll(".multi-select-option-copy > span").map((option) => option.text()),
     ).toEqual(["other-only"]);
@@ -426,9 +437,9 @@ describe("PrNewPage", () => {
 
     resolveOld([{ name: "stale-label", color: null, description: null }]);
     await flushPromises();
-    await wrapper.get('[aria-label="Labels"]').trigger("click");
+    await wrapper.get('[aria-label="标签"]').trigger("click");
     expect(wrapper.find(".multi-select-option[data-value='stale-label']").exists()).toBe(false);
-    expect(wrapper.get('[aria-label="Labels"]').text()).toContain("other-only");
+    expect(wrapper.get('[aria-label="标签"]').text()).toContain("other-only");
   });
 
   it("切换目标仓库后重新加载成员并忽略迟到的旧 Suggestions", async () => {
@@ -583,6 +594,9 @@ describe("PrNewPage", () => {
     expect(wrapper.get(".preview-summary").text()).toContain("1 个提交");
     expect(wrapper.get(".preview-summary").text()).toContain("1 个文件");
     expect(wrapper.find(".preview-tabs .tab-count").exists()).toBe(false);
+    expect(wrapper.get(".preview-section").classes()).toEqual(
+      expect.arrayContaining(["card", "form-section", "preview-section"]),
+    );
 
     await wrapper.get('[role="tab"][aria-selected="false"]').trigger("click");
     expect(wrapper.get('[data-testid="diff-preview"]').text()).toBe("1 files");
@@ -1187,6 +1201,7 @@ describe("PrNewPage", () => {
     expect(wrapper.get("h2").text()).toBe("创建 PR");
     expect(wrapper.text()).toContain("评审者");
     expect(wrapper.text()).toContain("测试者");
+    expect(wrapper.get('[aria-label="标签"]').attributes("aria-label")).toBe("标签");
     expect(wrapper.text()).not.toContain("创建为 Draft");
   });
 
@@ -1195,6 +1210,7 @@ describe("PrNewPage", () => {
 
     expect(wrapper.get("h2").text()).toBe("创建 MR");
     expect(wrapper.get("button[type='submit']").text()).toBe("创建 MR");
+    expect(wrapper.get('[aria-label="标签"]').attributes("aria-label")).toBe("标签");
   });
 
   it("创建页按路由平台请求，避免使用过期的全局活动平台", async () => {
