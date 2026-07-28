@@ -47,6 +47,12 @@ function mountForm(overrides: Partial<InstanceType<typeof IssueForm>["$props"]> 
 }
 
 describe("IssueForm", () => {
+  it("根表单复用共享卡片基础类", () => {
+    const wrapper = mountForm();
+
+    expect(wrapper.get("form").classes()).toEqual(expect.arrayContaining(["card", "issue-form"]));
+  });
+
   it("标题为空时禁用创建按钮，填写标题后可提交表单", async () => {
     const wrapper = mountForm();
     const submitButton = wrapper.get<HTMLButtonElement>('button[type="submit"]');

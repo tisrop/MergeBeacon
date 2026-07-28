@@ -274,6 +274,7 @@ onUnmounted(() => {
           <span>仓库</span>
           <input
             v-model="inbox.filters.repository"
+            class="input"
             type="search"
             placeholder="筛选 owner/repo"
             autocomplete="off"

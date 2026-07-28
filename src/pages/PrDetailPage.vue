@@ -599,7 +599,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             </div>
             <input
               v-model="commitMessage"
-              class="merge-commit-message"
+              class="input merge-commit-message"
               type="text"
               :disabled="operating"
               placeholder="Commit message"

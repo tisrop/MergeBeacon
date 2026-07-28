@@ -5,10 +5,6 @@
 .section {
   margin-bottom: var(--space-5);
   padding: var(--space-5);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  box-shadow: none;
 }
 
 .section-heading {

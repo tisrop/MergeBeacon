@@ -54,7 +54,7 @@ const selectedTemplate = computed(() =>
 </script>
 
 <template>
-  <form class="issue-form" @submit.prevent="emit('submit')">
+  <form class="card issue-form" @submit.prevent="emit('submit')">
     <div class="issue-form-heading">
       <div class="issue-form-icon" aria-hidden="true">
         <svg

@@ -495,8 +495,12 @@ describe("PrDetailPage 关闭权限", () => {
     mocks.prStore.mergePr.mockResolvedValue({ merged: true, issue_close_failures: [] });
     const wrapper = mountPage();
     const button = wrapper.get(".merge-main");
+    const commitMessage = wrapper.get(".merge-commit-message");
 
     expect(button.attributes("disabled")).toBeUndefined();
+    expect(commitMessage.classes()).toEqual(
+      expect.arrayContaining(["input", "merge-commit-message"]),
+    );
     await button.trigger("click");
     expect(mocks.prStore.mergePr).toHaveBeenCalledOnce();
   });
