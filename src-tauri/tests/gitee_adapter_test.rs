@@ -1312,6 +1312,7 @@ async fn test_gitee_get_issue_detail() {
     assert_eq!(issue.body, "Steps: 1. Login 2. Logout");
     assert!(matches!(issue.state, mergebeacon_lib::models::IssueState::Closed));
     assert_eq!(issue.labels, vec!["bug".to_string()]);
+    assert!(!issue.is_pull_request);
     assert_eq!(issue.metadata_permissions.can_edit_title_body, Some(false));
     assert_eq!(issue.metadata_permissions.can_change_state, Some(false));
     assert_eq!(issue.metadata_permissions.can_manage_labels, Some(false));
@@ -1400,6 +1401,7 @@ async fn test_gitee_updates_issue_metadata_and_manages_comments() {
         label_colors: Default::default(),
         created_at: "2025-01-05T00:00:00Z".into(),
         updated_at: "2025-01-06T00:00:00Z".into(),
+        is_pull_request: false,
         metadata_permissions: IssueMetadataPermissions::default(),
     };
     let update = IssueMetadataUpdate {

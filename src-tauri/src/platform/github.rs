@@ -2607,6 +2607,7 @@ impl GitPlatform for GitHubAdapter {
             label_colors: Self::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            is_pull_request: json["pull_request"].is_object(),
             metadata_permissions: IssueMetadataPermissions {
                 can_edit_title_body: permissions.can_edit_title_body,
                 can_change_state: permissions.can_edit_title_body,
@@ -2648,6 +2649,7 @@ impl GitPlatform for GitHubAdapter {
             label_colors: Self::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            is_pull_request: false,
             metadata_permissions: IssueMetadataPermissions::default(),
         })
     }
@@ -2692,6 +2694,7 @@ impl GitPlatform for GitHubAdapter {
             label_colors: Self::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            is_pull_request: current.is_pull_request,
             metadata_permissions: current.metadata_permissions.clone(),
         })
     }

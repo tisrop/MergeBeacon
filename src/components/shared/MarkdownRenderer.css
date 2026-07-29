@@ -103,6 +103,37 @@
   color: var(--color-primary-hover);
 }
 
+.markdown-renderer :deep(details) {
+  margin: var(--space-2) 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+}
+
+.markdown-renderer :deep(summary) {
+  color: var(--color-text);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.markdown-renderer :deep(summary:hover) {
+  color: var(--color-primary-hover);
+}
+
+.markdown-renderer :deep(summary:focus-visible) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+
+.markdown-renderer :deep(details[open] > summary) {
+  margin-bottom: var(--space-2);
+}
+
+.markdown-renderer :deep(details > :last-child) {
+  margin-bottom: 0;
+}
+
 .markdown-renderer-document :deep(code) {
   padding: 1px 5px;
   border: 1px solid var(--color-border-light);

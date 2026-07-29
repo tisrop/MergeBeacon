@@ -24,6 +24,7 @@ import {
   patchContainsLine,
 } from "@/utils/diffHunk";
 import { getErrorMessage } from "@/utils/error";
+import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
 import MiniDiffView from "./MiniDiffView.vue";
 
 const props = defineProps<{
@@ -40,6 +41,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   threadSummary: [summary: ReviewThreadSummary];
   locateComment: [path: string, line: number | null, side: DiffSide | null];
+  openLink: [href: string];
 }>();
 
 type ThreadFilter = "all" | "unresolved" | "resolved";
@@ -119,6 +121,10 @@ function toggleBody(id: string): void {
   if (next.has(id)) next.delete(id);
   else next.add(id);
   expandedBodies.value = next;
+}
+
+function handleLinkClick(payload: { href: string }): void {
+  emit("openLink", payload.href);
 }
 
 function toggleCode(id: string): void {
@@ -569,7 +575,13 @@ defineExpose({ refresh: loadReviews });
             }}</span>
             <time :datetime="item.time">{{ new Date(item.time).toLocaleString() }}</time>
           </header>
-          <p class="comment-body">{{ item.body }}</p>
+          <MarkdownRenderer
+            :content="item.body"
+            link-mode="emit"
+            repository-references
+            class="comment-body comment-markdown"
+            @link-click="handleLinkClick"
+          />
         </article>
       </section>
 
@@ -794,21 +806,29 @@ defineExpose({ refresh: loadReviews });
                     </button>
                   </div>
                 </template>
-                <button
-                  v-else
-                  type="button"
-                  class="comment-body comment-body-button"
-                  :aria-expanded="
-                    !needsExpand(comment.body) || expandedBodies.has(itemId(thread.id, comment))
-                  "
-                  @click="toggleBody(itemId(thread.id, comment))"
-                >
-                  {{
-                    needsExpand(comment.body) && !expandedBodies.has(itemId(thread.id, comment))
-                      ? `${comment.body.slice(0, PREVIEW_LENGTH)}...`
-                      : comment.body
-                  }}
-                </button>
+                <template v-else>
+                  <MarkdownRenderer
+                    :content="comment.body"
+                    link-mode="emit"
+                    repository-references
+                    class="comment-body comment-markdown"
+                    :class="{
+                      'comment-body-collapsed':
+                        needsExpand(comment.body) &&
+                        !expandedBodies.has(itemId(thread.id, comment)),
+                    }"
+                    @link-click="handleLinkClick"
+                  />
+                  <button
+                    v-if="needsExpand(comment.body)"
+                    type="button"
+                    class="comment-body-toggle"
+                    :aria-expanded="expandedBodies.has(itemId(thread.id, comment))"
+                    @click="toggleBody(itemId(thread.id, comment))"
+                  >
+                    {{ expandedBodies.has(itemId(thread.id, comment)) ? "收起" : "展开" }}
+                  </button>
+                </template>
                 <p
                   v-if="
                     commentErrors[`${thread.id}:${String(comment.id)}:edit`] ||

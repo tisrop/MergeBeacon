@@ -5,10 +5,11 @@ import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
 import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
-import { openExternalUrl, reviewCommentAdd } from "@/api";
+import { issueDetail, openExternalUrl, reviewCommentAdd } from "@/api";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { getErrorMessage } from "@/utils/error";
 import { extractDiffHunk, findStandardPatch } from "@/utils/diffHunk";
+import { resolvePrContentLink, type PrContentRouteTarget } from "@/utils/prContentLinks";
 import {
   clearPrCreateWarnings,
   PR_CREATE_WARNING_QUERY,
@@ -294,7 +295,72 @@ async function handleOpenInBrowser(url: string): Promise<void> {
   try {
     await openExternalUrl(url);
   } catch (error) {
-    titleLinkError.value = getErrorMessage(error, "打开 PR 页面失败，请稍后重试");
+    titleLinkError.value = getErrorMessage(error, "打开链接失败，请稍后重试");
+  }
+}
+
+async function handleOpenIssueTarget(target: PrContentRouteTarget): Promise<void> {
+  titleLinkError.value = "";
+  try {
+    await router.push({
+      name: "issue-detail",
+      params: { platform, owner: target.owner, repo: target.repo, number: target.number },
+    });
+  } catch (error) {
+    titleLinkError.value = getErrorMessage(error, "打开 Issue 详情失败，请稍后重试");
+  }
+}
+
+function handleOpenIssueDetail(issueNumber: number): Promise<void> {
+  return handleOpenIssueTarget({ owner, repo, number: issueNumber });
+}
+
+async function handleOpenPrDetail(target: PrContentRouteTarget): Promise<void> {
+  titleLinkError.value = "";
+  try {
+    await router.push({
+      name: "pr-detail",
+      params: { platform, owner: target.owner, repo: target.repo, number: target.number },
+    });
+  } catch (error) {
+    titleLinkError.value = getErrorMessage(error, "打开 PR 详情失败，请稍后重试");
+  }
+}
+
+async function handlePrContentLink(href: string): Promise<void> {
+  const resolved = resolvePrContentLink(href, {
+    platform,
+    owner,
+    repo,
+    webUrl: pr.currentPr?.web_url,
+  });
+  if (!resolved) return;
+  if (resolved.kind === "reference") {
+    const target = { owner, repo, number: resolved.number };
+    if (resolved.reference === "bang") {
+      await handleOpenPrDetail(target);
+      return;
+    }
+    if (platform === "gitlab") {
+      await handleOpenIssueTarget(target);
+      return;
+    }
+    titleLinkError.value = "";
+    try {
+      const referenced = await issueDetail(platform, owner, repo, resolved.number);
+      if (referenced.is_pull_request) await handleOpenPrDetail(target);
+      else await handleOpenIssueTarget(target);
+    } catch (error) {
+      titleLinkError.value = getErrorMessage(error, "无法识别仓库引用，请稍后重试");
+    }
+    return;
+  }
+  if (resolved.kind === "issue") {
+    await handleOpenIssueTarget(resolved.target);
+  } else if (resolved.kind === "pr") {
+    await handleOpenPrDetail(resolved.target);
+  } else {
+    await handleOpenInBrowser(resolved.url);
   }
 }
 
@@ -705,6 +771,8 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
         :status-message="metadataStatus"
         :error-message="metadataError"
         @save="handleMetadataSave"
+        @open-issue="handleOpenIssueDetail"
+        @open-link="handlePrContentLink"
       />
 
       <div ref="tabsRef" class="tabs">
@@ -873,6 +941,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             :can-resolve-threads="platformCapabilities?.supports_review_thread_resolution ?? false"
             @thread-summary="reviewThreadSummary = $event"
             @locate-comment="handleReviewCommentLocate"
+            @open-link="handlePrContentLink"
           />
         </div>
         <div v-if="aiPanelMounted" v-show="activeTab === 'ai'">

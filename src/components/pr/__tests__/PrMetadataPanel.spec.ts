@@ -2,7 +2,14 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PrMetadataPanel from "../PrMetadataPanel.vue";
 import { listRepositoryLabels, prParticipantSuggestions } from "@/api";
-import type { PlatformCapabilities, PrDetail, PrLabel, PrMetadataUpdate, User } from "@/types";
+import type {
+  Platform,
+  PlatformCapabilities,
+  PrDetail,
+  PrLabel,
+  PrMetadataUpdate,
+  User,
+} from "@/types";
 
 vi.mock("@/api", () => ({
   listRepositoryLabels: vi.fn(),
@@ -69,6 +76,9 @@ function capabilities(overrides: Partial<PlatformCapabilities> = {}): PlatformCa
 function mountPanel(
   props: Partial<{
     detail: PrDetail;
+    platform: Platform;
+    owner: string;
+    repo: string;
     capabilities: PlatformCapabilities | null;
     saving: boolean;
     statusMessage: string;
@@ -152,6 +162,121 @@ describe("PrMetadataPanel", () => {
     expect(wrapper.get('[data-testid="metadata-reviewers"] .app-multi-select-value').text()).toBe(
       "reviewer",
     );
+  });
+
+  it("展示关联 Issue，并将同仓库 Issue 链接转为内部跳转事件", async () => {
+    const wrapper = mountPanel({
+      detail: {
+        ...detail,
+        body:
+          "Closes #12, fixes #12\n\n" +
+          "[同仓库 Issue](https://github.com/owner/repo/issues/13)\n\n" +
+          "[外部文档](https://example.com/docs)",
+        web_url: "https://github.com/owner/repo/pull/42",
+      },
+    });
+
+    const issues = wrapper.findAll(".metadata-linked-issue");
+    expect(issues.map((issue) => issue.text())).toEqual(["#12", "#13"]);
+
+    await issues[0].trigger("click");
+    expect(wrapper.emitted("open-issue")?.[0]).toEqual([12]);
+
+    await wrapper.get("a[href='https://github.com/owner/repo/issues/13']").trigger("click");
+    expect(wrapper.emitted("open-link")?.[0]).toEqual(["https://github.com/owner/repo/issues/13"]);
+
+    await wrapper.get("a[href='https://example.com/docs']").trigger("click");
+    expect(wrapper.emitted("open-link")?.[1]).toEqual(["https://example.com/docs"]);
+  });
+
+  it("完整渲染 PR 链接标题，并将 PR 链接转为应用内跳转事件", async () => {
+    const title = "chore(saas): remove unused Flyway migration system #7100";
+    const href = "https://github.com/Stirling-Tools/Stirling-PDF/pull/7100";
+    const wrapper = mountPanel({
+      detail: {
+        ...detail,
+        body: `since [**${title}**](${href})`,
+        web_url: "https://github.com/owner/repo/pull/42",
+      },
+    });
+
+    const link = wrapper.get(`a[href='${href}']`);
+    expect(link.text()).toBe(title);
+    expect(link.get("strong").text()).toBe(title);
+    expect(wrapper.findAll(".metadata-linked-issue")).toHaveLength(0);
+
+    await link.get("strong").trigger("click");
+    expect(wrapper.emitted("open-link")?.[0]).toEqual([href]);
+  });
+
+  it("保留 GitHub 跳转域 Issue 链接并交给详情页处理", async () => {
+    const prHref = "https://github.com/Stirling-Tools/Stirling-PDF/pull/7190";
+    const issueHref = "https://redirect.github.com/pyasn1/pyasn1/issues/113";
+    const wrapper = mountPanel({
+      detail: {
+        ...detail,
+        body:
+          `[Stirling-Tools/Stirling-PDF#7190](${prHref}) ` +
+          `Pin PyPI publish action to immutable commit ([#113](${issueHref}))`,
+        web_url: "https://github.com/Stirling-Tools/Stirling-PDF/pull/7191",
+      },
+    });
+
+    expect(wrapper.get(`a[href='${prHref}']`).text()).toBe("Stirling-Tools/Stirling-PDF#7190");
+    const issueLink = wrapper.get(`a[href='${issueHref}']`);
+    expect(issueLink.text()).toBe("#113");
+    await issueLink.trigger("click");
+    expect(wrapper.emitted("open-link")?.[0]).toEqual([issueHref]);
+  });
+
+  it("将 PR 描述中的裸仓库编号渲染为可点击引用", async () => {
+    const wrapper = mountPanel({
+      detail: {
+        ...detail,
+        body: "The a11y scan (#7086) measures contrast",
+        web_url: "https://github.com/owner/repo/pull/42",
+      },
+    });
+
+    const reference = wrapper.get("a[href='/__mergebeacon__/reference/hash/7086']");
+    expect(reference.text()).toBe("#7086");
+    await reference.trigger("click");
+    expect(wrapper.emitted("open-link")?.[0]).toEqual(["/__mergebeacon__/reference/hash/7086"]);
+  });
+
+  it.each([
+    {
+      name: "GitLab 自托管 nested subgroup MR",
+      platform: "gitlab" as const,
+      owner: "group/current",
+      repo: "repo",
+      currentUrl: "https://git.example.com/gitlab/group/current/repo/-/merge_requests/42",
+      targetUrl: "https://git.example.com/gitlab/team/subgroup/project/-/merge_requests/77",
+      target: { owner: "team/subgroup", repo: "project", number: 77 },
+    },
+    {
+      name: "Gitee PR",
+      platform: "gitee" as const,
+      owner: "owner",
+      repo: "repo",
+      currentUrl: "https://gitee.com/owner/repo/pulls/42",
+      targetUrl: "https://gitee.com/team/project/pulls/88",
+      target: { owner: "team", repo: "project", number: 88 },
+    },
+  ])("识别$name并触发应用内跳转", async (example) => {
+    const wrapper = mountPanel({
+      platform: example.platform,
+      owner: example.owner,
+      repo: example.repo,
+      detail: {
+        ...detail,
+        body: `[关联 PR](${example.targetUrl})`,
+        web_url: example.currentUrl,
+      },
+    });
+
+    await wrapper.get(`a[href='${example.targetUrl}']`).trigger("click");
+    expect(wrapper.emitted("open-link")?.[0]).toEqual([example.targetUrl]);
   });
 
   it("编辑描述时支持 Markdown 预览并保存原始文本", async () => {
@@ -384,6 +509,26 @@ describe("PrMetadataPanel", () => {
       "disabled",
     );
     expect(wrapper.get('button[type="submit"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("权限未知时允许尝试编辑并提示由平台 API 最终校验", async () => {
+    const unknownPermissions = {
+      ...detail,
+      metadata_permissions: {
+        can_edit_title_body: null,
+        can_toggle_draft: null,
+        can_manage_reviewers: null,
+        can_manage_assignees: null,
+        can_manage_labels: null,
+        can_manage_milestone: null,
+      },
+    };
+    const wrapper = mountPanel({ detail: unknownPermissions });
+
+    expect(wrapper.get('[data-testid="edit-pr-metadata"]').attributes("disabled")).toBeUndefined();
+    await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
+    expect(wrapper.get(".permission-note").text()).toContain("平台 API");
+    expect(wrapper.get('[data-testid="metadata-title"]').attributes("disabled")).toBeUndefined();
   });
 
   it("取消编辑恢复原始值", async () => {

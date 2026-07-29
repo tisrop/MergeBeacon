@@ -669,6 +669,8 @@ pub struct Issue {
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]
+    pub is_pull_request: bool,
+    #[serde(default)]
     pub metadata_permissions: IssueMetadataPermissions,
 }
 

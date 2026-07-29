@@ -15,6 +15,7 @@ import type {
 } from "@/types";
 import { getErrorMessage } from "@/utils/error";
 import { labelTagColorClass } from "@/utils/labelColorClass";
+import { resolvePrContentLink } from "@/utils/prContentLinks";
 
 const props = defineProps<{
   detail: PrDetail;
@@ -29,6 +30,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   save: [update: PrMetadataUpdate];
+  "open-issue": [number: number];
+  "open-link": [href: string];
 }>();
 
 const editing = ref(false);
@@ -91,6 +94,51 @@ const categoryLabels = computed(() =>
     ? { labels: "标签", milestone: "里程碑" }
     : { labels: "Labels", milestone: "Milestone" },
 );
+
+const closingIssuePattern =
+  /(?:^|[\s,])(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[\s:]+#(\d+)\b/gi;
+const markdownLinkPattern = /\[[^\]]*]\((\S+?)(?:\s+["'][^"']*["'])?\)/g;
+
+function uniqueIssueNumbers(numbers: Iterable<number>): number[] {
+  const seen = new Set<number>();
+  const result: number[] = [];
+  for (const number of numbers) {
+    if (!Number.isInteger(number) || number <= 0 || seen.has(number)) continue;
+    seen.add(number);
+    result.push(number);
+  }
+  return result;
+}
+
+const linkedIssueNumbers = computed(() => {
+  const numbers: number[] = [];
+  for (const match of props.detail.body.matchAll(closingIssuePattern))
+    numbers.push(Number(match[1]));
+  for (const match of props.detail.body.matchAll(markdownLinkPattern)) {
+    const resolved = resolvePrContentLink(match[1], {
+      platform: props.platform,
+      owner: props.owner,
+      repo: props.repo,
+      webUrl: props.detail.web_url,
+    });
+    if (
+      resolved?.kind === "issue" &&
+      resolved.target.owner === props.owner &&
+      resolved.target.repo === props.repo
+    ) {
+      numbers.push(resolved.target.number);
+    }
+  }
+  return uniqueIssueNumbers(numbers);
+});
+
+function openIssue(number: number): void {
+  emit("open-issue", number);
+}
+
+function handleDescriptionLinkClick(payload: { href: string }): void {
+  emit("open-link", payload.href);
+}
 
 function labelColor(value: string | null): string | undefined {
   const color = value?.trim();
@@ -404,10 +452,28 @@ onUnmounted(invalidateOptions);
         <span class="metadata-label">{{ categoryLabels.milestone }}</span>
         <span class="metadata-value">{{ detail.milestone?.title || "未指定" }}</span>
       </div>
+      <div v-if="linkedIssueNumbers.length > 0" class="metadata-item metadata-linked-issues">
+        <span class="metadata-label">关联 Issue</span>
+        <span class="metadata-value metadata-linked-issue-list">
+          <button
+            v-for="issueNumber in linkedIssueNumbers"
+            :key="issueNumber"
+            class="metadata-linked-issue"
+            type="button"
+            :aria-label="`打开 Issue #${issueNumber}`"
+            @click="openIssue(issueNumber)"
+          >
+            #{{ issueNumber }}
+          </button>
+        </span>
+      </div>
       <MarkdownRenderer
         v-if="detail.body"
         :content="detail.body"
+        link-mode="emit"
+        repository-references
         class="metadata-description metadata-markdown"
+        @link-click="handleDescriptionLinkClick"
       />
       <p v-else class="metadata-description metadata-description-empty">暂无描述</p>
     </div>
@@ -472,7 +538,14 @@ onUnmounted(invalidateOptions);
           role="tabpanel"
           aria-labelledby="metadata-description-preview-tab"
         >
-          <MarkdownRenderer v-if="body.trim()" :content="body" class="metadata-markdown" />
+          <MarkdownRenderer
+            v-if="body.trim()"
+            :content="body"
+            link-mode="emit"
+            repository-references
+            class="metadata-markdown"
+            @link-click="handleDescriptionLinkClick"
+          />
           <p v-else class="metadata-description-preview-empty">暂无预览内容</p>
         </div>
       </div>

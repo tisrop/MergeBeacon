@@ -244,6 +244,7 @@ mod tests {
             label_colors: Default::default(),
             created_at: "2026-07-25T10:00:00Z".into(),
             updated_at: "2026-07-26T10:00:00Z".into(),
+            is_pull_request: false,
             metadata_permissions: IssueMetadataPermissions::default(),
         }
     }

@@ -561,6 +561,7 @@ export interface Issue {
   label_colors?: Record<string, string>;
   created_at: string;
   updated_at: string;
+  is_pull_request?: boolean;
   metadata_permissions: IssueMetadataPermissions;
 }
 

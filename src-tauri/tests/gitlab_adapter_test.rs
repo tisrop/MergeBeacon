@@ -54,6 +54,7 @@ async fn test_gitlab_get_issue_detail_encodes_nested_project_path() {
     assert_eq!(issue.body, "Pipeline fails on release jobs");
     assert_eq!(issue.labels, vec!["bug".to_string(), "release".to_string()]);
     assert!(matches!(issue.state, mergebeacon_lib::models::IssueState::Open));
+    assert!(!issue.is_pull_request);
     assert_eq!(issue.metadata_permissions.can_edit_title_body, Some(true));
     assert_eq!(issue.metadata_permissions.can_change_state, Some(true));
     assert_eq!(issue.metadata_permissions.can_manage_labels, Some(false));
@@ -148,6 +149,7 @@ async fn test_gitlab_updates_issue_metadata_and_filters_system_notes() {
         label_colors: Default::default(),
         created_at: "2025-01-05T00:00:00Z".into(),
         updated_at: "2025-01-06T00:00:00Z".into(),
+        is_pull_request: false,
         metadata_permissions: IssueMetadataPermissions::default(),
     };
     let update = IssueMetadataUpdate {

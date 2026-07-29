@@ -1451,6 +1451,7 @@ async fn test_github_create_issue() {
     assert_eq!(issue.title, "Memory leak in auth module");
     assert_eq!(issue.label_colors.get("bug").map(String::as_str), Some("d73a4a"));
     assert!(matches!(issue.state, mergebeacon_lib::models::IssueState::Open));
+    assert!(!issue.is_pull_request);
 }
 
 #[tokio::test]
@@ -1469,6 +1470,7 @@ async fn test_github_get_issue_detail() {
                 { "name": "bug", "color": "d73a4a" },
                 { "name": "critical", "color": "0075ca" }
             ],
+            "pull_request": { "url": "https://api.github.com/repos/octocat/hello-world/pulls/99" },
             "created_at": "2025-01-05T00:00:00Z",
             "updated_at": "2025-01-06T00:00:00Z"
         })))
@@ -1506,6 +1508,7 @@ async fn test_github_get_issue_detail() {
     assert_eq!(issue.label_colors.get("bug").map(String::as_str), Some("d73a4a"));
     assert_eq!(issue.label_colors.get("critical").map(String::as_str), Some("0075ca"));
     assert_eq!(issue.updated_at, "2025-01-06T00:00:00Z");
+    assert!(issue.is_pull_request);
     assert_eq!(issue.metadata_permissions.can_edit_title_body, Some(true));
     assert_eq!(issue.metadata_permissions.can_change_state, Some(true));
     assert_eq!(issue.metadata_permissions.can_manage_labels, Some(false));
@@ -1590,6 +1593,7 @@ async fn test_github_updates_issue_metadata_and_manages_comments() {
         label_colors: Default::default(),
         created_at: "2025-01-05T00:00:00Z".into(),
         updated_at: "2025-01-06T00:00:00Z".into(),
+        is_pull_request: false,
         metadata_permissions: IssueMetadataPermissions::default(),
     };
     let update = IssueMetadataUpdate {
