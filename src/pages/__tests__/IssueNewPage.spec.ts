@@ -6,6 +6,7 @@ import IssueForm from "@/components/issue/IssueForm.vue";
 import IssueNewPage from "@/pages/IssueNewPage.vue";
 import { issueCreate, issueTemplates, listRepositoryLabels } from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { useIssueStore } from "@/stores/useIssueStore";
 import { useRepoStore } from "@/stores/useRepoStore";
 import type { IssueTemplate, Platform, PrLabel } from "@/types";
 
@@ -30,8 +31,12 @@ async function mountPage(platform: Platform = "github") {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: "/issue/new", component: IssueNewPage },
-      { path: "/issue", component: { template: "<div>Issue 列表</div>" } },
+      { path: "/issue/new", name: "issue-new", component: IssueNewPage },
+      {
+        path: "/issue",
+        name: "issue-list",
+        component: { template: "<div>Issue 列表</div>" },
+      },
     ],
   });
   await router.push("/issue/new");
@@ -246,5 +251,16 @@ describe("IssueNewPage", () => {
     expect(wrapper.text()).toContain("仍可手动填写 Issue");
     await wrapper.get("#issue-title").setValue("手动填写标题");
     expect(wrapper.get<HTMLButtonElement>('button[type="submit"]').element.disabled).toBe(false);
+  });
+
+  it("创建成功后暂存新 Issue 并返回列表", async () => {
+    const { wrapper, router } = await mountPage();
+    await wrapper.get("#issue-title").setValue("刚创建的 Issue");
+
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    expect(router.currentRoute.value.path).toBe("/issue");
+    expect(useIssueStore().pendingCreatedIssue?.issue.number).toBe(1);
   });
 });

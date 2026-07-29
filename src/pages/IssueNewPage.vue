@@ -2,6 +2,7 @@
 import { onScopeDispose, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { useIssueStore } from "@/stores/useIssueStore";
 import { useRepoStore } from "@/stores/useRepoStore";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import IssueForm from "@/components/issue/IssueForm.vue";
@@ -11,6 +12,7 @@ import { getErrorMessage } from "@/utils/error";
 
 const router = useRouter();
 const auth = useAuthStore();
+const issueStore = useIssueStore();
 const repo = useRepoStore();
 
 const title = ref("");
@@ -181,7 +183,7 @@ async function handleSubmit() {
   submitting.value = true;
   error.value = "";
   try {
-    await issueCreate(
+    const createdIssue = await issueCreate(
       context.platform,
       context.owner,
       context.repo,
@@ -190,7 +192,8 @@ async function handleSubmit() {
       labels.value,
     );
     if (requestSequence !== submitRequestSequence) return;
-    router.push("/issue");
+    issueStore.rememberCreatedIssue(context.platform, context.owner, context.repo, createdIssue);
+    void router.push({ name: "issue-list" });
   } catch (submitError) {
     if (requestSequence !== submitRequestSequence) return;
     error.value = getErrorMessage(submitError, "创建失败");

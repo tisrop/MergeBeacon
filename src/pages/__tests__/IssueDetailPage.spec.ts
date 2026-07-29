@@ -13,6 +13,7 @@ import {
   listRepositoryLabels,
 } from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { useIssueStore } from "@/stores/useIssueStore";
 import { useRepoStore } from "@/stores/useRepoStore";
 import type { Issue, IssueComment, IssueSummary } from "@/types";
 
@@ -435,5 +436,35 @@ describe("IssueListPage detail link", () => {
     expect(stylesheet).toContain(
       "--label-tag-background: #0075ca; --label-tag-foreground: #ffffff",
     );
+  });
+
+  it("远端列表尚未刷新时仍展示刚创建的 Issue", async () => {
+    vi.mocked(issueList).mockResolvedValue({
+      items: [],
+      page: 1,
+      total_pages: 1,
+      total_count: 0,
+      truncated: null,
+    });
+    const router = await createRouterAt("/issue");
+    const auth = useAuthStore();
+    auth.setActivePlatform("github");
+    auth.platforms.github.isLoggedIn = true;
+    const repo = useRepoStore();
+    repo.activeRepos.github = { owner: "team", repo: "repo" };
+    const createdIssue: Issue = {
+      ...issue,
+      number: 13,
+      title: "刚创建的 Issue",
+    };
+    const issueStore = useIssueStore();
+    issueStore.rememberCreatedIssue("github", "team", "repo", createdIssue);
+
+    const wrapper = mountWithRouter(IssueListPage, router);
+    await flushPromises();
+
+    expect(issueList).toHaveBeenCalledWith("github", "team", "repo");
+    expect(wrapper.text()).toContain("刚创建的 Issue");
+    expect(issueStore.pendingCreatedIssue?.issue.number).toBe(13);
   });
 });
