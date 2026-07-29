@@ -651,6 +651,8 @@ pub struct IssueSummary {
     pub author: User,
     pub state: IssueState,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub label_colors: std::collections::BTreeMap<String, String>,
     pub created_at: String,
 }
 
@@ -662,6 +664,8 @@ pub struct Issue {
     pub author: User,
     pub state: IssueState,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub label_colors: std::collections::BTreeMap<String, String>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]

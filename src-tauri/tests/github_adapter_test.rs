@@ -1423,7 +1423,10 @@ async fn test_github_create_issue() {
             "body": "Steps to reproduce:\n1. Login\n2. Logout\n3. Memory grows",
             "state": "open",
             "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
-            "labels": [{ "name": "bug" }, { "name": "critical" }],
+            "labels": [
+                { "name": "bug", "color": "d73a4a" },
+                { "name": "critical", "color": "0075ca" }
+            ],
             "created_at": "2025-01-05T00:00:00Z",
             "updated_at": "2025-01-05T00:00:00Z"
         })))
@@ -1446,6 +1449,7 @@ async fn test_github_create_issue() {
 
     assert_eq!(issue.number, 99);
     assert_eq!(issue.title, "Memory leak in auth module");
+    assert_eq!(issue.label_colors.get("bug").map(String::as_str), Some("d73a4a"));
     assert!(matches!(issue.state, mergebeacon_lib::models::IssueState::Open));
 }
 
@@ -1461,7 +1465,10 @@ async fn test_github_get_issue_detail() {
             "body": "Steps to reproduce:\n1. Login\n2. Logout\n3. Memory grows",
             "state": "open",
             "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
-            "labels": [{ "name": "bug" }, { "name": "critical" }],
+            "labels": [
+                { "name": "bug", "color": "d73a4a" },
+                { "name": "critical", "color": "0075ca" }
+            ],
             "created_at": "2025-01-05T00:00:00Z",
             "updated_at": "2025-01-06T00:00:00Z"
         })))
@@ -1496,6 +1503,8 @@ async fn test_github_get_issue_detail() {
     assert_eq!(issue.number, 99);
     assert_eq!(issue.body, "Steps to reproduce:\n1. Login\n2. Logout\n3. Memory grows");
     assert_eq!(issue.labels, vec!["bug".to_string(), "critical".to_string()]);
+    assert_eq!(issue.label_colors.get("bug").map(String::as_str), Some("d73a4a"));
+    assert_eq!(issue.label_colors.get("critical").map(String::as_str), Some("0075ca"));
     assert_eq!(issue.updated_at, "2025-01-06T00:00:00Z");
     assert_eq!(issue.metadata_permissions.can_edit_title_body, Some(true));
     assert_eq!(issue.metadata_permissions.can_change_state, Some(true));
@@ -1578,6 +1587,7 @@ async fn test_github_updates_issue_metadata_and_manages_comments() {
         },
         state: IssueState::Open,
         labels: vec![],
+        label_colors: Default::default(),
         created_at: "2025-01-05T00:00:00Z".into(),
         updated_at: "2025-01-06T00:00:00Z".into(),
         metadata_permissions: IssueMetadataPermissions::default(),

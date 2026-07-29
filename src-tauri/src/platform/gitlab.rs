@@ -2216,6 +2216,7 @@ impl GitPlatform for GitLabAdapter {
                     .as_array()
                     .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
                     .unwrap_or_default(),
+                label_colors: Default::default(),
                 created_at: i["created_at"].as_str().unwrap_or("").to_string(),
             })
             .collect();
@@ -2243,6 +2244,7 @@ impl GitPlatform for GitLabAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            label_colors: Default::default(),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             metadata_permissions: IssueMetadataPermissions {
@@ -2284,6 +2286,7 @@ impl GitPlatform for GitLabAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            label_colors: Default::default(),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             metadata_permissions: IssueMetadataPermissions::default(),
@@ -2329,6 +2332,7 @@ impl GitPlatform for GitLabAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|label| label.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            label_colors: Default::default(),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             metadata_permissions: current.metadata_permissions.clone(),

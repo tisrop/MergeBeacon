@@ -1153,7 +1153,7 @@ async fn test_gitee_list_issues_paginated() {
                         "title": "Bug report",
                         "state": "open",
                         "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
-                        "labels": [{ "name": "bug" }],
+                        "labels": [{ "name": "bug", "color": "d73a4a" }],
                         "created_at": "2025-01-01T00:00:00Z"
                     }
                 ]))
@@ -1175,6 +1175,7 @@ async fn test_gitee_list_issues_paginated() {
         .expect("should list issues");
 
     assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].label_colors.get("bug").map(String::as_str), Some("d73a4a"));
     assert_eq!(result.total_pages, 5, "should parse last page from Link header");
 }
 
@@ -1396,6 +1397,7 @@ async fn test_gitee_updates_issue_metadata_and_manages_comments() {
         },
         state: IssueState::Closed,
         labels: vec![],
+        label_colors: Default::default(),
         created_at: "2025-01-05T00:00:00Z".into(),
         updated_at: "2025-01-06T00:00:00Z".into(),
         metadata_permissions: IssueMetadataPermissions::default(),

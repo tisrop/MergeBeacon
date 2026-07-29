@@ -145,6 +145,7 @@ async fn test_gitlab_updates_issue_metadata_and_filters_system_notes() {
         },
         state: IssueState::Open,
         labels: vec!["bug".into()],
+        label_colors: Default::default(),
         created_at: "2025-01-05T00:00:00Z".into(),
         updated_at: "2025-01-06T00:00:00Z".into(),
         metadata_permissions: IssueMetadataPermissions::default(),

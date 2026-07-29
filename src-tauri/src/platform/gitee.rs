@@ -15,6 +15,15 @@ pub struct GiteeAdapter {
 }
 
 impl GiteeAdapter {
+    fn map_label_colors(labels: &Value) -> std::collections::BTreeMap<String, String> {
+        labels
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|label| Some((label["name"].as_str()?.to_string(), label["color"].as_str()?.to_string())))
+            .collect()
+    }
+
     pub fn new(client: HttpClient, token: String) -> Self {
         Self { client, token, base_url: "https://gitee.com/api/v5".to_string() }
     }
@@ -2049,6 +2058,7 @@ impl GitPlatform for GiteeAdapter {
                     .as_array()
                     .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                     .unwrap_or_default(),
+                label_colors: Self::map_label_colors(&i["labels"]),
                 created_at: i["created_at"].as_str().unwrap_or("").to_string(),
             })
             .collect();
@@ -2075,6 +2085,7 @@ impl GitPlatform for GiteeAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            label_colors: Self::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             metadata_permissions: IssueMetadataPermissions {
@@ -2115,6 +2126,7 @@ impl GitPlatform for GiteeAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            label_colors: Self::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             metadata_permissions: IssueMetadataPermissions::default(),
@@ -2158,6 +2170,7 @@ impl GitPlatform for GiteeAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|label| label["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            label_colors: Self::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             metadata_permissions: current.metadata_permissions.clone(),

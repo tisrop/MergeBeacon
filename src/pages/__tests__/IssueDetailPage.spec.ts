@@ -32,6 +32,7 @@ const issue: Issue = {
   author: { id: 1, login: "reporter", name: "Reporter", avatar_url: "" },
   state: "open",
   labels: ["bug", "frontend"],
+  label_colors: { bug: "d73a4a", frontend: "fbca04" },
   created_at: "2026-07-25T10:00:00Z",
   updated_at: "2026-07-26T10:00:00Z",
   metadata_permissions: {
@@ -111,6 +112,13 @@ describe("IssueDetailPage", () => {
     expect(wrapper.text()).toContain("详情页支持 Markdown");
     expect(wrapper.text()).toContain("reporter");
     expect(wrapper.text()).toContain("bug");
+    const tags = wrapper.findAll(".issue-detail-labels .label-tag");
+    expect(tags).toHaveLength(2);
+    expect(
+      tags.every((tag) =>
+        tag.classes().some((name) => name.startsWith("mb-static-label-tag-color-")),
+      ),
+    ).toBe(true);
     expect(wrapper.text()).toContain("## 复现步骤");
     expect(wrapper.get(".markdown-stub").attributes("data-variant")).toBe("document");
   });
@@ -183,6 +191,22 @@ describe("IssueDetailPage", () => {
         can_edit_title_body: false,
         can_change_state: false,
         can_manage_labels: false,
+      },
+    });
+    const router = await createRouterAt("/issue/github/team/repo/12");
+    const wrapper = mountWithRouter(IssueDetailPage, router);
+    await flushPromises();
+
+    expect(wrapper.findAll("button").some((button) => button.text() === "编辑")).toBe(false);
+  });
+
+  it("元数据权限未知时不展示编辑入口", async () => {
+    vi.mocked(issueDetail).mockResolvedValue({
+      ...issue,
+      metadata_permissions: {
+        can_edit_title_body: null,
+        can_change_state: null,
+        can_manage_labels: null,
       },
     });
     const router = await createRouterAt("/issue/github/team/repo/12");
@@ -267,7 +291,8 @@ describe("IssueListPage detail link", () => {
       title: "详情页支持 Markdown",
       author: { id: 1, login: "reporter", name: "Reporter", avatar_url: "" },
       state: "open",
-      labels: [],
+      labels: ["priority", "documentation"],
+      label_colors: { priority: "fbca04", documentation: "0075ca" },
       created_at: "2026-07-25T10:00:00Z",
     };
     vi.mocked(issueList).mockResolvedValue({
@@ -288,5 +313,19 @@ describe("IssueListPage detail link", () => {
     await flushPromises();
 
     expect(wrapper.get(".issue-card-link").attributes("href")).toBe("/issue/github/team/repo/12");
+    const tags = wrapper.findAll(".issue-card .label-tag");
+    expect(tags).toHaveLength(2);
+    expect(
+      tags.every((tag) =>
+        tag.classes().some((name) => name.startsWith("mb-static-label-tag-color-")),
+      ),
+    ).toBe(true);
+    const stylesheet = document.querySelector("style[data-mergebeacon-dynamic-css]")?.textContent;
+    expect(stylesheet).toContain(
+      "--label-tag-background: #fbca04; --label-tag-foreground: #1f2328",
+    );
+    expect(stylesheet).toContain(
+      "--label-tag-background: #0075ca; --label-tag-foreground: #ffffff",
+    );
   });
 });

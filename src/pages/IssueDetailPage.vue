@@ -14,6 +14,7 @@ import {
 } from "@/api";
 import type { Issue, IssueComment, IssueMetadataUpdate, Platform, PrLabel } from "@/types";
 import { getErrorMessage } from "@/utils/error";
+import { labelTagColorClass } from "@/utils/labelColorClass";
 
 interface IssueRouteContext {
   platform: Platform;
@@ -80,7 +81,7 @@ const platformLabel = computed(() => {
 });
 const issueBody = computed(() => issue.value?.body.trim() ?? "");
 const stateLabel = computed(() => (issue.value?.state === "closed" ? "已关闭" : "开启"));
-const canUse = (permission: boolean | null | undefined): boolean => permission !== false;
+const canUse = (permission: boolean | null | undefined): boolean => permission === true;
 const canEditTitleBody = computed(() =>
   canUse(issue.value?.metadata_permissions.can_edit_title_body),
 );
@@ -98,7 +99,11 @@ const labelOptions = computed(() => {
   for (const label of availableLabels.value) byName.set(label.name.toLocaleLowerCase(), label);
   for (const name of issue.value?.labels ?? []) {
     if (!byName.has(name.toLocaleLowerCase())) {
-      byName.set(name.toLocaleLowerCase(), { name, color: null, description: null });
+      byName.set(name.toLocaleLowerCase(), {
+        name,
+        color: issueLabelColor(name),
+        description: null,
+      });
     }
   }
   return [...byName.values()].map((label) => ({
@@ -108,6 +113,19 @@ const labelOptions = computed(() => {
     description: label.description,
   }));
 });
+
+function issueLabelColor(name: string): string | null {
+  const colors = issue.value?.label_colors;
+  if (!colors) return null;
+  const exactColor = colors[name];
+  if (exactColor) return exactColor;
+
+  const normalizedName = name.toLocaleLowerCase();
+  return (
+    Object.entries(colors).find(([label]) => label.toLocaleLowerCase() === normalizedName)?.[1] ??
+    null
+  );
+}
 const metadataHasChanges = computed(() => {
   const current = issue.value;
   if (!current) return false;
@@ -440,7 +458,14 @@ onScopeDispose(() => {
           class="issue-detail-labels"
           aria-label="Issue 标签"
         >
-          <span v-for="label in issue.labels" :key="label" class="label-tag">{{ label }}</span>
+          <span
+            v-for="label in issue.labels"
+            :key="label"
+            class="label-tag"
+            :class="labelTagColorClass(issueLabelColor(label))"
+          >
+            {{ label }}
+          </span>
         </div>
       </section>
 

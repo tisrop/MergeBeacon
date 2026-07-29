@@ -547,6 +547,7 @@ export interface IssueSummary {
   author: User;
   state: IssueState;
   labels: string[];
+  label_colors?: Record<string, string>;
   created_at: string;
 }
 
@@ -557,6 +558,7 @@ export interface Issue {
   author: User;
   state: IssueState;
   labels: string[];
+  label_colors?: Record<string, string>;
   created_at: string;
   updated_at: string;
   metadata_permissions: IssueMetadataPermissions;

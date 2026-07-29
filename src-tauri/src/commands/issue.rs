@@ -79,7 +79,7 @@ fn ensure_metadata_field_available(
         IssueMetadataField::State => (permissions.can_change_state, "修改 Issue 状态"),
         IssueMetadataField::Labels => (permissions.can_manage_labels, "管理 Issue 标签"),
     };
-    if permission == Some(false) {
+    if permission == Some(false) || permission.is_none() {
         return Err(format!("当前 Token 或账号没有权限{label}"));
     }
     Ok(())
@@ -241,6 +241,7 @@ mod tests {
             },
             state: IssueState::Open,
             labels: vec!["bug".into()],
+            label_colors: Default::default(),
             created_at: "2026-07-25T10:00:00Z".into(),
             updated_at: "2026-07-26T10:00:00Z".into(),
             metadata_permissions: IssueMetadataPermissions::default(),
@@ -303,14 +304,21 @@ mod tests {
     }
 
     #[test]
-    fn metadata_field_availability_rejects_explicit_denial_only() {
-        let permissions =
-            IssueMetadataPermissions { can_manage_labels: Some(false), ..IssueMetadataPermissions::default() };
-
-        assert!(ensure_metadata_field_available(IssueMetadataField::TitleBody, &permissions).is_ok());
-        assert!(ensure_metadata_field_available(IssueMetadataField::Labels, &permissions)
+    fn metadata_field_availability_requires_explicit_permission() {
+        let unknown_permissions = IssueMetadataPermissions::default();
+        assert!(ensure_metadata_field_available(IssueMetadataField::TitleBody, &unknown_permissions)
             .unwrap_err()
             .contains("没有权限"));
+
+        let denied_permissions =
+            IssueMetadataPermissions { can_manage_labels: Some(false), ..IssueMetadataPermissions::default() };
+        assert!(ensure_metadata_field_available(IssueMetadataField::Labels, &denied_permissions)
+            .unwrap_err()
+            .contains("没有权限"));
+
+        let allowed_permissions =
+            IssueMetadataPermissions { can_edit_title_body: Some(true), ..IssueMetadataPermissions::default() };
+        assert!(ensure_metadata_field_available(IssueMetadataField::TitleBody, &allowed_permissions).is_ok());
     }
 
     #[test]

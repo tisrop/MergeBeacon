@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { IssueSummary } from "@/types";
+import { labelTagColorClass } from "@/utils/labelColorClass";
 
 defineProps<{
   issue: IssueSummary;
@@ -25,7 +26,12 @@ defineProps<{
         <span>由 {{ issue.author.login }} 创建</span>
         <span>{{ new Date(issue.created_at).toLocaleDateString("zh-CN") }}</span>
         <span v-if="issue.labels.length" class="issue-labels">
-          <span v-for="label in issue.labels" :key="label" class="label-tag">
+          <span
+            v-for="label in issue.labels"
+            :key="label"
+            class="label-tag"
+            :class="labelTagColorClass(issue.label_colors?.[label])"
+          >
             {{ label }}
           </span>
         </span>
