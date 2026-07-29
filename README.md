@@ -9,7 +9,7 @@
 使用统一界面连接 GitHub、GitLab 和 Gitee，集中处理 PR / MR 收件箱、Diff、人工评审、
 合并与 Issue，并可通过 OpenAI 兼容接口进行 AI 辅助评审。
 
-> 当前应用版本：`0.8.0`
+> 当前应用版本：`0.10.0`
 
 ## 界面预览
 
@@ -54,7 +54,9 @@
   - Closed / Merged 列表只显示关闭或合并终态，不继续查询实时审批和 CI / 测试状态
   - 查看标题、作者、分支、标签、合并状态和跨平台合并就绪检查；详情页检查仍是合并前的最终依据
   - 按平台能力修改标题、Markdown 描述、Draft / Ready、Reviewers、Assignees、标签和 Milestone
+  - 详情页可预览 Markdown 描述、按平台标签颜色显示标签，并展示评审者的评审状态
   - 从仓库页或当前平台的全局入口创建 PR / MR，支持 Fork 源仓库、分支搜索和参与者/标签选择
+  - 创建页可单独刷新源分支和目标分支，刷新失败时保留当前选择并允许重试
   - 创建前预览 Commit 和 Diff，可按单个 Commit 切换 Diff 范围；大型比较结果会明确标记为不完整
   - 详情页可按设置展示只读的 PR / MR 依赖关系，以及 GitHub Merge Queue / GitLab Merge Train 状态
   - 自动读取 Fork 的上游仓库信息，并可在 Fork 与上游仓库之间切换
@@ -74,11 +76,15 @@
 - **PR 合并 / 关闭 / 重新打开**
   - 根据平台能力显示可用合并策略，并在合并前展示检查、审批、冲突和权限状态
   - 可自定义合并提交标题和描述
-  - 可关闭已打开的 PR / MR，重新打开已关闭的 PR / MR
+  - 关闭已打开的 PR / MR 前显示目标仓库和编号确认；可重新打开已关闭的 PR / MR
   - 合并后可关闭关联 Issue；关闭失败会作为部分成功返回，不会把已成功的合并改为失败
 - **Issue**
-  - 查看仓库 Issue
-  - 创建带正文和标签的 Issue
+  - 查看仓库 Issue 列表与详情，并按平台提供的标签颜色显示标签
+  - 创建带 Markdown 正文、仓库模板和已有标签的 Issue；创建成功后返回列表并立即显示新条目
+  - 在详情页通过白名单清洗后渲染 Markdown 描述与评论，并支持代码块复制
+  - 查看和发表评论；按当前 Token 权限编辑标题、描述、状态和标签
+  - 保存元数据前检查远端更新时间，避免覆盖其他客户端刚完成的修改
+  - 关闭 Issue 前显示目标仓库和编号确认；已关闭 Issue 可重新打开
 - **AI 辅助评审**
   - 支持 OpenAI 兼容的 Chat Completions 与 Models API
   - 内置 OpenAI、DeepSeek、通义千问、Moonshot、Ollama 预设
@@ -124,7 +130,8 @@
 | PR / MR 依赖关系（只读） | ✅ | ✅ | ✅ |
 | Merge Queue / Merge Train 状态（只读） | ✅ | ✅ | 不支持 |
 | 合并策略 | Merge / Squash / Rebase | Merge / Squash | Merge / Squash / Rebase |
-| Issue 列表与创建 | ✅ | ✅ | ✅ |
+| Issue 列表、详情与创建 | ✅ | ✅ | ✅ |
+| Issue 评论与元数据管理 | ✅ | ✅ | ✅ |
 | Fork 上游识别 | ✅ | ✅ | ✅ |
 
 > GitLab 和 Gitee 仅支持评论型整体评审。界面不会显示“批准 / 请求修改”，后端也会拒绝
@@ -195,8 +202,8 @@ macOS `.app` 包名基于 `productName`，当前为 `MergeBeacon.app`。
 | GitLab | [gitlab.com/-/user_settings/personal_access_tokens](https://gitlab.com/-/user_settings/personal_access_tokens) |
 | Gitee | [gitee.com/profile/personal_access_tokens](https://gitee.com/profile/personal_access_tokens) |
 
-Token 至少需要读取仓库、PR / MR 和 Issue 的权限；提交评审、评论、合并或创建 Issue 时还需要
-相应的写权限。
+Token 至少需要读取仓库、PR / MR 和 Issue 的权限；提交评审、发表评论、修改元数据、合并、
+关闭或创建 Issue 时还需要相应的写权限。
 
 ### 2. 使用 PR 收件箱
 
@@ -235,7 +242,17 @@ Token 至少需要读取仓库、PR / MR 和 Issue 的权限；提交评审、�
 创建过程只调用远端平台 API，不执行本地 checkout、commit、push 或分支修改。Gitee 不支持
 创建 Draft，因此不会显示 Draft 选项。
 
-### 5. 配置和使用 AI 评审
+### 5. 处理 Issue
+
+1. 在左侧打开 **Issue**，选择 Open、Closed 或 All，并点击条目进入详情页。
+2. 在详情页查看经过白名单清洗的 Markdown 描述、标签和评论，并可复制代码块。
+3. 如当前 Token 有对应权限，可编辑标题、描述、状态和仓库已有标签。远端内容已变化时，先刷新
+   详情再重新保存。
+4. 在评论框中输入 Markdown 并发表；评论加载或提交失败时可重试。
+5. 关闭 Issue 前核对确认框中的平台、仓库和编号；已关闭的 Issue 可从详情页重新打开。
+6. 创建 Issue 时可应用仓库模板并选择已有标签；创建成功后会返回列表并立即显示新条目。
+
+### 6. 配置和使用 AI 评审
 
 1. 打开 **设置 → AI 评审设置**。
 2. 选择预设或填写 OpenAI 兼容 API 端点。
@@ -261,14 +278,14 @@ Token 至少需要读取仓库、PR / MR 和 Issue 的权限；提交评审、�
 AI 请求会携带 PR / MR 标题、描述和目标 Diff。为控制输入大小，超过约 64 KiB 的 Diff 会在
 UTF-8 字符边界安全截断，避免切断中文或 emoji。
 
-### 6. 配置桌面通知和命令面板
+### 7. 配置桌面通知和命令面板
 
 1. 打开 **设置 → 桌面通知**，授权系统通知并选择平台和事件类型。
 2. 保留“隐藏私有仓库通知内容”可避免通知展示仓库名和 PR / MR 标题；该选项默认启用。
 3. 保持应用运行以接收低频轮询通知；网络、权限或平台限流错误会在应用内显示。
 4. 使用 `Ctrl/⌘ + K` 打开命令面板，搜索平台、仓库、PR / MR 或当前 Diff 文件。
 
-### 7. 更新应用和复制诊断信息
+### 8. 更新应用和复制诊断信息
 
 1. 打开 **设置 → 应用更新**，手动检查更新或启用每日自动检查。
 2. 安装版下载完成后确认重启；Windows 便携版会打开官方 ZIP 下载地址，需要退出应用后手动覆盖。
@@ -315,9 +332,9 @@ mergebeacon/
 │   │   ├── pr/                  # PR 卡片、筛选器与合并就绪状态
 │   │   ├── review/              # 整体评审、评论列表
 │   │   └── shared/              # 共享表单与状态组件
-│   ├── pages/                   # 8 个页面：登录、收件箱、PR 创建/详情、Issue、设置
-│   ├── router/index.ts          # 10 条路由记录与登录恢复守卫
-│   ├── stores/                  # Auth / Repo / PR / Inbox / Notification / Review / UI / Update
+│   ├── pages/                   # 9 个页面：登录、收件箱、PR、Issue 与设置
+│   ├── router/index.ts          # 11 条路由记录与登录恢复守卫
+│   ├── stores/                  # Auth / Capability / Repo / PR / Issue / Inbox / Notification / Review / UI / Update
 │   └── types/index.ts           # 前端共享类型
 ├── src-tauri/
 │   ├── src/
@@ -376,26 +393,28 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-当前注册 56 个 Tauri Commands：
+当前注册 67 个 Tauri Commands：
 
 - 认证（5）：`auth_login`、`auth_logout`、`auth_check`、`auth_has_any_token`、`auth_has_token`
-- 诊断、更新与平台能力（9）：`support_info`、`copy_support_info`、`copy_recent_error_logs`、
-  `error_log_record`、`app_version`、`update_check`、`update_download_and_install`、
-  `update_restart`、`platform_capabilities`
+- 诊断、更新与平台能力（10）：`support_info`、`copy_support_info`、`copy_recent_error_logs`、
+  `clipboard_write_text`、`error_log_record`、`app_version`、`update_check`、
+  `update_download_and_install`、`update_restart`、`platform_capabilities`
 - 仓库（1）：`repo_list`
 - 桌面通知（3）：`desktop_notification_permission_granted`、`desktop_notification_request_permission`、
   `desktop_notification_send`
-- 收件箱与 PR / MR（18）：`review_inbox_list`、`pr_list`、`pr_detail`、`pr_dependencies`、
-  `pr_merge_queue_status`、`pr_branches`、
-  `pr_labels`、`pr_participant_suggestions`、`pr_create_preview`、`pr_create`、
-  `pr_metadata_update`、`pr_merge_readiness`、`pr_diff`、`pr_compare_diff`、`pr_file_content`、
-  `pr_merge`、`pr_close`、`pr_reopen`
+- 收件箱与 PR / MR（21）：`review_inbox_list`、`pr_list`、`pr_detail`、`pr_dependencies`、
+  `pr_merge_queue_status`、`pr_branches`、`pr_labels`、`pr_templates`、
+  `pr_description_image_upload`、`pr_participant_suggestions`、`pr_create_preview`、`pr_create`、
+  `pr_metadata_update`、`pr_merge_readiness`、`pr_diff`、`pr_commits`、`pr_compare_diff`、
+  `pr_file_content`、`pr_merge`、`pr_close`、`pr_reopen`
 - 评审（10）：`review_submit`、`review_comment_add`、`review_thread_reply`、
   `review_comment_update`、`review_comment_delete`、`review_list`、`review_comments_list`、
   `review_thread_set_resolved`、`review_viewed_files_list`、`review_file_set_viewed`
-- Issue（2）：`issue_list`、`issue_create`
-- AI（8）：`ai_get_config`、`ai_save_config`、`ai_save_api_key`、`ai_review`、
-  `ai_review_stream`、`ai_review_cancel`、`ai_list_models`、`ai_test_connection`
+- Issue（7）：`issue_list`、`issue_detail`、`issue_create`、`issue_metadata_update`、
+  `issue_comments_list`、`issue_comment_add`、`issue_templates`
+- AI（10）：`ai_get_config`、`ai_save_config`、`ai_save_api_key`、`ai_pr_draft`、
+  `ai_pr_draft_cancel`、`ai_review`、`ai_review_stream`、`ai_review_cancel`、
+  `ai_list_models`、`ai_test_connection`
 
 ## 已知限制
 

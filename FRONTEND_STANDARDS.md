@@ -204,10 +204,13 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 - 超长代码行应在 Diff 容器内部滚动，不得导致整个页面横向滚动。
 - AI 严重级别必须使用 `critical`、`major`、`minor`、`info` 的既有语义映射，不能因视觉偏好
   调换颜色或名称。
-- 远端评论、标题、模型 ID 和错误正文一律作为纯文本渲染；禁止使用 `v-html`。
-- `DiffViewer.vue` 使用 diff2html 将纯 Diff 转换为本地展示结构，是当前唯一受控的 `v-html`
-  例外；不得把该例外扩展到评论、Markdown 或任意远端 HTML。
-- Markdown 或富文本能力若未来需要引入，必须先完成可信解析、HTML 清洗、链接策略与 CSP 评审。
+- 标题、模型 ID、错误正文及不声明为 Markdown 的远端字符串一律作为纯文本渲染；禁止使用
+  `v-html`。
+- `DiffViewer.vue` 使用 diff2html 将纯 Diff 转换为本地展示结构；`MarkdownRenderer.vue` 使用
+  `marked` 解析 Markdown，并在标签、属性和 URL 协议白名单清洗后渲染。这两处是当前仅有的受控
+  `v-html` 例外，业务组件不得直接注入远端 HTML。
+- 扩展 Markdown 标签、属性、链接协议或交互前，必须同步评审 HTML 清洗、外链策略、CSP、键盘
+  操作和回归测试；SVG、脚本、样式、事件属性和危险 URL 协议不得进入渲染结果。
 
 ## 8. 交互、状态与生命周期
 

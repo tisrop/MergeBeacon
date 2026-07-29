@@ -42,13 +42,13 @@ cd src-tauri && cargo test github_adapter -- --nocapture
 src/                 # Vue 3 前端（Composition API, <script setup lang="ts">）
   api/index.ts       # 唯一 IPC 入口
   types/index.ts     # 前端 TS 类型
-  stores/            # Pinia（Auth / Capability / PR / Repo / Inbox / Notification / Review / UI / Update）
-  router/index.ts    # 10 条路由记录与登录恢复守卫
-  pages/             # 8 个页面组件（含跨平台 PR 收件箱和 PR/MR 创建页）
+  stores/            # Pinia（Auth / Capability / PR / Issue / Repo / Inbox / Notification / Review / UI / Update）
+  router/index.ts    # 11 条路由记录与登录恢复守卫
+  pages/             # 9 个页面组件（含 PR/MR 创建/详情页和 Issue 创建/详情页）
   components/        # ai/ command/ diff/ inbox/ issue/ layout/ notification/ pr/ review/ shared/
   main.ts            # 挂载 Pinia + Router；HMR 时阻止恢复到 /settings
 src-tauri/
-  src/lib.rs         # Tauri Builder：注册 56 个 IPC 命令，设置原生菜单与桌面插件
+  src/lib.rs         # Tauri Builder：注册 67 个 IPC 命令，设置原生菜单与桌面插件
   src/state.rs       # AppState + 可取消的 AI 任务注册表
   src/vault.rs       # TokenVault：Keyring 优先、AES-256-GCM 文件降级
   src/local_store.rs # SQLite 评论快照缓存
@@ -89,6 +89,8 @@ src-tauri/
   将平台 Compare API 的截断变成合法大 PR/MR 的创建硬阻塞。Gitee 不支持 Draft，前后端都必须拒绝。
 - PR/MR 元数据更新必须同时检查静态平台能力、Token 运行时权限和远端更新时间；部分字段写入失败
   必须保留成功结果并在详情页展示，不得把已创建的 PR/MR 伪装为整体失败。
+- Issue 详情、评论和元数据管理支持三个平台；标题、描述、状态和标签写入必须检查 Token 运行时权限
+  与远端更新时间。权限未知时不得开放编辑，旧详情不得覆盖远端新值。
 - 收件箱条目必须保留具体 `relationships`：GitHub/GitLab 区分 Reviewer、Assignee，Gitee 区分
   评审人、测试人；“我创建的”使用 Author。重复条目合并时不得丢失关系来源。
 - 普通 Open PR / MR 列表和收件箱必须复用统一状态摘要语义，区分总体合并状态、审批、CI/测试、
@@ -134,7 +136,9 @@ src-tauri/
 - DiffViewer 使用后端标准化 patch；上下文展开通过 `pr_file_content` 获取 base/head 文件内容，
   二进制、截断或不可用内容必须显示明确限制，不得拼接出误导性 Diff。可预览的图片必须只在
   受限图片上下文中展示；SVG 不得作为标记注入页面，图片加载的旧响应不得覆盖当前文件。
-- 模型 ID 等远端字符串只能作为文本渲染，不使用 `v-html`。
+- 模型 ID、标题和错误正文等远端字符串只能作为文本渲染。Markdown 只允许通过共享
+  `MarkdownRenderer` 的标签、属性和 URL 白名单清洗后使用受控 `v-html`；其他组件不得直接渲染
+  远端 HTML。
 - oxlint 使用 `.oxlintrc.json`；禁止内联 `oxlint-disable`。oxfmt：双引号、分号、尾逗号、
   100 列宽。
 - `src/main.ts` 有 `/settings` HMR 保护；菜单“设置...”通过 `window.__goToSettings()` 跳转。
