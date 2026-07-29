@@ -146,6 +146,24 @@ pub struct PrMetadataPermissions {
     pub can_manage_milestone: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrReviewStatus {
+    Pending,
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrReviewerStatus {
+    pub user: User,
+    pub status: PrReviewStatus,
+    pub web_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrDetail {
     pub summary: PrSummary,
@@ -159,9 +177,12 @@ pub struct PrDetail {
     pub base_sha: String,
     pub draft: Option<bool>,
     pub reviewers: Vec<User>,
+    #[serde(default)]
+    pub reviewer_statuses: Vec<PrReviewerStatus>,
     pub assignees: Vec<User>,
     pub milestone: Option<PrMilestone>,
     pub metadata_permissions: PrMetadataPermissions,
+    pub web_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -625,7 +646,7 @@ pub struct PrComment {
 }
 
 // ── Issue ──
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueState {
     Open,
@@ -650,6 +671,8 @@ pub struct IssueSummary {
     pub author: User,
     pub state: IssueState,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub label_colors: std::collections::BTreeMap<String, String>,
     pub created_at: String,
 }
 
@@ -661,8 +684,39 @@ pub struct Issue {
     pub author: User,
     pub state: IssueState,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub label_colors: std::collections::BTreeMap<String, String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub is_pull_request: bool,
+    #[serde(default)]
+    pub metadata_permissions: IssueMetadataPermissions,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IssueMetadataPermissions {
+    pub can_edit_title_body: Option<bool>,
+    pub can_change_state: Option<bool>,
+    pub can_manage_labels: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueComment {
+    pub id: serde_json::Value,
+    pub body: String,
+    pub author: User,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueMetadataUpdate {
+    pub title: String,
+    pub body: String,
+    pub state: IssueState,
+    pub labels: Vec<String>,
+    pub expected_updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

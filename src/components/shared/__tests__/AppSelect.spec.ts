@@ -78,6 +78,21 @@ describe("AppSelect", () => {
     expect(wrapper.findAll(".dropdown-option")).toHaveLength(3);
   });
 
+  it("禁用时不响应鼠标和键盘展开", async () => {
+    const wrapper = mount(AppSelect, {
+      props: { modelValue: "main", options, disabled: true },
+    });
+    const trigger = wrapper.get('[role="combobox"]');
+
+    expect(trigger.attributes("aria-disabled")).toBe("true");
+    expect(trigger.attributes("tabindex")).toBe("-1");
+    await trigger.trigger("click");
+    await trigger.trigger("keydown", { key: "ArrowDown" });
+
+    expect(wrapper.find(".dropdown-panel").exists()).toBe(false);
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+  });
+
   it("方向键在列表边界循环并跳过禁用项", async () => {
     const wrapper = mount(AppSelect, {
       props: {

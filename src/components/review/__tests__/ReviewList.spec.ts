@@ -131,6 +131,21 @@ describe("ReviewList", () => {
     ]);
   });
 
+  it("将总体评审和行级评论中的 Markdown 链接渲染为可点击链接", async () => {
+    const href = "https://github.com/Stirling-Tools/Stirling-PDF/pull/7187";
+    const markdown = `[Stirling-Tools/Stirling-PDF#7187](${href})`;
+    mocks.reviewList.mockResolvedValueOnce([{ ...reviews[0], body: markdown }]);
+    mocks.reviewCommentsList.mockResolvedValueOnce([comment({ body: markdown })]);
+
+    const wrapper = await mountList();
+    const links = wrapper.findAll(`a[href='${href}']`);
+    expect(links).toHaveLength(2);
+    expect(links.every((link) => link.text() === "Stirling-Tools/Stirling-PDF#7187")).toBe(true);
+
+    await links[1].trigger("click");
+    expect(wrapper.emitted("openLink")?.[0]).toEqual([href]);
+  });
+
   it("稳定组织大量线程和评论并汇总每个文件", async () => {
     const comments = Array.from({ length: 120 }, (_, threadIndex) =>
       Array.from({ length: 5 }, (_, commentIndex) =>

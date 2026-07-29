@@ -34,6 +34,17 @@
   border-color: var(--color-primary-border);
 }
 
+.app-select[aria-disabled="true"] {
+  background: var(--color-surface-muted);
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.app-select[aria-disabled="true"]:hover {
+  border-color: var(--color-border);
+}
+
 .app-select:focus-visible {
   outline: 2px solid transparent;
   outline-offset: 0;

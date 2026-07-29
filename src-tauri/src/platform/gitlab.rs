@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 
-use super::GitPlatform;
+use super::{sanitize_web_url, GitPlatform};
 use crate::error::AppError;
 use crate::http_client::HttpClient;
 use crate::models::*;
@@ -1019,6 +1019,42 @@ impl GitPlatform for GitLabAdapter {
         } else {
             None
         };
+        let (reviewers, mut reviewer_statuses): (Vec<User>, Vec<PrReviewerStatus>) = json["reviewers"]
+            .as_array()
+            .map(|users| {
+                users
+                    .iter()
+                    .map(|value| {
+                        let user = Self::map_user(value);
+                        let status = PrReviewerStatus {
+                            user: user.clone(),
+                            status: PrReviewStatus::Pending,
+                            web_url: sanitize_web_url(&value["web_url"]),
+                        };
+                        (user, status)
+                    })
+                    .unzip()
+            })
+            .unwrap_or_default();
+        let approvals_url = format!("{}/projects/{}/merge_requests/{}/approvals", self.base_url, project_id, pr_number);
+        if let Ok(approvals) = self.get_json::<Value>(&approvals_url).await {
+            let approved_by = approvals["approved_by"].as_array().cloned().unwrap_or_default();
+            for reviewer in &mut reviewer_statuses {
+                let approval = approved_by.iter().find(|approval| {
+                    approval["user"]["username"]
+                        .as_str()
+                        .is_some_and(|login| login.eq_ignore_ascii_case(&reviewer.user.login))
+                });
+                if let Some(approval) = approval {
+                    reviewer.status = PrReviewStatus::Approved;
+                    if let Some(web_url) = sanitize_web_url(&approval["user"]["web_url"]) {
+                        reviewer.web_url = Some(web_url);
+                    }
+                } else {
+                    reviewer.status = PrReviewStatus::Pending;
+                }
+            }
+        }
         let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
@@ -1031,16 +1067,15 @@ impl GitPlatform for GitLabAdapter {
             head_sha: json["sha"].as_str().or_else(|| json["diff_refs"]["head_sha"].as_str()).unwrap_or("").to_string(),
             base_sha: json["diff_refs"]["base_sha"].as_str().unwrap_or("").to_string(),
             draft: json["draft"].as_bool().or_else(|| json["work_in_progress"].as_bool()),
-            reviewers: json["reviewers"]
-                .as_array()
-                .map(|users| users.iter().map(Self::map_user).collect())
-                .unwrap_or_default(),
+            reviewers,
+            reviewer_statuses,
             assignees: json["assignees"]
                 .as_array()
                 .map(|users| users.iter().map(Self::map_user).collect())
                 .unwrap_or_default(),
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
+            web_url: sanitize_web_url(&json["web_url"]),
         })
     }
 
@@ -2215,11 +2250,44 @@ impl GitPlatform for GitLabAdapter {
                     .as_array()
                     .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
                     .unwrap_or_default(),
+                label_colors: Default::default(),
                 created_at: i["created_at"].as_str().unwrap_or("").to_string(),
             })
             .collect();
 
         Ok(Paginated { items: issues, page, total_pages: 1, total_count: 0, truncated: None })
+    }
+
+    async fn get_issue(&self, owner: &str, repo: &str, issue_number: u64) -> Result<Issue, AppError> {
+        let project_id = urlencoding(owner, repo);
+        let url = format!("{}/projects/{}/issues/{}", self.base_url, project_id, issue_number);
+        let json: Value = self.get_json(&url).await?;
+        let author = Self::map_user(&json["author"]);
+        let permissions = self.metadata_permissions(owner, repo, &author.login).await;
+
+        Ok(Issue {
+            number: json["iid"].as_u64().unwrap_or(0),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+            body: json["description"].as_str().unwrap_or("").to_string(),
+            author,
+            state: match json["state"].as_str().unwrap_or("") {
+                "closed" => IssueState::Closed,
+                _ => IssueState::Open,
+            },
+            labels: json["labels"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            label_colors: Default::default(),
+            created_at: json["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            is_pull_request: false,
+            metadata_permissions: IssueMetadataPermissions {
+                can_edit_title_body: permissions.can_edit_title_body,
+                can_change_state: permissions.can_edit_title_body,
+                can_manage_labels: permissions.can_manage_labels,
+            },
+        })
     }
 
     async fn create_issue(
@@ -2253,8 +2321,99 @@ impl GitPlatform for GitLabAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            label_colors: Default::default(),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            is_pull_request: false,
+            metadata_permissions: IssueMetadataPermissions::default(),
+        })
+    }
+
+    async fn update_issue_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        current: &Issue,
+        update: &IssueMetadataUpdate,
+    ) -> Result<Issue, AppError> {
+        let project_id = urlencoding(owner, repo);
+        let url = format!("{}/projects/{}/issues/{}", self.base_url, project_id, issue_number);
+        let mut payload = serde_json::json!({});
+        if current.title != update.title {
+            payload["title"] = Value::String(update.title.clone());
+        }
+        if current.body != update.body {
+            payload["description"] = Value::String(update.body.clone());
+        }
+        if current.labels != update.labels {
+            payload["labels"] = Value::String(update.labels.join(","));
+        }
+        if current.state != update.state {
+            payload["state_event"] =
+                Value::String(if matches!(update.state, IssueState::Closed) { "close" } else { "reopen" }.into());
+        }
+        let json = self.put_json(&url, &payload).await?;
+
+        Ok(Issue {
+            number: json["iid"].as_u64().unwrap_or(0),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+            body: json["description"].as_str().unwrap_or("").to_string(),
+            author: Self::map_user(&json["author"]),
+            state: match json["state"].as_str().unwrap_or("") {
+                "closed" => IssueState::Closed,
+                _ => IssueState::Open,
+            },
+            labels: json["labels"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|label| label.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            label_colors: Default::default(),
+            created_at: json["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            is_pull_request: current.is_pull_request,
+            metadata_permissions: current.metadata_permissions.clone(),
+        })
+    }
+
+    async fn list_issue_comments(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+    ) -> Result<Vec<IssueComment>, AppError> {
+        let project_id = urlencoding(owner, repo);
+        let endpoint = format!("{}/projects/{}/issues/{}/notes", self.base_url, project_id, issue_number);
+        let items = super::collect_json_pages(self, &endpoint).await?;
+        Ok(items
+            .iter()
+            .filter(|note| note["system"].as_bool() != Some(true))
+            .map(|note| IssueComment {
+                id: note["id"].clone(),
+                body: note["body"].as_str().unwrap_or("").to_string(),
+                author: Self::map_user(&note["author"]),
+                created_at: note["created_at"].as_str().unwrap_or("").to_string(),
+                updated_at: note["updated_at"].as_str().unwrap_or("").to_string(),
+            })
+            .collect())
+    }
+
+    async fn create_issue_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        body: &str,
+    ) -> Result<IssueComment, AppError> {
+        let project_id = urlencoding(owner, repo);
+        let url = format!("{}/projects/{}/issues/{}/notes", self.base_url, project_id, issue_number);
+        let note = self.post_json(&url, &serde_json::json!({ "body": body })).await?;
+        Ok(IssueComment {
+            id: note["id"].clone(),
+            body: note["body"].as_str().unwrap_or("").to_string(),
+            author: Self::map_user(&note["author"]),
+            created_at: note["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: note["updated_at"].as_str().unwrap_or("").to_string(),
         })
     }
 

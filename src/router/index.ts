@@ -5,6 +5,7 @@ import ReviewInboxPage from "@/pages/ReviewInboxPage.vue";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
 import PrNewPage from "@/pages/PrNewPage.vue";
 import IssueListPage from "@/pages/IssueListPage.vue";
+import IssueDetailPage from "@/pages/IssueDetailPage.vue";
 import IssueNewPage from "@/pages/IssueNewPage.vue";
 import SettingsPage from "@/pages/SettingsPage.vue";
 import { useAuthStore } from "@/stores/useAuthStore";
@@ -62,6 +63,13 @@ const routes = [
     path: "/issue/new",
     name: "issue-new",
     component: IssueNewPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/issue/:platform/:owner/:repo/:number",
+    name: "issue-detail",
+    component: IssueDetailPage,
+    props: true,
     meta: { requiresAuth: true },
   },
   {

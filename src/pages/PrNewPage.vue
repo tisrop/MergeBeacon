@@ -739,7 +739,7 @@ async function loadCommitPreview(): Promise<void> {
   }
 }
 
-async function loadBranches(): Promise<void> {
+async function loadBranches(preserveExisting = false): Promise<void> {
   const target = targetRepository.value;
   const source = sourceRepository.value;
   if (!target || !source) return;
@@ -770,12 +770,18 @@ async function loadBranches(): Promise<void> {
     }
   } catch (cause) {
     if (sequence !== branchSequence) return;
-    sourceBranches.value = [];
-    targetBranches.value = [];
+    if (!preserveExisting) {
+      sourceBranches.value = [];
+      targetBranches.value = [];
+    }
     branchError.value = getErrorMessage(cause, "无法读取仓库分支");
   } finally {
     if (sequence === branchSequence) branchesLoading.value = false;
   }
+}
+
+function refreshBranches(): void {
+  void loadBranches(true);
 }
 
 async function loadLabels(): Promise<void> {
@@ -1062,11 +1068,20 @@ onUnmounted(() => {
 
     <form class="pr-create-form" @submit.prevent="handleSubmit">
       <section class="card form-section">
-        <div class="section-heading">
+        <div class="section-heading source-section-heading">
           <div>
             <h3>选择变更来源</h3>
             <p>源仓库可以选择当前仓库或已加载的 Fork。</p>
           </div>
+          <button
+            class="btn btn-sm"
+            type="button"
+            :disabled="branchesLoading || !sourceRepository || !targetRepository"
+            :aria-label="branchesLoading ? '正在刷新分支' : '刷新分支'"
+            @click="refreshBranches"
+          >
+            {{ branchesLoading ? "正在刷新…" : "刷新分支" }}
+          </button>
         </div>
         <div v-if="isGlobalCreation" class="target-repository-field field">
           <span>目标仓库</span>

@@ -161,6 +161,20 @@ export interface PrMetadataPermissions {
   can_manage_milestone: boolean | null;
 }
 
+export type PrReviewStatus =
+  | "pending"
+  | "approved"
+  | "changes_requested"
+  | "commented"
+  | "dismissed"
+  | "unknown";
+
+export interface PrReviewerStatus {
+  user: User;
+  status: PrReviewStatus;
+  web_url: string | null;
+}
+
 export interface PrDetail {
   summary: PrSummary;
   body: string;
@@ -173,9 +187,11 @@ export interface PrDetail {
   base_sha: string;
   draft: boolean | null;
   reviewers: User[];
+  reviewer_statuses?: PrReviewerStatus[];
   assignees: User[];
   milestone: PrMilestone | null;
   metadata_permissions: PrMetadataPermissions;
+  web_url?: string | null;
 }
 
 export interface PrDependencyNode {
@@ -546,6 +562,7 @@ export interface IssueSummary {
   author: User;
   state: IssueState;
   labels: string[];
+  label_colors?: Record<string, string>;
   created_at: string;
 }
 
@@ -556,8 +573,33 @@ export interface Issue {
   author: User;
   state: IssueState;
   labels: string[];
+  label_colors?: Record<string, string>;
   created_at: string;
   updated_at: string;
+  is_pull_request?: boolean;
+  metadata_permissions: IssueMetadataPermissions;
+}
+
+export interface IssueMetadataPermissions {
+  can_edit_title_body: boolean | null;
+  can_change_state: boolean | null;
+  can_manage_labels: boolean | null;
+}
+
+export interface IssueComment {
+  id: number | string;
+  body: string;
+  author: User;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IssueMetadataUpdate {
+  title: string;
+  body: string;
+  state: Exclude<IssueState, "all">;
+  labels: string[];
+  expected_updated_at: string;
 }
 
 export interface CreateIssueRequest {

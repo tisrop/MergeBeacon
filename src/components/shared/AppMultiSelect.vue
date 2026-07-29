@@ -149,10 +149,11 @@ onUnmounted(() => {
       class="app-multi-select"
       :class="{ disabled: props.disabled }"
       role="combobox"
-      tabindex="0"
+      :tabindex="props.disabled ? -1 : 0"
       aria-haspopup="listbox"
       :aria-expanded="open"
       :aria-label="ariaLabel"
+      :aria-disabled="props.disabled"
       @click="toggleDropdown"
       @keydown="onTriggerKeydown"
     >

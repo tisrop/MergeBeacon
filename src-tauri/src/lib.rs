@@ -211,7 +211,11 @@ pub fn run() {
             review::review_file_set_viewed,
             // Issue
             issue::issue_list,
+            issue::issue_detail,
             issue::issue_create,
+            issue::issue_metadata_update,
+            issue::issue_comments_list,
+            issue::issue_comment_add,
             issue::issue_templates,
             // AI
             ai_cmds::ai_get_config,

@@ -1,7 +1,8 @@
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
-    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
-    PrMilestone, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
+    Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, PrCreatePreviewRequest, PrCreateRequest,
+    PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrReviewStatus, PrState,
+    PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{gitee::GiteeAdapter, GitPlatform};
 use wiremock::matchers::{body_json, method, path, query_param};
@@ -1152,7 +1153,7 @@ async fn test_gitee_list_issues_paginated() {
                         "title": "Bug report",
                         "state": "open",
                         "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
-                        "labels": [{ "name": "bug" }],
+                        "labels": [{ "name": "bug", "color": "d73a4a" }],
                         "created_at": "2025-01-01T00:00:00Z"
                     }
                 ]))
@@ -1174,6 +1175,7 @@ async fn test_gitee_list_issues_paginated() {
         .expect("should list issues");
 
     assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].label_colors.get("bug").map(String::as_str), Some("d73a4a"));
     assert_eq!(result.total_pages, 5, "should parse last page from Link header");
 }
 
@@ -1258,6 +1260,182 @@ async fn test_gitee_create_issue() {
 
     assert_eq!(issue.number, 99);
     assert_eq!(issue.title, "Memory leak");
+}
+
+#[tokio::test]
+async fn test_gitee_get_issue_detail() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/issues/99"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "number": 99,
+            "title": "Memory leak",
+            "body": "Steps: 1. Login 2. Logout",
+            "state": "closed",
+            "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
+            "labels": [{ "name": "bug" }],
+            "created_at": "2025-01-05T00:00:00Z",
+            "updated_at": "2025-01-06T00:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/user"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 2,
+            "login": "maintainer"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "permission": {
+                "admin": false,
+                "push": false
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let client = HttpClient::new();
+    let adapter =
+        GiteeAdapter::new(client, "test-token".to_string()).with_base_url(format!("{}/api/v5", mock_server.uri()));
+
+    let issue = adapter.get_issue("octocat", "hello-world", 99).await.expect("should get issue");
+
+    assert_eq!(issue.number, 99);
+    assert_eq!(issue.body, "Steps: 1. Login 2. Logout");
+    assert!(matches!(issue.state, mergebeacon_lib::models::IssueState::Closed));
+    assert_eq!(issue.labels, vec!["bug".to_string()]);
+    assert!(!issue.is_pull_request);
+    assert_eq!(issue.metadata_permissions.can_edit_title_body, Some(false));
+    assert_eq!(issue.metadata_permissions.can_change_state, Some(false));
+    assert_eq!(issue.metadata_permissions.can_manage_labels, Some(false));
+}
+
+#[tokio::test]
+async fn test_gitee_updates_issue_metadata_and_manages_comments() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v5/repos/octocat/hello-world/issues/99"))
+        .and(query_param("access_token", "test-token"))
+        .and(body_json(serde_json::json!({
+            "title": "Updated title",
+            "body": "Updated body",
+            "state": "open",
+            "labels": "bug"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "number": 99,
+            "title": "Updated title",
+            "body": "Updated body",
+            "state": "open",
+            "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
+            "labels": [{ "name": "bug" }],
+            "created_at": "2025-01-05T00:00:00Z",
+            "updated_at": "2025-01-07T00:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v5/repos/octocat/hello-world/issues/99"))
+        .and(query_param("access_token", "test-token"))
+        .and(body_json(serde_json::json!({ "title": "Title only" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "number": 99,
+            "title": "Title only",
+            "body": "Old body",
+            "state": "closed",
+            "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
+            "labels": [],
+            "created_at": "2025-01-05T00:00:00Z",
+            "updated_at": "2025-01-07T01:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/issues/99/comments"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 21,
+            "body": "Existing comment",
+            "user": { "id": 2, "login": "reviewer", "name": "", "avatar_url": "" },
+            "created_at": "2025-01-06T01:00:00Z",
+            "updated_at": "2025-01-06T01:00:00Z"
+        }])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/repos/octocat/hello-world/issues/99/comments"))
+        .and(query_param("access_token", "test-token"))
+        .and(body_json(serde_json::json!({ "body": "New comment" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "id": 22,
+            "body": "New comment",
+            "user": { "id": 3, "login": "author", "name": "", "avatar_url": "" },
+            "created_at": "2025-01-07T01:00:00Z",
+            "updated_at": "2025-01-07T01:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".into())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let current = Issue {
+        number: 99,
+        title: "Old title".into(),
+        body: "Old body".into(),
+        author: User {
+            id: serde_json::json!(1),
+            login: "reporter".into(),
+            name: String::new(),
+            avatar_url: String::new(),
+        },
+        state: IssueState::Closed,
+        labels: vec![],
+        label_colors: Default::default(),
+        created_at: "2025-01-05T00:00:00Z".into(),
+        updated_at: "2025-01-06T00:00:00Z".into(),
+        is_pull_request: false,
+        metadata_permissions: IssueMetadataPermissions::default(),
+    };
+    let update = IssueMetadataUpdate {
+        title: "Updated title".into(),
+        body: "Updated body".into(),
+        state: IssueState::Open,
+        labels: vec!["bug".into()],
+        expected_updated_at: current.updated_at.clone(),
+    };
+
+    let updated = adapter
+        .update_issue_metadata("octocat", "hello-world", 99, &current, &update)
+        .await
+        .expect("should update issue");
+    let title_only_update = IssueMetadataUpdate {
+        title: "Title only".into(),
+        body: current.body.clone(),
+        state: current.state.clone(),
+        labels: current.labels.clone(),
+        expected_updated_at: current.updated_at.clone(),
+    };
+    let title_only = adapter
+        .update_issue_metadata("octocat", "hello-world", 99, &current, &title_only_update)
+        .await
+        .expect("should update only the title");
+    let comments = adapter.list_issue_comments("octocat", "hello-world", 99).await.expect("should list comments");
+    let created =
+        adapter.create_issue_comment("octocat", "hello-world", 99, "New comment").await.expect("should create comment");
+
+    assert!(matches!(updated.state, IssueState::Open));
+    assert_eq!(title_only.title, "Title only");
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].body, "Existing comment");
+    assert_eq!(created.author.login, "author");
 }
 
 #[tokio::test]
@@ -1583,10 +1761,40 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
             "head": {"ref": "feature", "sha": "head-sha"},
             "base": {"ref": "main", "sha": "base-sha"},
             "mergeable": true,
-            "assignees": [{"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}],
-            "api_reviewers": [{"id": 3, "login": "api-reviewer", "name": "API Reviewer", "avatar_url": ""}],
+            "assignees": [{
+                "id": 2,
+                "login": "reviewer",
+                "name": "Reviewer",
+                "avatar_url": "",
+                "accept": true,
+                "html_url": "https://gitee.com/reviewer"
+            }],
+            "api_reviewers": [
+                {
+                    "id": 3,
+                    "login": "api-reviewer",
+                    "name": "API Reviewer",
+                    "avatar_url": "",
+                    "accept": false,
+                    "html_url": "https://gitee.com/api-reviewer"
+                },
+                {
+                    "id": 5,
+                    "login": "missing-accept",
+                    "name": "Missing Accept",
+                    "avatar_url": ""
+                },
+                {
+                    "id": 6,
+                    "login": "invalid-accept",
+                    "name": "Invalid Accept",
+                    "avatar_url": "",
+                    "accept": "true"
+                }
+            ],
             "testers": [{"id": 4, "login": "tester", "name": "Tester", "avatar_url": ""}],
-            "milestone": {"id": 9, "number": 4, "title": "0.6.0"}
+            "milestone": {"id": 9, "number": 4, "title": "0.6.0"},
+            "html_url": "https://gitee.com/octocat/hello-world/pulls/42"
         })))
         .mount(&mock_server)
         .await;
@@ -1595,13 +1803,19 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
         .with_base_url(format!("{}/api/v5", mock_server.uri()));
     let detail = adapter.get_pull_request("octocat", "hello-world", 42).await.expect("PR detail");
 
+    assert_eq!(detail.web_url.as_deref(), Some("https://gitee.com/octocat/hello-world/pulls/42"));
     assert_eq!(detail.base_sha, "base-sha");
     assert_eq!(detail.head_sha, "head-sha");
     assert_eq!(detail.draft, None);
     assert_eq!(
         detail.reviewers.iter().map(|value| value.login.as_str()).collect::<Vec<_>>(),
-        vec!["reviewer", "api-reviewer"]
+        vec!["reviewer", "api-reviewer", "missing-accept", "invalid-accept"]
     );
+    assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Approved);
+    assert_eq!(detail.reviewer_statuses[1].status, PrReviewStatus::Pending);
+    assert_eq!(detail.reviewer_statuses[2].status, PrReviewStatus::Unknown);
+    assert_eq!(detail.reviewer_statuses[3].status, PrReviewStatus::Unknown);
+    assert_eq!(detail.reviewer_statuses[0].web_url.as_deref(), Some("https://gitee.com/reviewer"));
     assert_eq!(detail.assignees.iter().map(|value| value.login.as_str()).collect::<Vec<_>>(), vec!["tester"]);
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
@@ -1962,6 +2176,7 @@ async fn test_gitee_updates_pull_request_metadata_without_unsupported_fields() {
             name: "".into(),
             avatar_url: "".into(),
         }],
+        reviewer_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(8),
             login: "old-tester".into(),
@@ -1970,6 +2185,7 @@ async fn test_gitee_updates_pull_request_metadata_without_unsupported_fields() {
         }],
         milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: "New title".into(),
@@ -2044,9 +2260,11 @@ async fn test_gitee_reports_reviewer_success_when_pull_patch_fails() {
         base_sha: "base".into(),
         draft: None,
         reviewers: Vec::new(),
+        reviewer_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: None,
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: "New title".into(),
@@ -2104,9 +2322,11 @@ async fn test_gitee_clears_pull_request_milestone_with_zero_number() {
         base_sha: "base".into(),
         draft: None,
         reviewers: Vec::new(),
+        reviewer_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: current.summary.title.clone(),

@@ -40,7 +40,8 @@
 }
 
 .metadata-label,
-.field > span {
+.field > span,
+.metadata-description-toolbar > span {
   display: block;
   margin-bottom: var(--space-1);
   color: var(--color-text-tertiary);
@@ -55,20 +56,121 @@
   font-size: 13px;
 }
 
+.metadata-reviewer-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.metadata-reviewer {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+a.metadata-reviewer:hover .metadata-reviewer-name {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+a.metadata-reviewer:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.metadata-reviewer-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.metadata-review-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.metadata-review-status::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.metadata-review-status-approved {
+  color: var(--color-success);
+}
+
+.metadata-review-status-changes_requested {
+  color: var(--color-danger);
+}
+
+.metadata-review-status-pending {
+  color: var(--color-warning);
+}
+
+.metadata-review-status-commented {
+  color: var(--color-primary);
+}
+
 .metadata-tags {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
 }
 
-.metadata-tag {
-  padding: 2px 7px;
+.metadata-linked-issues {
+  grid-column: 1 / -1;
+}
+
+.metadata-linked-issue-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.metadata-linked-issue {
+  min-height: 24px;
+  padding: 2px 8px;
   border: 1px solid var(--color-primary-border);
   border-radius: var(--radius-full, 999px);
   background: var(--color-primary-light);
   color: var(--color-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.metadata-linked-issue:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.metadata-linked-issue:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.metadata-tag {
+  padding: 2px 7px;
+  border: 1px solid var(--label-tag-background, var(--color-primary-border));
+  border-radius: var(--radius-full, 999px);
+  background: var(--label-tag-background, var(--color-primary-light));
+  color: var(--label-tag-foreground, var(--color-primary));
   font-size: 11px;
   font-weight: 600;
+  line-height: 16px;
 }
 
 .metadata-description {
@@ -76,66 +178,77 @@
   max-height: 200px;
   overflow: auto;
   padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border-subtle);
+  border-top: 1px solid var(--color-border-light);
   overflow-wrap: anywhere;
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.6;
 }
-.metadata-description :deep(h1),
-.metadata-description :deep(h2),
-.metadata-description :deep(h3),
-.metadata-description :deep(h4) {
+.metadata-markdown :deep(h1),
+.metadata-markdown :deep(h2),
+.metadata-markdown :deep(h3),
+.metadata-markdown :deep(h4) {
   margin: 0.5em 0 0.25em;
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--color-text);
   font-size: 14px;
 }
-.metadata-description :deep(p) {
+.metadata-markdown :deep(p) {
   margin: 0.25em 0;
 }
-.metadata-description :deep(ul),
-.metadata-description :deep(ol) {
+.metadata-markdown :deep(ul),
+.metadata-markdown :deep(ol) {
   margin: 0.25em 0;
   padding-left: 1.5em;
 }
-.metadata-description :deep(li) {
+.metadata-markdown :deep(li) {
   margin: 0.1em 0;
 }
-.metadata-description :deep(code) {
-  background: var(--color-bg-tertiary);
+.metadata-markdown :deep(code) {
+  background: var(--color-surface-subtle);
   padding: 1px 4px;
   border-radius: 3px;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
-.metadata-description :deep(pre) {
-  background: var(--color-bg-tertiary);
+.metadata-markdown :deep(pre) {
+  background: var(--color-surface-subtle);
   padding: var(--space-2);
   border-radius: 4px;
   overflow-x: auto;
   font-size: 12px;
 }
-.metadata-description :deep(pre code) {
+.metadata-markdown :deep(pre code) {
   background: none;
   padding: 0;
 }
-.metadata-description :deep(a) {
+.metadata-markdown :deep(a) {
   color: var(--color-primary);
   text-decoration: underline;
 }
-.metadata-description :deep(blockquote) {
+.metadata-markdown :deep(blockquote) {
   border-left: 3px solid var(--color-border);
   padding-left: var(--space-2);
   margin: 0.25em 0;
   color: var(--color-text-tertiary);
 }
-.metadata-description :deep(img) {
+.metadata-markdown :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+}
+.metadata-markdown :deep(th),
+.metadata-markdown :deep(td) {
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  text-align: left;
+}
+.metadata-markdown :deep(img) {
   max-width: 100%;
   border-radius: 4px;
 }
-.metadata-description :deep(hr) {
+.metadata-markdown :deep(hr) {
   border: none;
-  border-top: 1px solid var(--color-border-subtle);
+  border-top: 1px solid var(--color-border-light);
   margin: var(--space-2) 0;
 }
 
@@ -152,6 +265,68 @@
 
 .field {
   min-width: 0;
+}
+
+.metadata-description-field {
+  min-width: 0;
+}
+
+.metadata-description-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.metadata-description-toolbar > span {
+  margin-bottom: 0;
+}
+
+.metadata-description-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+}
+
+.metadata-description-tabs button {
+  min-width: 56px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.metadata-description-tabs button:hover:not(.active) {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.metadata-description-tabs button:active {
+  transform: translateY(1px);
+}
+
+.metadata-description-tabs button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.metadata-description-tabs button.active {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text);
 }
 
 .field-wide,
@@ -175,7 +350,8 @@
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.metadata-description-field textarea {
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
@@ -189,13 +365,15 @@
     box-shadow var(--transition-fast);
 }
 
-.field textarea {
+.field textarea,
+.metadata-description-field textarea {
   resize: vertical;
   line-height: 1.55;
 }
 
 .field input:focus-visible,
-.field textarea:focus-visible {
+.field textarea:focus-visible,
+.metadata-description-field textarea:focus-visible {
   outline: 2px solid transparent;
   outline-offset: 0;
   border-color: var(--color-focus);
@@ -204,9 +382,33 @@
 }
 
 .field input:disabled,
-.field textarea:disabled {
+.field textarea:disabled,
+.metadata-description-field textarea:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.metadata-description-preview {
+  min-height: 116px;
+  max-height: 260px;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  overflow-wrap: anywhere;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.metadata-description-preview :deep(.metadata-markdown > :first-child) {
+  margin-top: 0;
+}
+
+.metadata-description-preview-empty {
+  margin: 0;
+  color: var(--color-text-tertiary);
 }
 
 .draft-control {

@@ -1,8 +1,9 @@
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
-    MergeQueueState, PrCommitTruncatedEnd, PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField,
-    PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary, ReadinessState, ReviewInboxCategory,
-    ReviewInboxRelationship, User,
+    Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, MergeQueueState, PrCommitTruncatedEnd,
+    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
+    PrMilestone, PrReviewStatus, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship,
+    User,
 };
 use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
 use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
@@ -1423,7 +1424,10 @@ async fn test_github_create_issue() {
             "body": "Steps to reproduce:\n1. Login\n2. Logout\n3. Memory grows",
             "state": "open",
             "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
-            "labels": [{ "name": "bug" }, { "name": "critical" }],
+            "labels": [
+                { "name": "bug", "color": "d73a4a" },
+                { "name": "critical", "color": "0075ca" }
+            ],
             "created_at": "2025-01-05T00:00:00Z",
             "updated_at": "2025-01-05T00:00:00Z"
         })))
@@ -1446,7 +1450,186 @@ async fn test_github_create_issue() {
 
     assert_eq!(issue.number, 99);
     assert_eq!(issue.title, "Memory leak in auth module");
+    assert_eq!(issue.label_colors.get("bug").map(String::as_str), Some("d73a4a"));
     assert!(matches!(issue.state, mergebeacon_lib::models::IssueState::Open));
+    assert!(!issue.is_pull_request);
+}
+
+#[tokio::test]
+async fn test_github_get_issue_detail() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/issues/99"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "number": 99,
+            "title": "Memory leak in auth module",
+            "body": "Steps to reproduce:\n1. Login\n2. Logout\n3. Memory grows",
+            "state": "open",
+            "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
+            "labels": [
+                { "name": "bug", "color": "d73a4a" },
+                { "name": "critical", "color": "0075ca" }
+            ],
+            "pull_request": { "url": "https://api.github.com/repos/octocat/hello-world/pulls/99" },
+            "created_at": "2025-01-05T00:00:00Z",
+            "updated_at": "2025-01-06T00:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 1,
+            "login": "reporter"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "permissions": {
+                "admin": false,
+                "maintain": false,
+                "push": false,
+                "triage": false
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let client = HttpClient::new();
+    let adapter = GitHubAdapter::new(client, "test-token".to_string()).with_base_url(mock_server.uri());
+
+    let issue = adapter.get_issue("octocat", "hello-world", 99).await.expect("should get issue");
+
+    assert_eq!(issue.number, 99);
+    assert_eq!(issue.body, "Steps to reproduce:\n1. Login\n2. Logout\n3. Memory grows");
+    assert_eq!(issue.labels, vec!["bug".to_string(), "critical".to_string()]);
+    assert_eq!(issue.label_colors.get("bug").map(String::as_str), Some("d73a4a"));
+    assert_eq!(issue.label_colors.get("critical").map(String::as_str), Some("0075ca"));
+    assert_eq!(issue.updated_at, "2025-01-06T00:00:00Z");
+    assert!(issue.is_pull_request);
+    assert_eq!(issue.metadata_permissions.can_edit_title_body, Some(true));
+    assert_eq!(issue.metadata_permissions.can_change_state, Some(true));
+    assert_eq!(issue.metadata_permissions.can_manage_labels, Some(false));
+}
+
+#[tokio::test]
+async fn test_github_updates_issue_metadata_and_manages_comments() {
+    let mock_server = MockServer::start().await;
+    let issue_json = serde_json::json!({
+        "number": 99,
+        "title": "Updated title",
+        "body": "Updated body",
+        "state": "closed",
+        "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
+        "labels": [{ "name": "bug" }],
+        "created_at": "2025-01-05T00:00:00Z",
+        "updated_at": "2025-01-07T00:00:00Z"
+    });
+    Mock::given(method("PATCH"))
+        .and(path("/repos/octocat/hello-world/issues/99"))
+        .and(body_json(serde_json::json!({
+            "title": "Updated title",
+            "body": "Updated body",
+            "state": "closed",
+            "labels": ["bug"]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(issue_json))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/octocat/hello-world/issues/99"))
+        .and(body_json(serde_json::json!({ "title": "Title only" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "number": 99,
+            "title": "Title only",
+            "body": "Old body",
+            "state": "open",
+            "user": { "id": 1, "login": "reporter", "name": "", "avatar_url": "" },
+            "labels": [],
+            "created_at": "2025-01-05T00:00:00Z",
+            "updated_at": "2025-01-07T01:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/issues/99/comments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 501,
+            "body": "Existing comment",
+            "user": { "id": 2, "login": "reviewer", "name": "", "avatar_url": "" },
+            "created_at": "2025-01-06T01:00:00Z",
+            "updated_at": "2025-01-06T01:00:00Z"
+        }])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/octocat/hello-world/issues/99/comments"))
+        .and(body_json(serde_json::json!({ "body": "New comment" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "id": 502,
+            "body": "New comment",
+            "user": { "id": 3, "login": "author", "name": "", "avatar_url": "" },
+            "created_at": "2025-01-07T01:00:00Z",
+            "updated_at": "2025-01-07T01:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".into()).with_base_url(mock_server.uri());
+    let current = Issue {
+        number: 99,
+        title: "Old title".into(),
+        body: "Old body".into(),
+        author: User {
+            id: serde_json::json!(1),
+            login: "reporter".into(),
+            name: String::new(),
+            avatar_url: String::new(),
+        },
+        state: IssueState::Open,
+        labels: vec![],
+        label_colors: Default::default(),
+        created_at: "2025-01-05T00:00:00Z".into(),
+        updated_at: "2025-01-06T00:00:00Z".into(),
+        is_pull_request: false,
+        metadata_permissions: IssueMetadataPermissions::default(),
+    };
+    let update = IssueMetadataUpdate {
+        title: "Updated title".into(),
+        body: "Updated body".into(),
+        state: IssueState::Closed,
+        labels: vec!["bug".into()],
+        expected_updated_at: current.updated_at.clone(),
+    };
+
+    let updated = adapter
+        .update_issue_metadata("octocat", "hello-world", 99, &current, &update)
+        .await
+        .expect("should update issue");
+    let title_only_update = IssueMetadataUpdate {
+        title: "Title only".into(),
+        body: current.body.clone(),
+        state: current.state.clone(),
+        labels: current.labels.clone(),
+        expected_updated_at: current.updated_at.clone(),
+    };
+    let title_only = adapter
+        .update_issue_metadata("octocat", "hello-world", 99, &current, &title_only_update)
+        .await
+        .expect("should update only the title");
+    let comments = adapter.list_issue_comments("octocat", "hello-world", 99).await.expect("should list comments");
+    let created =
+        adapter.create_issue_comment("octocat", "hello-world", 99, "New comment").await.expect("should create comment");
+
+    assert_eq!(updated.title, "Updated title");
+    assert_eq!(title_only.title, "Title only");
+    assert!(matches!(updated.state, IssueState::Closed));
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].body, "Existing comment");
+    assert_eq!(created.author.login, "author");
 }
 
 #[tokio::test]
@@ -2052,6 +2235,16 @@ async fn test_github_file_content_rejects_invalid_base64() {
 async fn test_github_pr_detail_exposes_base_and_head_revisions() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/pulls/42/reviews"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 7,
+            "state": "APPROVED",
+            "html_url": "https://github.com/octocat/hello-world/pull/42#pullrequestreview-7",
+            "user": {"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}
+        }])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
         .and(path("/repos/octocat/hello-world/pulls/42"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "number": 42,
@@ -2077,7 +2270,8 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
             "draft": true,
             "requested_reviewers": [{"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}],
             "assignees": [{"id": 3, "login": "assignee", "name": "Assignee", "avatar_url": ""}],
-            "milestone": {"id": 9, "number": 4, "title": "0.6.0"}
+            "milestone": {"id": 9, "number": 4, "title": "0.6.0"},
+            "html_url": "https://github.com/octocat/hello-world/pull/42"
         })))
         .mount(&mock_server)
         .await;
@@ -2085,12 +2279,18 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
     let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
     let detail = adapter.get_pull_request("octocat", "hello-world", 42).await.expect("PR detail");
 
+    assert_eq!(detail.web_url.as_deref(), Some("https://github.com/octocat/hello-world/pull/42"));
     assert_eq!(detail.base_sha, "base-sha");
     assert_eq!(detail.head_sha, "head-sha");
     assert_eq!(detail.base_repository_full_name.as_deref(), Some("t8y2/dbx"));
     assert_eq!(detail.head_repository_full_name.as_deref(), Some("eryajf/dbx"));
     assert_eq!(detail.draft, Some(true));
     assert_eq!(detail.reviewers[0].login, "reviewer");
+    assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Approved);
+    assert_eq!(
+        detail.reviewer_statuses[0].web_url.as_deref(),
+        Some("https://github.com/octocat/hello-world/pull/42#pullrequestreview-7")
+    );
     assert_eq!(detail.assignees[0].login, "assignee");
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
@@ -2492,6 +2692,7 @@ async fn test_github_updates_pull_request_metadata() {
             name: "".into(),
             avatar_url: "".into(),
         }],
+        reviewer_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(3),
             login: "old-assignee".into(),
@@ -2500,6 +2701,7 @@ async fn test_github_updates_pull_request_metadata() {
         }],
         milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: "New title".into(),

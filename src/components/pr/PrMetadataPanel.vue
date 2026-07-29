@@ -11,9 +11,12 @@ import type {
   PrLabel,
   PrMetadataPermissions,
   PrMetadataUpdate,
+  PrReviewStatus,
   User,
 } from "@/types";
 import { getErrorMessage } from "@/utils/error";
+import { labelTagColorClass } from "@/utils/labelColorClass";
+import { resolvePrContentLink } from "@/utils/prContentLinks";
 
 const props = defineProps<{
   detail: PrDetail;
@@ -28,11 +31,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   save: [update: PrMetadataUpdate];
+  "open-issue": [number: number];
+  "open-link": [href: string];
+  "open-external": [href: string];
 }>();
 
 const editing = ref(false);
 const title = ref("");
 const body = ref("");
+const descriptionMode = ref<"edit" | "preview">("edit");
 const draft = ref(false);
 const reviewers = ref<string[]>([]);
 const assignees = ref<string[]>([]);
@@ -89,11 +96,89 @@ const categoryLabels = computed(() =>
     ? { labels: "标签", milestone: "里程碑" }
     : { labels: "Labels", milestone: "Milestone" },
 );
+const reviewStatusLabels: Record<PrReviewStatus, string> = {
+  pending: "待检视",
+  approved: "已批准",
+  changes_requested: "请求修改",
+  commented: "已评论",
+  dismissed: "已撤销",
+  unknown: "状态未知",
+};
+const reviewerEntries = computed(() => {
+  if (props.detail.reviewer_statuses?.length) return props.detail.reviewer_statuses;
+  return props.detail.reviewers.map((user) => ({
+    user,
+    status: "unknown" as const,
+    web_url: null,
+  }));
+});
+
+const closingIssuePattern =
+  /(?:^|[\s,])(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[\s:]+#(\d+)\b/gi;
+const markdownLinkPattern = /\[[^\]]*]\((\S+?)(?:\s+["'][^"']*["'])?\)/g;
+
+function uniqueIssueNumbers(numbers: Iterable<number>): number[] {
+  const seen = new Set<number>();
+  const result: number[] = [];
+  for (const number of numbers) {
+    if (!Number.isInteger(number) || number <= 0 || seen.has(number)) continue;
+    seen.add(number);
+    result.push(number);
+  }
+  return result;
+}
+
+const linkedIssueNumbers = computed(() => {
+  const numbers: number[] = [];
+  for (const match of props.detail.body.matchAll(closingIssuePattern))
+    numbers.push(Number(match[1]));
+  for (const match of props.detail.body.matchAll(markdownLinkPattern)) {
+    const resolved = resolvePrContentLink(match[1], {
+      platform: props.platform,
+      owner: props.owner,
+      repo: props.repo,
+      webUrl: props.detail.web_url,
+    });
+    if (
+      resolved?.kind === "issue" &&
+      resolved.target.owner === props.owner &&
+      resolved.target.repo === props.repo
+    ) {
+      numbers.push(resolved.target.number);
+    }
+  }
+  return uniqueIssueNumbers(numbers);
+});
+
+function openIssue(number: number): void {
+  emit("open-issue", number);
+}
+
+function handleDescriptionLinkClick(payload: { href: string }): void {
+  emit("open-link", payload.href);
+}
+
+function openReviewerPage(url: string): void {
+  emit("open-external", url);
+}
 
 function labelColor(value: string | null): string | undefined {
   const color = value?.trim();
   if (!color || !/^#?[0-9a-f]{6}$/i.test(color)) return undefined;
   return color.startsWith("#") ? color : `#${color}`;
+}
+
+function summaryLabelColor(name: string): string | null {
+  const colors = props.detail.summary.label_colors;
+  if (!colors) return null;
+  const exactColor = colors[name];
+  if (exactColor) return exactColor;
+
+  const normalizedName = name.toLocaleLowerCase();
+  return (
+    Object.entries(colors).find(([label]) => label.toLocaleLowerCase() === normalizedName)?.[1] ??
+    null
+  );
 }
 
 const participantOptions = computed(() => {
@@ -135,7 +220,11 @@ const labelOptions = computed(() => {
     }
   >();
   for (const label of [
-    ...props.detail.summary.labels.map((name) => ({ name, color: null, description: null })),
+    ...props.detail.summary.labels.map((name) => ({
+      name,
+      color: summaryLabelColor(name),
+      description: null,
+    })),
     ...availableLabels.value,
   ]) {
     const name = label.name.trim();
@@ -186,6 +275,7 @@ const hasUnknownPermission = computed(() =>
 function resetForm(): void {
   title.value = props.detail.summary.title;
   body.value = props.detail.body;
+  descriptionMode.value = "edit";
   draft.value = props.detail.draft ?? false;
   reviewers.value = props.detail.reviewers.map((user) => user.login).filter(Boolean);
   assignees.value = props.detail.assignees.map((user) => user.login).filter(Boolean);
@@ -356,8 +446,37 @@ onUnmounted(invalidateOptions);
       </div>
       <div class="metadata-item">
         <span class="metadata-label">{{ participantLabels.reviewers }}</span>
-        <span class="metadata-value">
-          {{ detail.reviewers.map((user) => user.login).join("、") || "未指定" }}
+        <span v-if="reviewerEntries.length === 0" class="metadata-value">未指定</span>
+        <span v-else class="metadata-value metadata-reviewer-list">
+          <template v-for="reviewer in reviewerEntries" :key="reviewer.user.login">
+            <a
+              v-if="reviewer.web_url"
+              class="metadata-reviewer"
+              :href="reviewer.web_url"
+              target="_blank"
+              rel="noopener noreferrer"
+              :title="`在浏览器中打开 ${reviewer.user.login} 的检视页面`"
+              data-testid="metadata-reviewer-link"
+              @click.prevent="openReviewerPage(reviewer.web_url)"
+            >
+              <span class="metadata-reviewer-name">{{ reviewer.user.login }}</span>
+              <span
+                class="metadata-review-status"
+                :class="`metadata-review-status-${reviewer.status}`"
+              >
+                {{ reviewStatusLabels[reviewer.status] }}
+              </span>
+            </a>
+            <span v-else class="metadata-reviewer">
+              <span class="metadata-reviewer-name">{{ reviewer.user.login }}</span>
+              <span
+                class="metadata-review-status"
+                :class="`metadata-review-status-${reviewer.status}`"
+              >
+                {{ reviewStatusLabels[reviewer.status] }}
+              </span>
+            </span>
+          </template>
         </span>
       </div>
       <div v-if="capabilities?.supports_pr_assignee_management" class="metadata-item">
@@ -369,7 +488,12 @@ onUnmounted(invalidateOptions);
       <div class="metadata-item">
         <span class="metadata-label">{{ categoryLabels.labels }}</span>
         <span class="metadata-value metadata-tags">
-          <span v-for="label in detail.summary.labels" :key="label" class="metadata-tag">
+          <span
+            v-for="label in detail.summary.labels"
+            :key="label"
+            class="metadata-tag"
+            :class="labelTagColorClass(summaryLabelColor(label))"
+          >
             {{ label }}
           </span>
           <span v-if="detail.summary.labels.length === 0">未指定</span>
@@ -379,7 +503,30 @@ onUnmounted(invalidateOptions);
         <span class="metadata-label">{{ categoryLabels.milestone }}</span>
         <span class="metadata-value">{{ detail.milestone?.title || "未指定" }}</span>
       </div>
-      <MarkdownRenderer v-if="detail.body" :content="detail.body" class="metadata-description" />
+      <div v-if="linkedIssueNumbers.length > 0" class="metadata-item metadata-linked-issues">
+        <span class="metadata-label">关联 Issue</span>
+        <span class="metadata-value metadata-linked-issue-list">
+          <button
+            v-for="issueNumber in linkedIssueNumbers"
+            :key="issueNumber"
+            class="metadata-linked-issue"
+            type="button"
+            :aria-label="`打开 Issue #${issueNumber}`"
+            @click="openIssue(issueNumber)"
+          >
+            #{{ issueNumber }}
+          </button>
+        </span>
+      </div>
+      <MarkdownRenderer
+        v-if="detail.body"
+        :content="detail.body"
+        link-mode="emit"
+        repository-references
+        variant="document"
+        class="metadata-description metadata-markdown"
+        @link-click="handleDescriptionLinkClick"
+      />
       <p v-else class="metadata-description metadata-description-empty">暂无描述</p>
     </div>
 
@@ -394,15 +541,67 @@ onUnmounted(invalidateOptions);
           :disabled="!canEditTitleBody || saving"
         />
       </label>
-      <label class="field field-wide">
-        <span>描述</span>
-        <textarea
-          v-model="body"
-          data-testid="metadata-body"
-          rows="5"
-          :disabled="!canEditTitleBody || saving"
-        />
-      </label>
+      <div class="field-wide metadata-description-field">
+        <div class="metadata-description-toolbar">
+          <span id="metadata-description-label">描述</span>
+          <div class="metadata-description-tabs" role="tablist" aria-label="Markdown 描述模式">
+            <button
+              id="metadata-description-edit-tab"
+              type="button"
+              role="tab"
+              :aria-selected="descriptionMode === 'edit'"
+              aria-controls="metadata-description-editor"
+              :class="{ active: descriptionMode === 'edit' }"
+              @click="descriptionMode = 'edit'"
+            >
+              编辑
+            </button>
+            <button
+              id="metadata-description-preview-tab"
+              type="button"
+              role="tab"
+              :aria-selected="descriptionMode === 'preview'"
+              aria-controls="metadata-description-preview"
+              :class="{ active: descriptionMode === 'preview' }"
+              @click="descriptionMode = 'preview'"
+            >
+              预览
+            </button>
+          </div>
+        </div>
+        <div
+          v-if="descriptionMode === 'edit'"
+          id="metadata-description-editor"
+          role="tabpanel"
+          aria-labelledby="metadata-description-edit-tab"
+        >
+          <textarea
+            v-model="body"
+            data-testid="metadata-body"
+            rows="5"
+            aria-labelledby="metadata-description-label"
+            :disabled="!canEditTitleBody || saving"
+          />
+        </div>
+        <div
+          v-else
+          id="metadata-description-preview"
+          class="metadata-description-preview"
+          role="tabpanel"
+          aria-labelledby="metadata-description-preview-tab"
+        >
+          <MarkdownRenderer
+            v-if="body.trim()"
+            :content="body"
+            link-mode="emit"
+            repository-references
+            variant="document"
+            class="metadata-markdown"
+            @link-click="handleDescriptionLinkClick"
+          />
+          <p v-else class="metadata-description-preview-empty">暂无预览内容</p>
+        </div>
+      </div>
       <label v-if="capabilities?.supports_pr_draft_toggle" class="draft-control">
         <input
           v-model="draft"

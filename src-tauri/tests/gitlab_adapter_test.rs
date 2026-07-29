@@ -1,13 +1,189 @@
 use mergebeacon_lib::error::AppError;
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
-    MergeQueueState, PrCommitTruncatedEnd, PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField,
-    PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary, ReadinessState, ReviewEvent,
-    ReviewInboxCategory, ReviewInboxRelationship, User,
+    Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, MergeQueueState, PrCommitTruncatedEnd,
+    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
+    PrMilestone, PrReviewStatus, PrState, PrSummary, ReadinessState, ReviewEvent, ReviewInboxCategory,
+    ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{gitlab::GitLabAdapter, GitPlatform};
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[tokio::test]
+async fn test_gitlab_get_issue_detail_encodes_nested_project_path() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Fsub%2Frepo/issues/7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "iid": 7,
+            "title": "Broken deploy",
+            "description": "Pipeline fails on release jobs",
+            "state": "opened",
+            "author": { "id": 1, "username": "reporter", "name": "Reporter", "avatar_url": "" },
+            "labels": ["bug", "release"],
+            "created_at": "2025-01-05T00:00:00Z",
+            "updated_at": "2025-01-06T00:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/user"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 1,
+            "username": "reporter"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Fsub%2Frepo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "permissions": {
+                "project_access": { "access_level": 20 },
+                "group_access": null
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+
+    let issue = adapter.get_issue("group/sub", "repo", 7).await.expect("should get issue");
+
+    assert_eq!(issue.number, 7);
+    assert_eq!(issue.body, "Pipeline fails on release jobs");
+    assert_eq!(issue.labels, vec!["bug".to_string(), "release".to_string()]);
+    assert!(matches!(issue.state, mergebeacon_lib::models::IssueState::Open));
+    assert!(!issue.is_pull_request);
+    assert_eq!(issue.metadata_permissions.can_edit_title_body, Some(true));
+    assert_eq!(issue.metadata_permissions.can_change_state, Some(true));
+    assert_eq!(issue.metadata_permissions.can_manage_labels, Some(false));
+}
+
+#[tokio::test]
+async fn test_gitlab_updates_issue_metadata_and_filters_system_notes() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/api/v4/projects/group%2Fsub%2Frepo/issues/7"))
+        .and(body_json(serde_json::json!({
+            "title": "Fixed deploy",
+            "description": "Updated description",
+            "labels": "bug,release",
+            "state_event": "close"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "iid": 7,
+            "title": "Fixed deploy",
+            "description": "Updated description",
+            "state": "closed",
+            "author": { "id": 1, "username": "reporter", "name": "Reporter", "avatar_url": "" },
+            "labels": ["bug", "release"],
+            "created_at": "2025-01-05T00:00:00Z",
+            "updated_at": "2025-01-07T00:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api/v4/projects/group%2Fsub%2Frepo/issues/7"))
+        .and(body_json(serde_json::json!({ "title": "Title only" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "iid": 7,
+            "title": "Title only",
+            "description": "Old description",
+            "state": "opened",
+            "author": { "id": 1, "username": "reporter", "name": "Reporter", "avatar_url": "" },
+            "labels": ["bug"],
+            "created_at": "2025-01-05T00:00:00Z",
+            "updated_at": "2025-01-07T01:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Fsub%2Frepo/issues/7/notes"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "id": 10,
+                "body": "changed title",
+                "system": true,
+                "author": { "id": 1, "username": "system", "name": "", "avatar_url": "" },
+                "created_at": "2025-01-06T00:00:00Z",
+                "updated_at": "2025-01-06T00:00:00Z"
+            },
+            {
+                "id": 11,
+                "body": "Please verify",
+                "system": false,
+                "author": { "id": 2, "username": "reviewer", "name": "", "avatar_url": "" },
+                "created_at": "2025-01-06T01:00:00Z",
+                "updated_at": "2025-01-06T01:00:00Z"
+            }
+        ])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v4/projects/group%2Fsub%2Frepo/issues/7/notes"))
+        .and(body_json(serde_json::json!({ "body": "Verified" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "id": 12,
+            "body": "Verified",
+            "author": { "id": 3, "username": "author", "name": "", "avatar_url": "" },
+            "created_at": "2025-01-07T01:00:00Z",
+            "updated_at": "2025-01-07T01:00:00Z"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let current = Issue {
+        number: 7,
+        title: "Broken deploy".into(),
+        body: "Old description".into(),
+        author: User {
+            id: serde_json::json!(1),
+            login: "reporter".into(),
+            name: String::new(),
+            avatar_url: String::new(),
+        },
+        state: IssueState::Open,
+        labels: vec!["bug".into()],
+        label_colors: Default::default(),
+        created_at: "2025-01-05T00:00:00Z".into(),
+        updated_at: "2025-01-06T00:00:00Z".into(),
+        is_pull_request: false,
+        metadata_permissions: IssueMetadataPermissions::default(),
+    };
+    let update = IssueMetadataUpdate {
+        title: "Fixed deploy".into(),
+        body: "Updated description".into(),
+        state: IssueState::Closed,
+        labels: vec!["bug".into(), "release".into()],
+        expected_updated_at: current.updated_at.clone(),
+    };
+
+    let updated =
+        adapter.update_issue_metadata("group/sub", "repo", 7, &current, &update).await.expect("should update issue");
+    let title_only_update = IssueMetadataUpdate {
+        title: "Title only".into(),
+        body: current.body.clone(),
+        state: current.state.clone(),
+        labels: current.labels.clone(),
+        expected_updated_at: current.updated_at.clone(),
+    };
+    let title_only = adapter
+        .update_issue_metadata("group/sub", "repo", 7, &current, &title_only_update)
+        .await
+        .expect("should update only the title");
+    let comments = adapter.list_issue_comments("group/sub", "repo", 7).await.expect("should list comments");
+    let created =
+        adapter.create_issue_comment("group/sub", "repo", 7, "Verified").await.expect("should create comment");
+
+    assert!(matches!(updated.state, IssueState::Closed));
+    assert_eq!(title_only.title, "Title only");
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].body, "Please verify");
+    assert_eq!(created.author.login, "author");
+}
 
 #[tokio::test]
 async fn test_gitlab_lists_branches_and_creates_draft_from_fork() {
@@ -937,6 +1113,21 @@ async fn test_gitlab_closed_pr_list_omits_live_status_summary() {
 async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/3/approvals"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "approved_by": [{
+                "user": {
+                    "id": 2,
+                    "username": "reviewer",
+                    "name": "Reviewer",
+                    "avatar_url": "",
+                    "web_url": "javascript:alert(1)"
+                }
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
         .and(path("/api/v4/projects/group%2Frepo/merge_requests/3"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "iid": 3,
@@ -955,9 +1146,16 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
             "sha": "head-sha",
             "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"},
             "draft": true,
-            "reviewers": [gitlab_user()],
+            "reviewers": [{
+                "id": 2,
+                "username": "reviewer",
+                "name": "Reviewer",
+                "avatar_url": "",
+                "web_url": "https://git.example.com/reviewer"
+            }],
             "assignees": [{"id": 8, "username": "assignee", "name": "Assignee", "avatar_url": ""}],
-            "milestone": {"id": 11, "iid": 2, "title": "0.6.0"}
+            "milestone": {"id": 11, "iid": 2, "title": "0.6.0"},
+            "web_url": "https://git.example.com/group/repo/-/merge_requests/3"
         })))
         .expect(1)
         .mount(&mock_server)
@@ -966,12 +1164,15 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
     let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
     let detail = adapter.get_pull_request("group", "repo", 3).await.expect("should load merge request");
 
+    assert_eq!(detail.web_url.as_deref(), Some("https://git.example.com/group/repo/-/merge_requests/3"));
     assert_eq!(detail.head_sha, "head-sha");
     assert_eq!(detail.base_sha, "base-sha");
     assert_eq!(detail.base_repository_full_name.as_deref(), Some("group/repo"));
     assert_eq!(detail.head_repository_full_name.as_deref(), Some("group/repo"));
     assert_eq!(detail.draft, Some(true));
     assert_eq!(detail.reviewers[0].login, "reviewer");
+    assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Approved);
+    assert_eq!(detail.reviewer_statuses[0].web_url.as_deref(), Some("https://git.example.com/reviewer"));
     assert_eq!(detail.assignees[0].login, "assignee");
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
@@ -996,8 +1197,21 @@ async fn test_gitlab_fork_pr_detail_resolves_source_project_path() {
             "source_project_id": 17,
             "target_project_id": 7,
             "sha": "head-sha",
-            "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"}
+            "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"},
+            "reviewers": [{
+                "id": 2,
+                "username": "pending-reviewer",
+                "name": "Pending Reviewer",
+                "avatar_url": "",
+                "web_url": "https://git.example.com/pending-reviewer"
+            }]
         })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/3/approvals"))
+        .respond_with(ResponseTemplate::new(403))
         .expect(1)
         .mount(&mock_server)
         .await;
@@ -1016,6 +1230,8 @@ async fn test_gitlab_fork_pr_detail_resolves_source_project_path() {
 
     assert_eq!(detail.base_repository_full_name.as_deref(), Some("group/repo"));
     assert_eq!(detail.head_repository_full_name.as_deref(), Some("fork-group/fork-repo"));
+    assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Pending);
+    assert_eq!(detail.reviewer_statuses[0].web_url.as_deref(), Some("https://git.example.com/pending-reviewer"));
 }
 
 #[tokio::test]
@@ -2010,6 +2226,7 @@ async fn test_gitlab_updates_merge_request_metadata() {
             name: "".into(),
             avatar_url: "".into(),
         }],
+        reviewer_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(3),
             login: "old-assignee".into(),
@@ -2018,6 +2235,7 @@ async fn test_gitlab_updates_merge_request_metadata() {
         }],
         milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: "New title".into(),
@@ -2083,9 +2301,11 @@ async fn test_gitlab_clears_merge_request_milestone_with_zero_id() {
         base_sha: "base".into(),
         draft: Some(false),
         reviewers: Vec::new(),
+        reviewer_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: current.summary.title.clone(),

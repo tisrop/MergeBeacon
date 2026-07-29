@@ -91,6 +91,8 @@ const mocks = vi.hoisted(() => ({
     isMergeQueueVisible: true,
   },
   reviewCommentAdd: vi.fn(),
+  issueDetail: vi.fn(),
+  openExternalUrl: vi.fn(),
 }));
 
 vi.mock("vue-router", () => ({
@@ -108,7 +110,11 @@ vi.mock("@/stores/useCapabilityStore", () => ({
 vi.mock("@/stores/useUiSettingsStore", () => ({
   useUiSettingsStore: () => mocks.uiSettingsStore,
 }));
-vi.mock("@/api", () => ({ reviewCommentAdd: mocks.reviewCommentAdd }));
+vi.mock("@/api", () => ({
+  issueDetail: mocks.issueDetail,
+  reviewCommentAdd: mocks.reviewCommentAdd,
+  openExternalUrl: mocks.openExternalUrl,
+}));
 
 enableAutoUnmount(afterEach);
 
@@ -130,6 +136,7 @@ const detail: PrDetail = {
     labels: [],
   },
   body: "",
+  web_url: "https://github.com/owner/repo/pull/42",
   source_branch: "feature",
   target_branch: "main",
   mergeable: true,
@@ -218,6 +225,7 @@ describe("PrDetailPage 关闭权限", () => {
     mocks.uiSettingsStore.isPrDependenciesVisible = true;
     mocks.uiSettingsStore.isMergeQueueVisible = true;
     mocks.reviewCommentAdd.mockResolvedValue(undefined);
+    mocks.openExternalUrl.mockResolvedValue(undefined);
     mocks.prStore.updateMetadata.mockResolvedValue({
       detail,
       updated_fields: ["title_body"],
@@ -234,6 +242,113 @@ describe("PrDetailPage 关闭权限", () => {
     await button.trigger("click");
 
     expect(mocks.router.push).toHaveBeenCalledWith({ name: "pr-list" });
+  });
+
+  it("有 web_url 时点击标题在浏览器中打开 PR 页面", async () => {
+    mocks.prStore.currentPr = { ...detail, web_url: "https://github.com/owner/repo/pull/42" };
+    const wrapper = mountPage();
+    const title = wrapper.get('[data-testid="pr-title-link"]');
+
+    expect(title.text()).toBe("权限测试");
+    expect(title.attributes("title")).toBe("在浏览器中打开");
+    expect(title.attributes("aria-label")).toBe("在浏览器中打开：权限测试");
+    await title.trigger("click");
+
+    expect(mocks.openExternalUrl).toHaveBeenCalledWith("https://github.com/owner/repo/pull/42");
+    expect(wrapper.find('[data-testid="pr-title-link-error"]').exists()).toBe(false);
+  });
+
+  it("打开浏览器失败时就近展示错误提示", async () => {
+    mocks.prStore.currentPr = { ...detail, web_url: "https://github.com/owner/repo/pull/42" };
+    mocks.openExternalUrl.mockRejectedValueOnce("Not allowed to open path");
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="pr-title-link"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="pr-title-link-error"]').text()).toBe(
+      "Not allowed to open path",
+    );
+
+    mocks.openExternalUrl.mockResolvedValueOnce(undefined);
+    await wrapper.get('[data-testid="pr-title-link"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="pr-title-link-error"]').exists()).toBe(false);
+  });
+
+  it("无 web_url 时标题以纯文本渲染", () => {
+    mocks.prStore.currentPr = { ...detail, web_url: null };
+    const wrapper = mountPage();
+
+    expect(wrapper.find('[data-testid="pr-title-link"]').exists()).toBe(false);
+    expect(wrapper.get("h2").text()).toBe("权限测试");
+  });
+
+  it("PR 元数据中的 Issue、PR 和外部链接使用对应跳转方式", async () => {
+    const metadataStub = {
+      emits: ["open-issue", "open-link", "open-external"],
+      template: `<section>
+        <button data-testid="metadata-issue-link" @click="$emit('open-issue', 12)">#12</button>
+        <button
+          data-testid="metadata-pr-link"
+          @click="$emit('open-link', 'https://github.com/other/project/pull/7100')"
+        >PR #7100</button>
+        <button
+          data-testid="metadata-external-link"
+          @click="$emit('open-link', 'https://example.com/docs')"
+        >文档</button>
+        <button
+          data-testid="metadata-reviewer-link"
+          @click="$emit('open-external', 'https://github.com/reviewer')"
+        >审核人员</button>
+        <button
+          data-testid="metadata-reference-link"
+          @click="$emit('open-link', '/__mergebeacon__/reference/hash/7086')"
+        >#7086</button>
+        <button
+          data-testid="metadata-redirect-issue-link"
+          @click="$emit('open-link', 'https://redirect.github.com/pyasn1/pyasn1/issues/113')"
+        >pyasn1#113</button>
+      </section>`,
+    };
+    const wrapper = mountPage({ PrMetadataPanel: metadataStub });
+
+    await wrapper.get('[data-testid="metadata-issue-link"]').trigger("click");
+    expect(mocks.router.push).toHaveBeenCalledWith({
+      name: "issue-detail",
+      params: { platform: "github", owner: "owner", repo: "repo", number: 12 },
+    });
+
+    await wrapper.get('[data-testid="metadata-pr-link"]').trigger("click");
+    expect(mocks.router.push).toHaveBeenCalledWith({
+      name: "pr-detail",
+      params: { platform: "github", owner: "other", repo: "project", number: 7100 },
+    });
+
+    await wrapper.get('[data-testid="metadata-external-link"]').trigger("click");
+    expect(mocks.openExternalUrl).toHaveBeenCalledWith("https://example.com/docs");
+
+    await wrapper.get('[data-testid="metadata-reviewer-link"]').trigger("click");
+    expect(mocks.openExternalUrl).toHaveBeenCalledWith("https://github.com/reviewer");
+
+    await wrapper.get('[data-testid="metadata-redirect-issue-link"]').trigger("click");
+    expect(mocks.router.push).toHaveBeenCalledWith({
+      name: "issue-detail",
+      params: { platform: "github", owner: "pyasn1", repo: "pyasn1", number: 113 },
+    });
+    expect(mocks.openExternalUrl).not.toHaveBeenCalledWith(
+      "https://redirect.github.com/pyasn1/pyasn1/issues/113",
+    );
+
+    mocks.issueDetail.mockResolvedValueOnce({ is_pull_request: true });
+    await wrapper.get('[data-testid="metadata-reference-link"]').trigger("click");
+    await flushPromises();
+    expect(mocks.issueDetail).toHaveBeenCalledWith("github", "owner", "repo", 7086);
+    expect(mocks.router.push).toHaveBeenCalledWith({
+      name: "pr-detail",
+      params: { platform: "github", owner: "owner", repo: "repo", number: 7086 },
+    });
   });
 
   it("详情不存在时不再请求 Diff 和合并状态", async () => {
@@ -465,6 +580,44 @@ describe("PrDetailPage 关闭权限", () => {
     const button = wrapper.get('[data-testid="close-pr-button"]');
 
     expect(button.attributes("disabled")).toBeUndefined();
+  });
+
+  it("关闭 PR 前展示目标安全提示，确认后才调用关闭接口", async () => {
+    mocks.authStore.platforms.github.user = { ...author };
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="close-pr-button"]').trigger("click");
+    await flushPromises();
+
+    const dialog = document.body.querySelector('[data-testid="close-confirm-dialog"]');
+    expect(dialog?.textContent).toContain("owner/repo");
+    expect(dialog?.textContent).toContain("#42 权限测试");
+    expect(mocks.prStore.closePr).not.toHaveBeenCalled();
+
+    const confirmButton = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="confirm-close"]',
+    );
+    confirmButton?.click();
+    confirmButton?.click();
+    await flushPromises();
+
+    expect(mocks.prStore.closePr).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.closePr).toHaveBeenCalledOnce();
+    expect(document.body.querySelector('[data-testid="close-confirm-dialog"]')).toBeNull();
+  });
+
+  it("关闭失败时保留确认框并展示错误", async () => {
+    mocks.authStore.platforms.github.user = { ...author };
+    mocks.prStore.closePr.mockRejectedValueOnce("关闭请求被拒绝");
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="close-pr-button"]').trigger("click");
+    await flushPromises();
+    document.body.querySelector<HTMLButtonElement>('[data-testid="confirm-close"]')?.click();
+    await flushPromises();
+
+    expect(document.body.querySelector('[data-testid="close-confirm-dialog"]')).not.toBeNull();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe("关闭请求被拒绝");
   });
 
   it("具备仓库写入权限的非作者可以关闭 PR", () => {

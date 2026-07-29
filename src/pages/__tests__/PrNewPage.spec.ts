@@ -378,6 +378,54 @@ describe("PrNewPage", () => {
     expect(targetSelect.text()).toContain("feature");
   });
 
+  it("点击刷新分支后重新加载源分支和目标分支", async () => {
+    let resolveRefresh!: (value: { branches: string[]; default_branch: string }) => void;
+    vi.mocked(prBranches)
+      .mockResolvedValueOnce({ branches: ["main", "feature"], default_branch: "main" })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      );
+    const { wrapper } = await mountPage();
+    const refreshButton = wrapper.get('button[aria-label="刷新分支"]');
+
+    await refreshButton.trigger("click");
+
+    expect(refreshButton.attributes()).toHaveProperty("disabled");
+    expect(refreshButton.attributes("aria-label")).toBe("正在刷新分支");
+    resolveRefresh({ branches: ["main", "feature", "release"], default_branch: "main" });
+    await flushPromises();
+
+    expect(prBranches).toHaveBeenCalledTimes(2);
+    await wrapper.get('[aria-label="源分支"]').trigger("click");
+    expect(wrapper.findAll(".dropdown-option").map((option) => option.text())).toEqual([
+      "main",
+      "feature",
+      "release",
+    ]);
+  });
+
+  it("刷新分支失败时保留已有分支和当前选择", async () => {
+    vi.mocked(prBranches)
+      .mockResolvedValueOnce({ branches: ["main", "feature"], default_branch: "main" })
+      .mockRejectedValueOnce(new Error("network down"));
+    const { wrapper } = await mountPage();
+
+    await wrapper.get('button[aria-label="刷新分支"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get(".error-msg").text()).toContain("network down");
+    expect(wrapper.get('[aria-label="源分支"]').text()).toContain("feature");
+    expect(wrapper.get('[aria-label="目标分支"]').text()).toContain("main");
+    await wrapper.get('[aria-label="源分支"]').trigger("click");
+    expect(wrapper.findAll(".dropdown-option").map((option) => option.text())).toEqual([
+      "main",
+      "feature",
+    ]);
+  });
+
   it("从目标仓库加载标签并将多选结果提交给创建接口", async () => {
     const { wrapper } = await mountPage();
 

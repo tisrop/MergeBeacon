@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { useIssueStore } from "@/stores/useIssueStore";
 import { useRepoStore } from "@/stores/useRepoStore";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import IssueCard from "@/components/issue/IssueCard.vue";
@@ -8,12 +9,26 @@ import type { IssueSummary } from "@/types";
 import { issueList } from "@/api";
 
 const auth = useAuthStore();
+const issueStore = useIssueStore();
 const repo = useRepoStore();
 
 const issues = ref<IssueSummary[]>([]);
 const loading = ref(false);
 
 let requestSequence = 0;
+
+function issueDetailRoute(issue: IssueSummary) {
+  if (!repo.activeRepo) return "/issue";
+  return {
+    name: "issue-detail",
+    params: {
+      platform: auth.activePlatform,
+      owner: repo.activeRepo.owner,
+      repo: repo.activeRepo.repo,
+      number: issue.number,
+    },
+  };
+}
 
 async function fetchIssues() {
   const sequence = ++requestSequence;
@@ -33,7 +48,7 @@ async function fetchIssues() {
       repo.activeRepo?.owner === owner &&
       repo.activeRepo?.repo === repoName
     ) {
-      issues.value = result.items;
+      issues.value = issueStore.mergePendingCreatedIssue(platform, owner, repoName, result.items);
     }
   } finally {
     if (sequence === requestSequence) loading.value = false;
@@ -129,7 +144,14 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
     </div>
 
     <div v-else class="issue-list">
-      <IssueCard v-for="item in issues" :key="item.number" :issue="item" />
+      <router-link
+        v-for="item in issues"
+        :key="item.number"
+        :to="issueDetailRoute(item)"
+        class="issue-card-link"
+      >
+        <IssueCard :issue="item" />
+      </router-link>
     </div>
   </AppLayout>
 </template>

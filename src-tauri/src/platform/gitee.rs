@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use futures::{stream, StreamExt};
 use serde_json::Value;
 
-use super::GitPlatform;
+use super::{sanitize_web_url, GitPlatform};
 use crate::error::AppError;
 use crate::http_client::HttpClient;
 use crate::models::*;
@@ -15,6 +15,15 @@ pub struct GiteeAdapter {
 }
 
 impl GiteeAdapter {
+    fn map_label_colors(labels: &Value) -> std::collections::BTreeMap<String, String> {
+        labels
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|label| Some((label["name"].as_str()?.to_string(), label["color"].as_str()?.to_string())))
+            .collect()
+    }
+
     pub fn new(client: HttpClient, token: String) -> Self {
         Self { client, token, base_url: "https://gitee.com/api/v5".to_string() }
     }
@@ -1025,12 +1034,22 @@ impl GitPlatform for GiteeAdapter {
 
         let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         let mut reviewers = Vec::new();
+        let mut reviewer_statuses = Vec::new();
         let mut reviewer_logins = std::collections::BTreeSet::new();
         for field in ["assignees", "api_reviewers"] {
             if let Some(users) = json[field].as_array() {
                 for user in users {
                     let mapped = Self::map_user(user);
                     if reviewer_logins.insert(mapped.login.to_lowercase()) {
+                        reviewer_statuses.push(PrReviewerStatus {
+                            user: mapped.clone(),
+                            status: match user["accept"].as_bool() {
+                                Some(true) => PrReviewStatus::Approved,
+                                Some(false) => PrReviewStatus::Pending,
+                                None => PrReviewStatus::Unknown,
+                            },
+                            web_url: sanitize_web_url(&user["html_url"]),
+                        });
                         reviewers.push(mapped);
                     }
                 }
@@ -1048,12 +1067,14 @@ impl GitPlatform for GiteeAdapter {
             base_sha: json["base"]["sha"].as_str().unwrap_or("").to_string(),
             draft: None,
             reviewers,
+            reviewer_statuses,
             assignees: json["testers"]
                 .as_array()
                 .map(|users| users.iter().map(Self::map_user).collect())
                 .unwrap_or_default(),
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
+            web_url: sanitize_web_url(&json["html_url"]),
         })
     }
 
@@ -2048,11 +2069,43 @@ impl GitPlatform for GiteeAdapter {
                     .as_array()
                     .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                     .unwrap_or_default(),
+                label_colors: Self::map_label_colors(&i["labels"]),
                 created_at: i["created_at"].as_str().unwrap_or("").to_string(),
             })
             .collect();
 
         Ok(Paginated { items: issues, page, total_pages: last_page, total_count: 0, truncated: None })
+    }
+
+    async fn get_issue(&self, owner: &str, repo: &str, issue_number: u64) -> Result<Issue, AppError> {
+        let url = format!("{}/repos/{}/{}/issues/{}", self.base_url, owner, repo, issue_number);
+        let json: Value = self.get_json(&url).await?;
+        let author = Self::map_user(&json["user"]);
+        let permissions = self.metadata_permissions(owner, repo, &author.login).await;
+
+        Ok(Issue {
+            number: json["number"].as_u64().unwrap_or(0),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+            body: json["body"].as_str().unwrap_or("").to_string(),
+            author,
+            state: match json["state"].as_str().unwrap_or("") {
+                "closed" => IssueState::Closed,
+                _ => IssueState::Open,
+            },
+            labels: json["labels"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            label_colors: Self::map_label_colors(&json["labels"]),
+            created_at: json["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            is_pull_request: json["pull_request"].is_object(),
+            metadata_permissions: IssueMetadataPermissions {
+                can_edit_title_body: permissions.can_edit_title_body,
+                can_change_state: permissions.can_edit_title_body,
+                can_manage_labels: permissions.can_manage_labels,
+            },
+        })
     }
 
     async fn create_issue(
@@ -2085,8 +2138,94 @@ impl GitPlatform for GiteeAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            label_colors: Self::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            is_pull_request: false,
+            metadata_permissions: IssueMetadataPermissions::default(),
+        })
+    }
+
+    async fn update_issue_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        current: &Issue,
+        update: &IssueMetadataUpdate,
+    ) -> Result<Issue, AppError> {
+        let url = format!("{}/repos/{}/{}/issues/{}", self.base_url, owner, repo, issue_number);
+        let mut payload = serde_json::json!({});
+        if current.title != update.title {
+            payload["title"] = Value::String(update.title.clone());
+        }
+        if current.body != update.body {
+            payload["body"] = Value::String(update.body.clone());
+        }
+        if current.state != update.state {
+            payload["state"] = Value::String(update.state.as_str().into());
+        }
+        if current.labels != update.labels {
+            payload["labels"] = Value::String(update.labels.join(","));
+        }
+        let json = self.patch_json(&url, &payload).await?;
+
+        Ok(Issue {
+            number: json["number"].as_u64().unwrap_or(0),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+            body: json["body"].as_str().unwrap_or("").to_string(),
+            author: Self::map_user(&json["user"]),
+            state: match json["state"].as_str().unwrap_or("") {
+                "closed" => IssueState::Closed,
+                _ => IssueState::Open,
+            },
+            labels: json["labels"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|label| label["name"].as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            label_colors: Self::map_label_colors(&json["labels"]),
+            created_at: json["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            is_pull_request: current.is_pull_request,
+            metadata_permissions: current.metadata_permissions.clone(),
+        })
+    }
+
+    async fn list_issue_comments(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+    ) -> Result<Vec<IssueComment>, AppError> {
+        let endpoint = format!("{}/repos/{}/{}/issues/{}/comments", self.base_url, owner, repo, issue_number);
+        let items = super::collect_json_pages(self, &endpoint).await?;
+        Ok(items
+            .iter()
+            .map(|comment| IssueComment {
+                id: comment["id"].clone(),
+                body: comment["body"].as_str().unwrap_or("").to_string(),
+                author: Self::map_user(&comment["user"]),
+                created_at: comment["created_at"].as_str().unwrap_or("").to_string(),
+                updated_at: comment["updated_at"].as_str().unwrap_or("").to_string(),
+            })
+            .collect())
+    }
+
+    async fn create_issue_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        body: &str,
+    ) -> Result<IssueComment, AppError> {
+        let url = format!("{}/repos/{}/{}/issues/{}/comments", self.base_url, owner, repo, issue_number);
+        let comment = self.post_json(&url, &serde_json::json!({ "body": body })).await?;
+        Ok(IssueComment {
+            id: comment["id"].clone(),
+            body: comment["body"].as_str().unwrap_or("").to_string(),
+            author: Self::map_user(&comment["user"]),
+            created_at: comment["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: comment["updated_at"].as_str().unwrap_or("").to_string(),
         })
     }
 

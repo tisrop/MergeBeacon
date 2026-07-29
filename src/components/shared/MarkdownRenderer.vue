@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { marked } from "marked";
+import { clipboardWriteText } from "@/api";
+import { getErrorMessage } from "@/utils/error";
 
 const props = defineProps<{
   content: string;
   breaks?: boolean;
+  variant?: "document";
+  linkMode?: "default" | "emit";
+  repositoryReferences?: boolean;
+}>();
+
+const emit = defineEmits<{
+  "link-click": [payload: { href: string; text: string; title: string | null }];
 }>();
 
 const allowedTags = new Set([
@@ -14,6 +23,7 @@ const allowedTags = new Set([
   "BR",
   "CODE",
   "DEL",
+  "DETAILS",
   "EM",
   "H1",
   "H2",
@@ -31,6 +41,7 @@ const allowedTags = new Set([
   "PRE",
   "S",
   "STRONG",
+  "SUMMARY",
   "TABLE",
   "TBODY",
   "TD",
@@ -44,6 +55,7 @@ const allowedTags = new Set([
 const allowedAttributes: Record<string, Set<string>> = {
   A: new Set(["href", "title"]),
   CODE: new Set(["class"]),
+  DETAILS: new Set(["open"]),
   IMG: new Set(["alt", "height", "src", "title", "width"]),
   INPUT: new Set(["checked", "disabled", "type"]),
   OL: new Set(["start"]),
@@ -114,17 +126,196 @@ function sanitizeHtml(rawHtml: string): string {
   return root.innerHTML;
 }
 
-const html = computed(() =>
-  sanitizeHtml(
+function copyIcon(): string {
+  return `
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+      <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+    </svg>
+  `;
+}
+
+function addCodeBlockControls(sanitizedHtml: string): string {
+  const document = new DOMParser().parseFromString(`<div>${sanitizedHtml}</div>`, "text/html");
+  const root = document.body.firstElementChild;
+  if (!root) return "";
+
+  for (const [index, pre] of Array.from(root.querySelectorAll("pre")).entries()) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "markdown-code-block";
+    const button = document.createElement("button");
+    button.className = "markdown-code-copy";
+    button.type = "button";
+    button.dataset.codeCopy = String(index);
+    button.title = "复制代码";
+    button.setAttribute("aria-label", "复制代码");
+    button.innerHTML = copyIcon();
+    pre.replaceWith(wrapper);
+    wrapper.append(pre, button);
+  }
+  const status = document.createElement("span");
+  status.className = "markdown-copy-status";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  root.append(status);
+  return root.innerHTML;
+}
+
+function addRepositoryReferenceLinks(sanitizedHtml: string): string {
+  const document = new DOMParser().parseFromString(`<div>${sanitizedHtml}</div>`, "text/html");
+  const root = document.body.firstElementChild;
+  if (!root) return "";
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) {
+    if (walker.currentNode instanceof Text) textNodes.push(walker.currentNode);
+  }
+
+  for (const textNode of textNodes) {
+    const parent = textNode.parentElement;
+    if (!parent || parent.closest("a, code, pre")) continue;
+    const value = textNode.data;
+    const matches = [...value.matchAll(/(^|[^\w/])([#!])(\d+)\b/g)];
+    if (matches.length === 0) continue;
+
+    const fragment = document.createDocumentFragment();
+    let offset = 0;
+    for (const match of matches) {
+      const index = match.index ?? 0;
+      const prefix = match[1];
+      const symbol = match[2];
+      const number = match[3];
+      fragment.append(value.slice(offset, index), prefix);
+      const anchor = document.createElement("a");
+      anchor.href = `/__mergebeacon__/reference/${symbol === "#" ? "hash" : "bang"}/${number}`;
+      anchor.textContent = `${symbol}${number}`;
+      anchor.title = `打开仓库引用 ${symbol}${number}`;
+      fragment.append(anchor);
+      offset = index + match[0].length;
+    }
+    fragment.append(value.slice(offset));
+    textNode.replaceWith(fragment);
+  }
+  return root.innerHTML;
+}
+
+const html = computed(() => {
+  const sanitized = sanitizeHtml(
     marked.parse(props.content, {
       async: false,
       gfm: true,
       breaks: props.breaks ?? true,
     }) as string,
-  ),
+  );
+  const linked = props.repositoryReferences ? addRepositoryReferenceLinks(sanitized) : sanitized;
+  return props.variant === "document" ? addCodeBlockControls(linked) : linked;
+});
+
+const rootRef = ref<HTMLElement | null>(null);
+let activeCopyButton: HTMLButtonElement | null = null;
+let copyResetHandle: ReturnType<typeof setTimeout> | null = null;
+let copySequence = 0;
+let copyInFlight = false;
+
+function clearCopyFeedback(): void {
+  if (copyResetHandle !== null) {
+    clearTimeout(copyResetHandle);
+    copyResetHandle = null;
+  }
+  if (activeCopyButton) {
+    delete activeCopyButton.dataset.copyState;
+    activeCopyButton.title = "复制代码";
+    activeCopyButton.setAttribute("aria-label", "复制代码");
+    activeCopyButton = null;
+  }
+  const status = rootRef.value?.querySelector(".markdown-copy-status");
+  if (status) status.textContent = "";
+}
+
+function setCopyStatus(message: string): void {
+  const status = rootRef.value?.querySelector(".markdown-copy-status");
+  if (status) status.textContent = message;
+}
+
+function showCopyFeedback(
+  button: HTMLButtonElement,
+  state: "copied" | "error",
+  message: string,
+): void {
+  clearCopyFeedback();
+  activeCopyButton = button;
+  button.dataset.copyState = state;
+  button.title = message;
+  button.setAttribute("aria-label", message);
+  setCopyStatus(message);
+  copyResetHandle = setTimeout(
+    () => {
+      clearCopyFeedback();
+    },
+    state === "copied" ? 1500 : 3000,
+  );
+}
+
+async function handleRendererClick(event: MouseEvent): Promise<void> {
+  if (copyInFlight || !(event.target instanceof Element)) return;
+  const button = event.target.closest<HTMLButtonElement>("[data-code-copy]");
+  if (button && rootRef.value?.contains(button)) {
+    const code = button.closest(".markdown-code-block")?.querySelector("code");
+    if (!code) return;
+
+    const sequence = ++copySequence;
+    copyInFlight = true;
+    button.disabled = true;
+    setCopyStatus("正在复制代码");
+    try {
+      await clipboardWriteText(code.textContent ?? "");
+      if (sequence !== copySequence) return;
+      showCopyFeedback(button, "copied", "代码已复制");
+    } catch (error) {
+      if (sequence !== copySequence) return;
+      showCopyFeedback(button, "error", `复制失败：${getErrorMessage(error, "无法访问剪贴板")}`);
+    } finally {
+      button.disabled = false;
+      copyInFlight = false;
+    }
+    return;
+  }
+
+  if (props.linkMode === "emit") {
+    const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
+    if (!anchor || !rootRef.value?.contains(anchor)) return;
+    event.preventDefault();
+    emit("link-click", {
+      href: anchor.getAttribute("href") ?? "",
+      text: anchor.textContent?.trim() ?? "",
+      title: anchor.getAttribute("title"),
+    });
+  }
+}
+
+watch(
+  () => [props.content, props.variant, props.repositoryReferences],
+  () => {
+    copySequence += 1;
+    clearCopyFeedback();
+  },
 );
+
+onUnmounted(() => {
+  copySequence += 1;
+  clearCopyFeedback();
+});
 </script>
 
 <template>
-  <div class="markdown-renderer" v-html="html" />
+  <div
+    ref="rootRef"
+    class="markdown-renderer"
+    :class="{ 'markdown-renderer-document': variant === 'document' }"
+    @click="handleRendererClick"
+    v-html="html"
+  />
 </template>
+
+<style scoped src="./MarkdownRenderer.css"></style>

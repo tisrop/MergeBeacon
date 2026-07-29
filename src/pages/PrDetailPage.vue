@@ -5,10 +5,11 @@ import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
 import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
-import { reviewCommentAdd } from "@/api";
+import { issueDetail, openExternalUrl, reviewCommentAdd } from "@/api";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { getErrorMessage } from "@/utils/error";
 import { extractDiffHunk, findStandardPatch } from "@/utils/diffHunk";
+import { resolvePrContentLink, type PrContentRouteTarget } from "@/utils/prContentLinks";
 import {
   clearPrCreateWarnings,
   PR_CREATE_WARNING_QUERY,
@@ -24,6 +25,7 @@ import MergeReadinessPanel from "@/components/pr/MergeReadinessPanel.vue";
 import PrMetadataPanel from "@/components/pr/PrMetadataPanel.vue";
 import PrDependenciesPanel from "@/components/pr/PrDependenciesPanel.vue";
 import PrMergeQueuePanel from "@/components/pr/PrMergeQueuePanel.vue";
+import CloseConfirmDialog from "@/components/shared/CloseConfirmDialog.vue";
 import { APP_COMMAND_EVENT, type AppCommandDetail } from "@/types/commands";
 import type {
   AiSuggestion,
@@ -200,10 +202,13 @@ const closeRelatedIssues = ref(false);
 const dropdownOpen = ref(false);
 const operating = ref(false);
 const statusMsg = ref("");
+const closeConfirmOpen = ref(false);
+const closeError = ref("");
 const mergeWarning = ref("");
 const metadataSaving = ref(false);
 const metadataStatus = ref("");
 const metadataError = ref("");
+const titleLinkError = ref("");
 
 const defaultCommitMessage = computed(
   () => `Merge pull request #${number} from ${pr.currentPr?.source_branch ?? ""}`,
@@ -288,6 +293,80 @@ const closeDisabledReason = computed(() => {
 });
 const canReopen = computed(() => isClosed.value && !isMerged.value);
 
+async function handleOpenInBrowser(url: string): Promise<void> {
+  titleLinkError.value = "";
+  try {
+    await openExternalUrl(url);
+  } catch (error) {
+    titleLinkError.value = getErrorMessage(error, "打开链接失败，请稍后重试");
+  }
+}
+
+async function handleOpenIssueTarget(target: PrContentRouteTarget): Promise<void> {
+  titleLinkError.value = "";
+  try {
+    await router.push({
+      name: "issue-detail",
+      params: { platform, owner: target.owner, repo: target.repo, number: target.number },
+    });
+  } catch (error) {
+    titleLinkError.value = getErrorMessage(error, "打开 Issue 详情失败，请稍后重试");
+  }
+}
+
+function handleOpenIssueDetail(issueNumber: number): Promise<void> {
+  return handleOpenIssueTarget({ owner, repo, number: issueNumber });
+}
+
+async function handleOpenPrDetail(target: PrContentRouteTarget): Promise<void> {
+  titleLinkError.value = "";
+  try {
+    await router.push({
+      name: "pr-detail",
+      params: { platform, owner: target.owner, repo: target.repo, number: target.number },
+    });
+  } catch (error) {
+    titleLinkError.value = getErrorMessage(error, "打开 PR 详情失败，请稍后重试");
+  }
+}
+
+async function handlePrContentLink(href: string): Promise<void> {
+  const resolved = resolvePrContentLink(href, {
+    platform,
+    owner,
+    repo,
+    webUrl: pr.currentPr?.web_url,
+  });
+  if (!resolved) return;
+  if (resolved.kind === "reference") {
+    const target = { owner, repo, number: resolved.number };
+    if (resolved.reference === "bang") {
+      await handleOpenPrDetail(target);
+      return;
+    }
+    if (platform === "gitlab") {
+      await handleOpenIssueTarget(target);
+      return;
+    }
+    titleLinkError.value = "";
+    try {
+      const referenced = await issueDetail(platform, owner, repo, resolved.number);
+      if (referenced.is_pull_request) await handleOpenPrDetail(target);
+      else await handleOpenIssueTarget(target);
+    } catch (error) {
+      titleLinkError.value = getErrorMessage(error, "无法识别仓库引用，请稍后重试");
+    }
+    return;
+  }
+  if (resolved.kind === "issue") {
+    await handleOpenIssueTarget(resolved.target);
+  } else if (resolved.kind === "pr") {
+    await handleOpenPrDetail(resolved.target);
+  } else {
+    await handleOpenInBrowser(resolved.url);
+  }
+}
+
 async function handleMetadataSave(update: PrMetadataUpdate): Promise<void> {
   metadataSaving.value = true;
   metadataStatus.value = "";
@@ -341,15 +420,28 @@ async function handleMerge() {
   }
 }
 
+function requestClose(): void {
+  if (!pr.currentPr || !canClose.value || operating.value) return;
+  closeError.value = "";
+  closeConfirmOpen.value = true;
+}
+
+function cancelClose(): void {
+  if (!operating.value) closeConfirmOpen.value = false;
+}
+
 async function handleClose() {
-  if (!pr.currentPr || !canClose.value) return;
+  if (!pr.currentPr || !canClose.value || operating.value) return;
   operating.value = true;
   statusMsg.value = "正在关闭 PR...";
+  closeError.value = "";
   try {
     await pr.closePr(platform, owner, repo, number);
     statusMsg.value = "";
-  } catch (e) {
+    closeConfirmOpen.value = false;
+  } catch (error) {
     statusMsg.value = "";
+    closeError.value = getErrorMessage(error, "关闭 PR 失败，请稍后重试");
   } finally {
     operating.value = false;
   }
@@ -501,12 +593,28 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             </svg>
             <span>PR 列表</span>
           </button>
-          <h2 v-if="pr.currentPr">{{ pr.currentPr.summary.title }}</h2>
+          <h2 v-if="pr.currentPr">
+            <button
+              v-if="pr.currentPr.web_url"
+              class="pr-title-link"
+              type="button"
+              title="在浏览器中打开"
+              :aria-label="`在浏览器中打开：${pr.currentPr.summary.title}`"
+              data-testid="pr-title-link"
+              @click="handleOpenInBrowser(pr.currentPr.web_url)"
+            >
+              {{ pr.currentPr.summary.title }}
+            </button>
+            <template v-else>{{ pr.currentPr.summary.title }}</template>
+          </h2>
           <div class="pr-header-skeleton" v-else>
             <div class="skeleton skeleton-title" />
             <div class="skeleton skeleton-subtitle" />
           </div>
         </div>
+        <p v-if="titleLinkError" class="error-msg" role="alert" data-testid="pr-title-link-error">
+          {{ titleLinkError }}
+        </p>
         <div class="pr-meta" v-if="pr.currentPr">
           <span class="branch">
             <svg
@@ -622,9 +730,9 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
               data-testid="close-pr-button"
               :disabled="!canClose || operating"
               :title="closeDisabledReason || '关闭 PR'"
-              @click="handleClose"
+              @click="requestClose"
             >
-              Close
+              关闭 PR
             </button>
           </div>
 
@@ -679,6 +787,9 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
         :status-message="metadataStatus"
         :error-message="metadataError"
         @save="handleMetadataSave"
+        @open-issue="handleOpenIssueDetail"
+        @open-link="handlePrContentLink"
+        @open-external="handleOpenInBrowser"
       />
 
       <div ref="tabsRef" class="tabs">
@@ -847,6 +958,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             :can-resolve-threads="platformCapabilities?.supports_review_thread_resolution ?? false"
             @thread-summary="reviewThreadSummary = $event"
             @locate-comment="handleReviewCommentLocate"
+            @open-link="handlePrContentLink"
           />
         </div>
         <div v-if="aiPanelMounted" v-show="activeTab === 'ai'">
@@ -867,6 +979,19 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
         </div>
       </div>
     </div>
+    <CloseConfirmDialog
+      :open="closeConfirmOpen"
+      :title="`关闭 PR #${number}？`"
+      :repository="`${owner}/${repo}`"
+      :target="`#${number} ${pr.currentPr?.summary.title ?? ''}`"
+      impact="关闭后，该 PR 将无法合并并从打开列表中移出；如需继续推进，必须先重新打开。"
+      warning="此操作不会删除分支或提交。请确认当前改动不再需要合并。"
+      confirm-label="关闭 PR"
+      :loading="operating"
+      :error="closeError"
+      @cancel="cancelClose"
+      @confirm="handleClose"
+    />
   </AppLayout>
 </template>
 
