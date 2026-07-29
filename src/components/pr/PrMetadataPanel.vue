@@ -33,6 +33,7 @@ const emit = defineEmits<{
 const editing = ref(false);
 const title = ref("");
 const body = ref("");
+const descriptionMode = ref<"edit" | "preview">("edit");
 const draft = ref(false);
 const reviewers = ref<string[]>([]);
 const assignees = ref<string[]>([]);
@@ -186,6 +187,7 @@ const hasUnknownPermission = computed(() =>
 function resetForm(): void {
   title.value = props.detail.summary.title;
   body.value = props.detail.body;
+  descriptionMode.value = "edit";
   draft.value = props.detail.draft ?? false;
   reviewers.value = props.detail.reviewers.map((user) => user.login).filter(Boolean);
   assignees.value = props.detail.assignees.map((user) => user.login).filter(Boolean);
@@ -379,7 +381,11 @@ onUnmounted(invalidateOptions);
         <span class="metadata-label">{{ categoryLabels.milestone }}</span>
         <span class="metadata-value">{{ detail.milestone?.title || "未指定" }}</span>
       </div>
-      <MarkdownRenderer v-if="detail.body" :content="detail.body" class="metadata-description" />
+      <MarkdownRenderer
+        v-if="detail.body"
+        :content="detail.body"
+        class="metadata-description metadata-markdown"
+      />
       <p v-else class="metadata-description metadata-description-empty">暂无描述</p>
     </div>
 
@@ -394,15 +400,59 @@ onUnmounted(invalidateOptions);
           :disabled="!canEditTitleBody || saving"
         />
       </label>
-      <label class="field field-wide">
-        <span>描述</span>
-        <textarea
-          v-model="body"
-          data-testid="metadata-body"
-          rows="5"
-          :disabled="!canEditTitleBody || saving"
-        />
-      </label>
+      <div class="field-wide metadata-description-field">
+        <div class="metadata-description-toolbar">
+          <span id="metadata-description-label">描述</span>
+          <div class="metadata-description-tabs" role="tablist" aria-label="Markdown 描述模式">
+            <button
+              id="metadata-description-edit-tab"
+              type="button"
+              role="tab"
+              :aria-selected="descriptionMode === 'edit'"
+              aria-controls="metadata-description-editor"
+              :class="{ active: descriptionMode === 'edit' }"
+              @click="descriptionMode = 'edit'"
+            >
+              编辑
+            </button>
+            <button
+              id="metadata-description-preview-tab"
+              type="button"
+              role="tab"
+              :aria-selected="descriptionMode === 'preview'"
+              aria-controls="metadata-description-preview"
+              :class="{ active: descriptionMode === 'preview' }"
+              @click="descriptionMode = 'preview'"
+            >
+              预览
+            </button>
+          </div>
+        </div>
+        <div
+          v-if="descriptionMode === 'edit'"
+          id="metadata-description-editor"
+          role="tabpanel"
+          aria-labelledby="metadata-description-edit-tab"
+        >
+          <textarea
+            v-model="body"
+            data-testid="metadata-body"
+            rows="5"
+            aria-labelledby="metadata-description-label"
+            :disabled="!canEditTitleBody || saving"
+          />
+        </div>
+        <div
+          v-else
+          id="metadata-description-preview"
+          class="metadata-description-preview"
+          role="tabpanel"
+          aria-labelledby="metadata-description-preview-tab"
+        >
+          <MarkdownRenderer v-if="body.trim()" :content="body" class="metadata-markdown" />
+          <p v-else class="metadata-description-preview-empty">暂无预览内容</p>
+        </div>
+      </div>
       <label v-if="capabilities?.supports_pr_draft_toggle" class="draft-control">
         <input
           v-model="draft"

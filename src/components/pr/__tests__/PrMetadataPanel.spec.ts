@@ -126,6 +126,31 @@ describe("PrMetadataPanel", () => {
     );
   });
 
+  it("编辑描述时支持 Markdown 预览并保存原始文本", async () => {
+    const wrapper = mountPanel();
+    const markdown = "# 变更说明\n\n- 第一项\n- 第二项\n\n`code`";
+
+    await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
+    await wrapper.get('[data-testid="metadata-body"]').setValue(markdown);
+    await wrapper
+      .get('[role="tab"][aria-controls="metadata-description-preview"]')
+      .trigger("click");
+
+    expect(wrapper.get(".metadata-description-preview h1").text()).toBe("变更说明");
+    expect(wrapper.findAll(".metadata-description-preview li")).toHaveLength(2);
+    expect(wrapper.get(".metadata-description-preview code").text()).toBe("code");
+    expect(wrapper.find('[data-testid="metadata-body"]').exists()).toBe(false);
+
+    await wrapper.get('[role="tab"][aria-controls="metadata-description-editor"]').trigger("click");
+    expect(wrapper.get<HTMLTextAreaElement>('[data-testid="metadata-body"]').element.value).toBe(
+      markdown,
+    );
+
+    await wrapper.get("form").trigger("submit");
+    const update = wrapper.emitted("save")?.[0]?.[0] as PrMetadataUpdate;
+    expect(update.body).toBe(markdown);
+  });
+
   it("编辑时可以分别搜索 Reviewers、Assignees 和 Labels", async () => {
     const wrapper = mountPanel();
     await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
@@ -337,7 +362,7 @@ describe("PrMetadataPanel", () => {
     const wrapper = mountPanel();
     await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
     await wrapper.get('[data-testid="metadata-title"]').setValue("临时标题");
-    await wrapper.get('button[type="button"]').trigger("click");
+    await wrapper.get('.metadata-form-actions button[type="button"]').trigger("click");
     await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
     expect(wrapper.get<HTMLInputElement>('[data-testid="metadata-title"]').element.value).toBe(
       "原始标题",
