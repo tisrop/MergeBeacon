@@ -2077,7 +2077,8 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
             "draft": true,
             "requested_reviewers": [{"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}],
             "assignees": [{"id": 3, "login": "assignee", "name": "Assignee", "avatar_url": ""}],
-            "milestone": {"id": 9, "number": 4, "title": "0.6.0"}
+            "milestone": {"id": 9, "number": 4, "title": "0.6.0"},
+            "html_url": "https://github.com/octocat/hello-world/pull/42"
         })))
         .mount(&mock_server)
         .await;
@@ -2085,6 +2086,7 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
     let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
     let detail = adapter.get_pull_request("octocat", "hello-world", 42).await.expect("PR detail");
 
+    assert_eq!(detail.web_url.as_deref(), Some("https://github.com/octocat/hello-world/pull/42"));
     assert_eq!(detail.base_sha, "base-sha");
     assert_eq!(detail.head_sha, "head-sha");
     assert_eq!(detail.base_repository_full_name.as_deref(), Some("t8y2/dbx"));
@@ -2500,6 +2502,7 @@ async fn test_github_updates_pull_request_metadata() {
         }],
         milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: "New title".into(),

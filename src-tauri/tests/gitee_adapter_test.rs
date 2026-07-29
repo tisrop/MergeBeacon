@@ -1586,7 +1586,8 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
             "assignees": [{"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}],
             "api_reviewers": [{"id": 3, "login": "api-reviewer", "name": "API Reviewer", "avatar_url": ""}],
             "testers": [{"id": 4, "login": "tester", "name": "Tester", "avatar_url": ""}],
-            "milestone": {"id": 9, "number": 4, "title": "0.6.0"}
+            "milestone": {"id": 9, "number": 4, "title": "0.6.0"},
+            "html_url": "https://gitee.com/octocat/hello-world/pulls/42"
         })))
         .mount(&mock_server)
         .await;
@@ -1595,6 +1596,7 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
         .with_base_url(format!("{}/api/v5", mock_server.uri()));
     let detail = adapter.get_pull_request("octocat", "hello-world", 42).await.expect("PR detail");
 
+    assert_eq!(detail.web_url.as_deref(), Some("https://gitee.com/octocat/hello-world/pulls/42"));
     assert_eq!(detail.base_sha, "base-sha");
     assert_eq!(detail.head_sha, "head-sha");
     assert_eq!(detail.draft, None);
@@ -1970,6 +1972,7 @@ async fn test_gitee_updates_pull_request_metadata_without_unsupported_fields() {
         }],
         milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: "New title".into(),
@@ -2047,6 +2050,7 @@ async fn test_gitee_reports_reviewer_success_when_pull_patch_fails() {
         assignees: Vec::new(),
         milestone: None,
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: "New title".into(),
@@ -2107,6 +2111,7 @@ async fn test_gitee_clears_pull_request_milestone_with_zero_number() {
         assignees: Vec::new(),
         milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: current.summary.title.clone(),

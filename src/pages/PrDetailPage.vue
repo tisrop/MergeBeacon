@@ -5,7 +5,7 @@ import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
 import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
-import { reviewCommentAdd } from "@/api";
+import { openExternalUrl, reviewCommentAdd } from "@/api";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { getErrorMessage } from "@/utils/error";
 import { extractDiffHunk, findStandardPatch } from "@/utils/diffHunk";
@@ -204,6 +204,7 @@ const mergeWarning = ref("");
 const metadataSaving = ref(false);
 const metadataStatus = ref("");
 const metadataError = ref("");
+const titleLinkError = ref("");
 
 const defaultCommitMessage = computed(
   () => `Merge pull request #${number} from ${pr.currentPr?.source_branch ?? ""}`,
@@ -287,6 +288,15 @@ const closeDisabledReason = computed(() => {
   return "只有 PR 作者或具备仓库写入权限的成员才能关闭 PR";
 });
 const canReopen = computed(() => isClosed.value && !isMerged.value);
+
+async function handleOpenInBrowser(url: string): Promise<void> {
+  titleLinkError.value = "";
+  try {
+    await openExternalUrl(url);
+  } catch (error) {
+    titleLinkError.value = getErrorMessage(error, "打开 PR 页面失败，请稍后重试");
+  }
+}
 
 async function handleMetadataSave(update: PrMetadataUpdate): Promise<void> {
   metadataSaving.value = true;
@@ -501,12 +511,28 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             </svg>
             <span>PR 列表</span>
           </button>
-          <h2 v-if="pr.currentPr">{{ pr.currentPr.summary.title }}</h2>
+          <h2 v-if="pr.currentPr">
+            <button
+              v-if="pr.currentPr.web_url"
+              class="pr-title-link"
+              type="button"
+              title="在浏览器中打开"
+              :aria-label="`在浏览器中打开：${pr.currentPr.summary.title}`"
+              data-testid="pr-title-link"
+              @click="handleOpenInBrowser(pr.currentPr.web_url)"
+            >
+              {{ pr.currentPr.summary.title }}
+            </button>
+            <template v-else>{{ pr.currentPr.summary.title }}</template>
+          </h2>
           <div class="pr-header-skeleton" v-else>
             <div class="skeleton skeleton-title" />
             <div class="skeleton skeleton-subtitle" />
           </div>
         </div>
+        <p v-if="titleLinkError" class="error-msg" role="alert" data-testid="pr-title-link-error">
+          {{ titleLinkError }}
+        </p>
         <div class="pr-meta" v-if="pr.currentPr">
           <span class="branch">
             <svg

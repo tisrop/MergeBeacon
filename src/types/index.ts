@@ -176,6 +176,7 @@ export interface PrDetail {
   assignees: User[];
   milestone: PrMilestone | null;
   metadata_permissions: PrMetadataPermissions;
+  web_url?: string | null;
 }
 
 export interface PrDependencyNode {

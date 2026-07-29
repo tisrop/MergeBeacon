@@ -957,7 +957,8 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
             "draft": true,
             "reviewers": [gitlab_user()],
             "assignees": [{"id": 8, "username": "assignee", "name": "Assignee", "avatar_url": ""}],
-            "milestone": {"id": 11, "iid": 2, "title": "0.6.0"}
+            "milestone": {"id": 11, "iid": 2, "title": "0.6.0"},
+            "web_url": "https://git.example.com/group/repo/-/merge_requests/3"
         })))
         .expect(1)
         .mount(&mock_server)
@@ -966,6 +967,7 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
     let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
     let detail = adapter.get_pull_request("group", "repo", 3).await.expect("should load merge request");
 
+    assert_eq!(detail.web_url.as_deref(), Some("https://git.example.com/group/repo/-/merge_requests/3"));
     assert_eq!(detail.head_sha, "head-sha");
     assert_eq!(detail.base_sha, "base-sha");
     assert_eq!(detail.base_repository_full_name.as_deref(), Some("group/repo"));
@@ -2018,6 +2020,7 @@ async fn test_gitlab_updates_merge_request_metadata() {
         }],
         milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: "New title".into(),
@@ -2086,6 +2089,7 @@ async fn test_gitlab_clears_merge_request_milestone_with_zero_id() {
         assignees: Vec::new(),
         milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),
+        web_url: None,
     };
     let update = PrMetadataUpdate {
         title: current.summary.title.clone(),

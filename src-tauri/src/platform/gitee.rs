@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use futures::{stream, StreamExt};
 use serde_json::Value;
 
-use super::GitPlatform;
+use super::{sanitize_web_url, GitPlatform};
 use crate::error::AppError;
 use crate::http_client::HttpClient;
 use crate::models::*;
@@ -1054,6 +1054,7 @@ impl GitPlatform for GiteeAdapter {
                 .unwrap_or_default(),
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
+            web_url: sanitize_web_url(&json["html_url"]),
         })
     }
 

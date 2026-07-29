@@ -91,6 +91,7 @@ const mocks = vi.hoisted(() => ({
     isMergeQueueVisible: true,
   },
   reviewCommentAdd: vi.fn(),
+  openExternalUrl: vi.fn(),
 }));
 
 vi.mock("vue-router", () => ({
@@ -108,7 +109,10 @@ vi.mock("@/stores/useCapabilityStore", () => ({
 vi.mock("@/stores/useUiSettingsStore", () => ({
   useUiSettingsStore: () => mocks.uiSettingsStore,
 }));
-vi.mock("@/api", () => ({ reviewCommentAdd: mocks.reviewCommentAdd }));
+vi.mock("@/api", () => ({
+  reviewCommentAdd: mocks.reviewCommentAdd,
+  openExternalUrl: mocks.openExternalUrl,
+}));
 
 enableAutoUnmount(afterEach);
 
@@ -218,6 +222,7 @@ describe("PrDetailPage 关闭权限", () => {
     mocks.uiSettingsStore.isPrDependenciesVisible = true;
     mocks.uiSettingsStore.isMergeQueueVisible = true;
     mocks.reviewCommentAdd.mockResolvedValue(undefined);
+    mocks.openExternalUrl.mockResolvedValue(undefined);
     mocks.prStore.updateMetadata.mockResolvedValue({
       detail,
       updated_fields: ["title_body"],
@@ -234,6 +239,47 @@ describe("PrDetailPage 关闭权限", () => {
     await button.trigger("click");
 
     expect(mocks.router.push).toHaveBeenCalledWith({ name: "pr-list" });
+  });
+
+  it("有 web_url 时点击标题在浏览器中打开 PR 页面", async () => {
+    mocks.prStore.currentPr = { ...detail, web_url: "https://github.com/owner/repo/pull/42" };
+    const wrapper = mountPage();
+    const title = wrapper.get('[data-testid="pr-title-link"]');
+
+    expect(title.text()).toBe("权限测试");
+    expect(title.attributes("title")).toBe("在浏览器中打开");
+    expect(title.attributes("aria-label")).toBe("在浏览器中打开：权限测试");
+    await title.trigger("click");
+
+    expect(mocks.openExternalUrl).toHaveBeenCalledWith("https://github.com/owner/repo/pull/42");
+    expect(wrapper.find('[data-testid="pr-title-link-error"]').exists()).toBe(false);
+  });
+
+  it("打开浏览器失败时就近展示错误提示", async () => {
+    mocks.prStore.currentPr = { ...detail, web_url: "https://github.com/owner/repo/pull/42" };
+    mocks.openExternalUrl.mockRejectedValueOnce("Not allowed to open path");
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="pr-title-link"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="pr-title-link-error"]').text()).toBe(
+      "Not allowed to open path",
+    );
+
+    mocks.openExternalUrl.mockResolvedValueOnce(undefined);
+    await wrapper.get('[data-testid="pr-title-link"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="pr-title-link-error"]').exists()).toBe(false);
+  });
+
+  it("无 web_url 时标题以纯文本渲染", () => {
+    mocks.prStore.currentPr = { ...detail, web_url: null };
+    const wrapper = mountPage();
+
+    expect(wrapper.find('[data-testid="pr-title-link"]').exists()).toBe(false);
+    expect(wrapper.get("h2").text()).toBe("权限测试");
   });
 
   it("详情不存在时不再请求 Diff 和合并状态", async () => {

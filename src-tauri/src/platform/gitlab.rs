@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 
-use super::GitPlatform;
+use super::{sanitize_web_url, GitPlatform};
 use crate::error::AppError;
 use crate::http_client::HttpClient;
 use crate::models::*;
@@ -1041,6 +1041,7 @@ impl GitPlatform for GitLabAdapter {
                 .unwrap_or_default(),
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
+            web_url: sanitize_web_url(&json["web_url"]),
         })
     }
 

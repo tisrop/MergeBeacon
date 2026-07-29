@@ -162,6 +162,7 @@ pub struct PrDetail {
     pub assignees: Vec<User>,
     pub milestone: Option<PrMilestone>,
     pub metadata_permissions: PrMetadataPermissions,
+    pub web_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]

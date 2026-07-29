@@ -117,6 +117,19 @@ pub fn normalize_api_base(platform: &str, url: &str) -> String {
     }
 }
 
+/// Keep only remote page links that are safe to hand to the system browser.
+pub(crate) fn sanitize_web_url(value: &serde_json::Value) -> Option<String> {
+    let url = value.as_str()?.trim();
+    let host_start = ["https://", "http://"]
+        .into_iter()
+        .find(|scheme| url.get(..scheme.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(scheme)))
+        .map(str::len)?;
+    if !url[host_start..].starts_with(|character: char| character.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(url.to_string())
+}
+
 const CREATE_COMPARE_COMMIT_PAGE_SIZE: usize = 100;
 const CREATE_COMPARE_FILE_LIMIT: usize = 300;
 const MAX_CREATE_COMPARE_PAGES: u32 = 100;
@@ -768,8 +781,8 @@ mod tests {
     use super::{
         capabilities_for, collect_create_compare_pages, collect_json_pages, collect_json_pages_limited,
         compare_page_error_summary, create_compare_is_incomplete, json_page_url, next_page_from_link,
-        normalize_api_base, walk_pr_dependency_candidates, AppError, CreateComparePageSource, JsonPage, JsonPageSource,
-        CREATE_COMPARE_COMMIT_PAGE_SIZE, JSON_PAGE_SIZE, MAX_CREATE_COMPARE_PAGES,
+        normalize_api_base, sanitize_web_url, walk_pr_dependency_candidates, AppError, CreateComparePageSource,
+        JsonPage, JsonPageSource, CREATE_COMPARE_COMMIT_PAGE_SIZE, JSON_PAGE_SIZE, MAX_CREATE_COMPARE_PAGES,
     };
     use crate::models::{PrCreatePreviewIncompleteReason, PrDependencyCandidate, PrState};
 
@@ -915,6 +928,28 @@ mod tests {
             "https://git.example.com/proxy/api/v4"
         );
         assert_eq!(normalize_api_base("gitee", "http://gitee.internal/base"), "http://gitee.internal/base/api/v5");
+    }
+
+    #[test]
+    fn keeps_only_http_web_urls() {
+        assert_eq!(
+            sanitize_web_url(&serde_json::json!("https://github.com/owner/repo/pull/42")),
+            Some("https://github.com/owner/repo/pull/42".to_string())
+        );
+        assert_eq!(
+            sanitize_web_url(&serde_json::json!("  HTTP://git.internal/group/repo/-/merge_requests/3  ")),
+            Some("HTTP://git.internal/group/repo/-/merge_requests/3".to_string())
+        );
+        for value in [
+            serde_json::json!("javascript:alert(1)"),
+            serde_json::json!("file:///etc/passwd"),
+            serde_json::json!("/group/repo/-/merge_requests/3"),
+            serde_json::json!("https://"),
+            serde_json::json!("https:///pull/42"),
+            serde_json::Value::Null,
+        ] {
+            assert!(sanitize_web_url(&value).is_none());
+        }
     }
 
     #[test]
