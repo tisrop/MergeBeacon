@@ -25,6 +25,7 @@ import MergeReadinessPanel from "@/components/pr/MergeReadinessPanel.vue";
 import PrMetadataPanel from "@/components/pr/PrMetadataPanel.vue";
 import PrDependenciesPanel from "@/components/pr/PrDependenciesPanel.vue";
 import PrMergeQueuePanel from "@/components/pr/PrMergeQueuePanel.vue";
+import CloseConfirmDialog from "@/components/shared/CloseConfirmDialog.vue";
 import { APP_COMMAND_EVENT, type AppCommandDetail } from "@/types/commands";
 import type {
   AiSuggestion,
@@ -201,6 +202,8 @@ const closeRelatedIssues = ref(false);
 const dropdownOpen = ref(false);
 const operating = ref(false);
 const statusMsg = ref("");
+const closeConfirmOpen = ref(false);
+const closeError = ref("");
 const mergeWarning = ref("");
 const metadataSaving = ref(false);
 const metadataStatus = ref("");
@@ -417,15 +420,28 @@ async function handleMerge() {
   }
 }
 
+function requestClose(): void {
+  if (!pr.currentPr || !canClose.value || operating.value) return;
+  closeError.value = "";
+  closeConfirmOpen.value = true;
+}
+
+function cancelClose(): void {
+  if (!operating.value) closeConfirmOpen.value = false;
+}
+
 async function handleClose() {
-  if (!pr.currentPr || !canClose.value) return;
+  if (!pr.currentPr || !canClose.value || operating.value) return;
   operating.value = true;
   statusMsg.value = "正在关闭 PR...";
+  closeError.value = "";
   try {
     await pr.closePr(platform, owner, repo, number);
     statusMsg.value = "";
-  } catch (e) {
+    closeConfirmOpen.value = false;
+  } catch (error) {
     statusMsg.value = "";
+    closeError.value = getErrorMessage(error, "关闭 PR 失败，请稍后重试");
   } finally {
     operating.value = false;
   }
@@ -714,9 +730,9 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
               data-testid="close-pr-button"
               :disabled="!canClose || operating"
               :title="closeDisabledReason || '关闭 PR'"
-              @click="handleClose"
+              @click="requestClose"
             >
-              Close
+              关闭 PR
             </button>
           </div>
 
@@ -963,6 +979,19 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
         </div>
       </div>
     </div>
+    <CloseConfirmDialog
+      :open="closeConfirmOpen"
+      :title="`关闭 PR #${number}？`"
+      :repository="`${owner}/${repo}`"
+      :target="`#${number} ${pr.currentPr?.summary.title ?? ''}`"
+      impact="关闭后，该 PR 将无法合并并从打开列表中移出；如需继续推进，必须先重新打开。"
+      warning="此操作不会删除分支或提交。请确认当前改动不再需要合并。"
+      confirm-label="关闭 PR"
+      :loading="operating"
+      :error="closeError"
+      @cancel="cancelClose"
+      @confirm="handleClose"
+    />
   </AppLayout>
 </template>
 

@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
-import { flushPromises, mount } from "@vue/test-utils";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter, type Router } from "vue-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import IssueDetailPage from "@/pages/IssueDetailPage.vue";
 import IssueListPage from "@/pages/IssueListPage.vue";
 import {
@@ -24,6 +24,12 @@ vi.mock("@/api", () => ({
   issueMetadataUpdate: vi.fn(),
   listRepositoryLabels: vi.fn(),
 }));
+
+enableAutoUnmount(afterEach);
+
+afterEach(() => {
+  document.body.innerHTML = "";
+});
 
 const issue: Issue = {
   number: 12,
@@ -184,6 +190,106 @@ describe("IssueDetailPage", () => {
     expect(wrapper.text()).toContain("Issue 元数据已更新");
   });
 
+  it("确认后关闭 Issue，并携带当前元数据和远端更新时间", async () => {
+    vi.mocked(issueDetail).mockResolvedValue(issue);
+    vi.mocked(issueMetadataUpdate).mockResolvedValue({
+      ...issue,
+      state: "closed",
+      updated_at: "2026-07-26T12:00:00Z",
+    });
+    const router = await createRouterAt("/issue/github/team/repo/12");
+    const wrapper = mountWithRouter(IssueDetailPage, router);
+    await flushPromises();
+
+    await wrapper.get('[data-testid="open-close-issue"]').trigger("click");
+    await flushPromises();
+    const dialog = document.body.querySelector('[data-testid="close-confirm-dialog"]');
+    expect(dialog?.textContent).toContain("team/repo");
+    expect(dialog?.textContent).toContain("#12 详情页支持 Markdown");
+    document.body.querySelector<HTMLButtonElement>('[data-testid="confirm-close"]')?.click();
+    await flushPromises();
+
+    expect(issueMetadataUpdate).toHaveBeenCalledWith("github", "team", "repo", 12, {
+      title: "详情页支持 Markdown",
+      body: "## 复现步骤\n\n- 打开 Issue",
+      state: "closed",
+      labels: ["bug", "frontend"],
+      expected_updated_at: "2026-07-26T10:00:00Z",
+    });
+    expect(wrapper.text()).toContain("Issue 已关闭");
+    expect(wrapper.get(".badge-closed").text()).toBe("已关闭");
+    expect(wrapper.find('[data-testid="open-close-issue"]').exists()).toBe(false);
+  });
+
+  it("取消关闭时不提交 Issue 更新", async () => {
+    vi.mocked(issueDetail).mockResolvedValue(issue);
+    const router = await createRouterAt("/issue/github/team/repo/12");
+    const wrapper = mountWithRouter(IssueDetailPage, router);
+    await flushPromises();
+
+    await wrapper.get('[data-testid="open-close-issue"]').trigger("click");
+    await flushPromises();
+    document.body.querySelector<HTMLButtonElement>('[data-testid="cancel-close"]')?.click();
+    await flushPromises();
+
+    expect(issueMetadataUpdate).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[data-testid="close-confirm-dialog"]')).toBeNull();
+  });
+
+  it("关闭失败时保留确认框并展示可操作错误", async () => {
+    vi.mocked(issueDetail).mockResolvedValue(issue);
+    vi.mocked(issueMetadataUpdate).mockRejectedValue(new Error("远端拒绝关闭"));
+    const router = await createRouterAt("/issue/github/team/repo/12");
+    const wrapper = mountWithRouter(IssueDetailPage, router);
+    await flushPromises();
+
+    await wrapper.get('[data-testid="open-close-issue"]').trigger("click");
+    await flushPromises();
+    document.body.querySelector<HTMLButtonElement>('[data-testid="confirm-close"]')?.click();
+    await flushPromises();
+
+    expect(document.body.querySelector('[data-testid="close-confirm-dialog"]')).not.toBeNull();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("远端拒绝关闭");
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[data-testid="confirm-close"]')?.disabled,
+    ).toBe(false);
+  });
+
+  it("路由切换后忽略旧 Issue 的关闭结果", async () => {
+    const closeRequest = deferred<Issue>();
+    vi.mocked(issueDetail)
+      .mockResolvedValueOnce(issue)
+      .mockResolvedValue({ ...issue, number: 13, title: "新的 Issue" });
+    vi.mocked(issueMetadataUpdate).mockReturnValue(closeRequest.promise);
+    const router = await createRouterAt("/issue/github/team/repo/12");
+    const wrapper = mountWithRouter(IssueDetailPage, router);
+    await flushPromises();
+
+    await wrapper.get('[data-testid="open-close-issue"]').trigger("click");
+    await flushPromises();
+    const confirmButton = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="confirm-close"]',
+    );
+    confirmButton?.click();
+    confirmButton?.click();
+    await flushPromises();
+
+    expect(issueMetadataUpdate).toHaveBeenCalledOnce();
+    expect(confirmButton?.disabled).toBe(true);
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[data-testid="cancel-close"]')?.disabled,
+    ).toBe(true);
+
+    await router.push("/issue/github/team/repo/13");
+    await flushPromises();
+    closeRequest.resolve({ ...issue, state: "closed" });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("新的 Issue");
+    expect(wrapper.text()).not.toContain("Issue 已关闭");
+    expect(wrapper.get(".badge-open").text()).toBe("开启");
+  });
+
   it("没有任何元数据权限时不展示编辑入口", async () => {
     vi.mocked(issueDetail).mockResolvedValue({
       ...issue,
@@ -198,6 +304,7 @@ describe("IssueDetailPage", () => {
     await flushPromises();
 
     expect(wrapper.findAll("button").some((button) => button.text() === "编辑")).toBe(false);
+    expect(wrapper.find('[data-testid="open-close-issue"]').exists()).toBe(false);
   });
 
   it("元数据权限未知时不展示编辑入口", async () => {
@@ -214,6 +321,7 @@ describe("IssueDetailPage", () => {
     await flushPromises();
 
     expect(wrapper.findAll("button").some((button) => button.text() === "编辑")).toBe(false);
+    expect(wrapper.find('[data-testid="open-close-issue"]').exists()).toBe(false);
   });
 
   it("按字段权限禁用状态和标签编辑", async () => {

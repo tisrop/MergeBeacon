@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import CloseConfirmDialog from "@/components/shared/CloseConfirmDialog.vue";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 import AppSelect from "@/components/shared/AppSelect.vue";
@@ -42,12 +43,16 @@ const editDescriptionMode = ref<"edit" | "preview">("edit");
 const metadataSaving = ref(false);
 const metadataError = ref("");
 const metadataStatus = ref("");
+const closeConfirmOpen = ref(false);
+const closeSubmitting = ref(false);
+const closeError = ref("");
 const availableLabels = ref<PrLabel[]>([]);
 const labelsLoading = ref(false);
 const labelsError = ref("");
 let requestSequence = 0;
 let commentsRequestSequence = 0;
 let metadataMutationSequence = 0;
+let closeMutationSequence = 0;
 let commentMutationSequence = 0;
 let labelsRequestSequence = 0;
 
@@ -275,6 +280,63 @@ function cancelEditing() {
   metadataError.value = "";
 }
 
+function beginClosing(): void {
+  if (!issue.value || issue.value.state !== "open" || !canChangeState.value) return;
+  closeError.value = "";
+  metadataStatus.value = "";
+  closeConfirmOpen.value = true;
+}
+
+function cancelClosing(): void {
+  if (closeSubmitting.value) return;
+  closeConfirmOpen.value = false;
+  closeError.value = "";
+}
+
+async function closeIssue(): Promise<void> {
+  const current = context.value;
+  const currentIssue = issue.value;
+  if (
+    !current ||
+    !currentIssue ||
+    currentIssue.state !== "open" ||
+    !canChangeState.value ||
+    closeSubmitting.value
+  ) {
+    return;
+  }
+
+  const sequence = ++closeMutationSequence;
+  const update: IssueMetadataUpdate = {
+    title: currentIssue.title,
+    body: currentIssue.body,
+    state: "closed",
+    labels: currentIssue.labels,
+    expected_updated_at: currentIssue.updated_at,
+  };
+  closeSubmitting.value = true;
+  closeError.value = "";
+  try {
+    const result = await issueMetadataUpdate(
+      current.platform,
+      current.owner,
+      current.repo,
+      current.number,
+      update,
+    );
+    if (sequence !== closeMutationSequence || !sameContext(current, context.value)) return;
+    requestSequence += 1;
+    issue.value = result;
+    closeConfirmOpen.value = false;
+    metadataStatus.value = "Issue 已关闭";
+  } catch (closeIssueError) {
+    if (sequence !== closeMutationSequence || !sameContext(current, context.value)) return;
+    closeError.value = getErrorMessage(closeIssueError, "Issue 关闭失败");
+  } finally {
+    if (sequence === closeMutationSequence) closeSubmitting.value = false;
+  }
+}
+
 async function saveMetadata() {
   const current = context.value;
   const currentIssue = issue.value;
@@ -349,11 +411,15 @@ watch(
   context,
   () => {
     metadataMutationSequence += 1;
+    closeMutationSequence += 1;
     commentMutationSequence += 1;
     labelsRequestSequence += 1;
     editing.value = false;
     metadataSaving.value = false;
     metadataStatus.value = "";
+    closeConfirmOpen.value = false;
+    closeSubmitting.value = false;
+    closeError.value = "";
     commentBody.value = "";
     commentSubmitting.value = false;
     commentSubmitError.value = "";
@@ -370,6 +436,7 @@ onScopeDispose(() => {
   commentsRequestSequence += 1;
   labelsRequestSequence += 1;
   metadataMutationSequence += 1;
+  closeMutationSequence += 1;
   commentMutationSequence += 1;
 });
 </script>
@@ -431,26 +498,37 @@ onScopeDispose(() => {
               <span>更新于 {{ formatDate(issue.updated_at) }}</span>
             </div>
           </div>
-          <span class="badge" :class="`badge-${issue.state}`">{{ stateLabel }}</span>
-          <button
-            v-if="!editing && canEditMetadata"
-            type="button"
-            class="btn btn-sm"
-            @click="beginEditing"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              aria-hidden="true"
+          <div class="issue-detail-actions">
+            <span class="badge" :class="`badge-${issue.state}`">{{ stateLabel }}</span>
+            <button
+              v-if="!editing && canEditMetadata"
+              type="button"
+              class="btn btn-sm"
+              @click="beginEditing"
             >
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" />
-            </svg>
-            编辑
-          </button>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" />
+              </svg>
+              编辑
+            </button>
+            <button
+              v-if="!editing && issue.state === 'open' && canChangeState"
+              type="button"
+              class="btn btn-danger btn-sm"
+              data-testid="open-close-issue"
+              @click="beginClosing"
+            >
+              关闭 Issue
+            </button>
+          </div>
         </div>
 
         <div
@@ -649,6 +727,21 @@ onScopeDispose(() => {
         </form>
       </section>
     </article>
+
+    <CloseConfirmDialog
+      v-if="issue && context"
+      :open="closeConfirmOpen"
+      :title="`关闭 Issue #${issue.number}？`"
+      :repository="repositoryFullName"
+      :target="`#${issue.number} ${issue.title}`"
+      impact="关闭后，该 Issue 将从开启列表中移出；如需继续处理，可以重新打开。"
+      warning="此操作不会删除 Issue、评论或历史记录。"
+      confirm-label="关闭 Issue"
+      :loading="closeSubmitting"
+      :error="closeError"
+      @cancel="cancelClosing"
+      @confirm="closeIssue"
+    />
   </AppLayout>
 </template>
 

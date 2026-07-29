@@ -582,6 +582,44 @@ describe("PrDetailPage 关闭权限", () => {
     expect(button.attributes("disabled")).toBeUndefined();
   });
 
+  it("关闭 PR 前展示目标安全提示，确认后才调用关闭接口", async () => {
+    mocks.authStore.platforms.github.user = { ...author };
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="close-pr-button"]').trigger("click");
+    await flushPromises();
+
+    const dialog = document.body.querySelector('[data-testid="close-confirm-dialog"]');
+    expect(dialog?.textContent).toContain("owner/repo");
+    expect(dialog?.textContent).toContain("#42 权限测试");
+    expect(mocks.prStore.closePr).not.toHaveBeenCalled();
+
+    const confirmButton = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="confirm-close"]',
+    );
+    confirmButton?.click();
+    confirmButton?.click();
+    await flushPromises();
+
+    expect(mocks.prStore.closePr).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.closePr).toHaveBeenCalledOnce();
+    expect(document.body.querySelector('[data-testid="close-confirm-dialog"]')).toBeNull();
+  });
+
+  it("关闭失败时保留确认框并展示错误", async () => {
+    mocks.authStore.platforms.github.user = { ...author };
+    mocks.prStore.closePr.mockRejectedValueOnce("关闭请求被拒绝");
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="close-pr-button"]').trigger("click");
+    await flushPromises();
+    document.body.querySelector<HTMLButtonElement>('[data-testid="confirm-close"]')?.click();
+    await flushPromises();
+
+    expect(document.body.querySelector('[data-testid="close-confirm-dialog"]')).not.toBeNull();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe("关闭请求被拒绝");
+  });
+
   it("具备仓库写入权限的非作者可以关闭 PR", () => {
     mocks.prStore.mergeReadiness = { ...readiness, has_merge_permission: true };
     const wrapper = mountPage();
