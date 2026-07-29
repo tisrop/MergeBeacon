@@ -472,6 +472,7 @@ onUnmounted(invalidateOptions);
         :content="detail.body"
         link-mode="emit"
         repository-references
+        variant="document"
         class="metadata-description metadata-markdown"
         @link-click="handleDescriptionLinkClick"
       />
@@ -543,6 +544,7 @@ onUnmounted(invalidateOptions);
             :content="body"
             link-mode="emit"
             repository-references
+            variant="document"
             class="metadata-markdown"
             @link-click="handleDescriptionLinkClick"
           />

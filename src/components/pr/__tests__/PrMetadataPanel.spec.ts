@@ -1,7 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PrMetadataPanel from "../PrMetadataPanel.vue";
-import { listRepositoryLabels, prParticipantSuggestions } from "@/api";
+import { clipboardWriteText, listRepositoryLabels, prParticipantSuggestions } from "@/api";
 import type {
   Platform,
   PlatformCapabilities,
@@ -12,6 +12,7 @@ import type {
 } from "@/types";
 
 vi.mock("@/api", () => ({
+  clipboardWriteText: vi.fn(),
   listRepositoryLabels: vi.fn(),
   prParticipantSuggestions: vi.fn(),
 }));
@@ -129,6 +130,7 @@ describe("PrMetadataPanel", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(clipboardWriteText).mockResolvedValue();
     vi.mocked(prParticipantSuggestions).mockResolvedValue([
       reviewer,
       assignee,
@@ -162,6 +164,23 @@ describe("PrMetadataPanel", () => {
     expect(wrapper.get('[data-testid="metadata-reviewers"] .app-multi-select-value').text()).toBe(
       "reviewer",
     );
+  });
+
+  it("PR 正文代码块支持复制", async () => {
+    const wrapper = mountPanel({
+      detail: {
+        ...detail,
+        body: "```sh\nnpm run build\n```",
+      },
+    });
+
+    const copyButton = wrapper.get<HTMLButtonElement>("[data-code-copy]");
+    expect(copyButton.attributes("aria-label")).toBe("复制代码");
+    await copyButton.trigger("click");
+    await flushPromises();
+
+    expect(clipboardWriteText).toHaveBeenCalledWith("npm run build\n");
+    expect(copyButton.attributes("data-copy-state")).toBe("copied");
   });
 
   it("展示关联 Issue，并将同仓库 Issue 链接转为内部跳转事件", async () => {
