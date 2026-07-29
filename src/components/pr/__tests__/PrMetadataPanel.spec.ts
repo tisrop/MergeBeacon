@@ -89,6 +89,34 @@ function mountPanel(
 }
 
 describe("PrMetadataPanel", () => {
+  it("详情摘要使用 GitHub 标签背景色和可读文字色", () => {
+    const wrapper = mountPanel({
+      detail: {
+        ...detail,
+        summary: {
+          ...detail.summary,
+          labels: ["priority", "documentation"],
+          label_colors: { priority: "fbca04", documentation: "0075ca" },
+        },
+      },
+    });
+
+    const tags = wrapper.findAll(".metadata-tag");
+    expect(tags).toHaveLength(2);
+    expect(
+      tags.every((tag) =>
+        tag.classes().some((name) => name.startsWith("mb-static-label-tag-color-")),
+      ),
+    ).toBe(true);
+    const stylesheet = document.querySelector("style[data-mergebeacon-dynamic-css]")?.textContent;
+    expect(stylesheet).toContain(
+      "--label-tag-background: #fbca04; --label-tag-foreground: #1f2328",
+    );
+    expect(stylesheet).toContain(
+      "--label-tag-background: #0075ca; --label-tag-foreground: #ffffff",
+    );
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prParticipantSuggestions).mockResolvedValue([

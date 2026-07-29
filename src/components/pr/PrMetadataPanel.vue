@@ -14,6 +14,7 @@ import type {
   User,
 } from "@/types";
 import { getErrorMessage } from "@/utils/error";
+import { labelTagColorClass } from "@/utils/labelColorClass";
 
 const props = defineProps<{
   detail: PrDetail;
@@ -97,6 +98,19 @@ function labelColor(value: string | null): string | undefined {
   return color.startsWith("#") ? color : `#${color}`;
 }
 
+function summaryLabelColor(name: string): string | null {
+  const colors = props.detail.summary.label_colors;
+  if (!colors) return null;
+  const exactColor = colors[name];
+  if (exactColor) return exactColor;
+
+  const normalizedName = name.toLocaleLowerCase();
+  return (
+    Object.entries(colors).find(([label]) => label.toLocaleLowerCase() === normalizedName)?.[1] ??
+    null
+  );
+}
+
 const participantOptions = computed(() => {
   const options = new Map<
     string,
@@ -136,7 +150,11 @@ const labelOptions = computed(() => {
     }
   >();
   for (const label of [
-    ...props.detail.summary.labels.map((name) => ({ name, color: null, description: null })),
+    ...props.detail.summary.labels.map((name) => ({
+      name,
+      color: summaryLabelColor(name),
+      description: null,
+    })),
     ...availableLabels.value,
   ]) {
     const name = label.name.trim();
@@ -371,7 +389,12 @@ onUnmounted(invalidateOptions);
       <div class="metadata-item">
         <span class="metadata-label">{{ categoryLabels.labels }}</span>
         <span class="metadata-value metadata-tags">
-          <span v-for="label in detail.summary.labels" :key="label" class="metadata-tag">
+          <span
+            v-for="label in detail.summary.labels"
+            :key="label"
+            class="metadata-tag"
+            :class="labelTagColorClass(summaryLabelColor(label))"
+          >
             {{ label }}
           </span>
           <span v-if="detail.summary.labels.length === 0">未指定</span>
