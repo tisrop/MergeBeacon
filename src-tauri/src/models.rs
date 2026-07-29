@@ -626,7 +626,7 @@ pub struct PrComment {
 }
 
 // ── Issue ──
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueState {
     Open,
@@ -664,6 +664,33 @@ pub struct Issue {
     pub labels: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub metadata_permissions: IssueMetadataPermissions,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IssueMetadataPermissions {
+    pub can_edit_title_body: Option<bool>,
+    pub can_change_state: Option<bool>,
+    pub can_manage_labels: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueComment {
+    pub id: serde_json::Value,
+    pub body: String,
+    pub author: User,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueMetadataUpdate {
+    pub title: String,
+    pub body: String,
+    pub state: IssueState,
+    pub labels: Vec<String>,
+    pub expected_updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

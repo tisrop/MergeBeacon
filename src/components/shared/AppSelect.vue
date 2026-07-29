@@ -17,6 +17,7 @@ const props = withDefaults(
     hasMore?: boolean;
     loadingMore?: boolean;
     loadMoreText?: string;
+    disabled?: boolean;
   }>(),
   {
     placeholder: "请选择",
@@ -26,6 +27,7 @@ const props = withDefaults(
     hasMore: false,
     loadingMore: false,
     loadMoreText: "加载更多",
+    disabled: false,
   },
 );
 
@@ -58,6 +60,7 @@ const {
   isSelected: (option) => option.value === props.modelValue,
   onSelect: (option) => emit("update:modelValue", option.value),
   searchable: () => props.searchable,
+  disabled: () => props.disabled,
   closeOnSelect: true,
   optionSelector: ".dropdown-option",
 });
@@ -73,11 +76,12 @@ const {
       ref="triggerRef"
       :id="id"
       class="app-select"
-      tabindex="0"
+      :tabindex="disabled ? -1 : 0"
       role="combobox"
       aria-haspopup="listbox"
       :aria-expanded="open"
       :aria-label="ariaLabel"
+      :aria-disabled="disabled"
       @click="toggleDropdown"
       @keydown="onTriggerKeydown"
     >

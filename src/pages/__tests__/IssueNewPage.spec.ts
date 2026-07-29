@@ -74,6 +74,11 @@ describe("IssueNewPage", () => {
       labels: [],
       created_at: "2026-07-25T00:00:00Z",
       updated_at: "2026-07-25T00:00:00Z",
+      metadata_permissions: {
+        can_edit_title_body: null,
+        can_change_state: null,
+        can_manage_labels: null,
+      },
     });
   });
 

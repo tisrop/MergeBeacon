@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { marked } from "marked";
+import { clipboardWriteText } from "@/api";
+import { getErrorMessage } from "@/utils/error";
 
 const props = defineProps<{
   content: string;
   breaks?: boolean;
+  variant?: "document";
 }>();
 
 const allowedTags = new Set([
@@ -114,17 +117,152 @@ function sanitizeHtml(rawHtml: string): string {
   return root.innerHTML;
 }
 
+function copyIcon(): string {
+  return `
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+      <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+    </svg>
+  `;
+}
+
+function addCodeBlockControls(sanitizedHtml: string): string {
+  const document = new DOMParser().parseFromString(`<div>${sanitizedHtml}</div>`, "text/html");
+  const root = document.body.firstElementChild;
+  if (!root) return "";
+
+  for (const [index, pre] of Array.from(root.querySelectorAll("pre")).entries()) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "markdown-code-block";
+    const button = document.createElement("button");
+    button.className = "markdown-code-copy";
+    button.type = "button";
+    button.dataset.codeCopy = String(index);
+    button.title = "复制代码";
+    button.setAttribute("aria-label", "复制代码");
+    button.innerHTML = copyIcon();
+    pre.replaceWith(wrapper);
+    wrapper.append(pre, button);
+  }
+  const status = document.createElement("span");
+  status.className = "markdown-copy-status";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  root.append(status);
+  return root.innerHTML;
+}
+
 const html = computed(() =>
-  sanitizeHtml(
-    marked.parse(props.content, {
-      async: false,
-      gfm: true,
-      breaks: props.breaks ?? true,
-    }) as string,
-  ),
+  props.variant === "document"
+    ? addCodeBlockControls(
+        sanitizeHtml(
+          marked.parse(props.content, {
+            async: false,
+            gfm: true,
+            breaks: props.breaks ?? true,
+          }) as string,
+        ),
+      )
+    : sanitizeHtml(
+        marked.parse(props.content, {
+          async: false,
+          gfm: true,
+          breaks: props.breaks ?? true,
+        }) as string,
+      ),
 );
+
+const rootRef = ref<HTMLElement | null>(null);
+let activeCopyButton: HTMLButtonElement | null = null;
+let copyResetHandle: ReturnType<typeof setTimeout> | null = null;
+let copySequence = 0;
+let copyInFlight = false;
+
+function clearCopyFeedback(): void {
+  if (copyResetHandle !== null) {
+    clearTimeout(copyResetHandle);
+    copyResetHandle = null;
+  }
+  if (activeCopyButton) {
+    delete activeCopyButton.dataset.copyState;
+    activeCopyButton.title = "复制代码";
+    activeCopyButton.setAttribute("aria-label", "复制代码");
+    activeCopyButton = null;
+  }
+  const status = rootRef.value?.querySelector(".markdown-copy-status");
+  if (status) status.textContent = "";
+}
+
+function setCopyStatus(message: string): void {
+  const status = rootRef.value?.querySelector(".markdown-copy-status");
+  if (status) status.textContent = message;
+}
+
+function showCopyFeedback(
+  button: HTMLButtonElement,
+  state: "copied" | "error",
+  message: string,
+): void {
+  clearCopyFeedback();
+  activeCopyButton = button;
+  button.dataset.copyState = state;
+  button.title = message;
+  button.setAttribute("aria-label", message);
+  setCopyStatus(message);
+  copyResetHandle = setTimeout(
+    () => {
+      clearCopyFeedback();
+    },
+    state === "copied" ? 1500 : 3000,
+  );
+}
+
+async function handleRendererClick(event: MouseEvent): Promise<void> {
+  if (copyInFlight || !(event.target instanceof Element)) return;
+  const button = event.target.closest<HTMLButtonElement>("[data-code-copy]");
+  if (!button || !rootRef.value?.contains(button)) return;
+  const code = button.closest(".markdown-code-block")?.querySelector("code");
+  if (!code) return;
+
+  const sequence = ++copySequence;
+  copyInFlight = true;
+  button.disabled = true;
+  setCopyStatus("正在复制代码");
+  try {
+    await clipboardWriteText(code.textContent ?? "");
+    if (sequence !== copySequence) return;
+    showCopyFeedback(button, "copied", "代码已复制");
+  } catch (error) {
+    if (sequence !== copySequence) return;
+    showCopyFeedback(button, "error", `复制失败：${getErrorMessage(error, "无法访问剪贴板")}`);
+  } finally {
+    button.disabled = false;
+    copyInFlight = false;
+  }
+}
+
+watch(
+  () => [props.content, props.variant],
+  () => {
+    copySequence += 1;
+    clearCopyFeedback();
+  },
+);
+
+onUnmounted(() => {
+  copySequence += 1;
+  clearCopyFeedback();
+});
 </script>
 
 <template>
-  <div class="markdown-renderer" v-html="html" />
+  <div
+    ref="rootRef"
+    class="markdown-renderer"
+    :class="{ 'markdown-renderer-document': variant === 'document' }"
+    @click="handleRendererClick"
+    v-html="html"
+  />
 </template>
+
+<style scoped src="./MarkdownRenderer.css"></style>

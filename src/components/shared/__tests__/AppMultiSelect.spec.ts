@@ -69,6 +69,19 @@ describe("AppMultiSelect", () => {
     expect(wrapper.get(".multi-select-empty").text()).toBe("仓库暂无成员");
   });
 
+  it("禁用时不展开并退出键盘焦点顺序", async () => {
+    const wrapper = mount(AppMultiSelect, {
+      props: { modelValue: ["bug"], options, disabled: true },
+    });
+    const trigger = wrapper.get('[role="combobox"]');
+
+    expect(trigger.attributes("aria-disabled")).toBe("true");
+    expect(trigger.attributes("tabindex")).toBe("-1");
+    await trigger.trigger("click");
+
+    expect(wrapper.find(".multi-select-dropdown").exists()).toBe(false);
+  });
+
   it("搜索无结果时显示调用方配置的空状态", async () => {
     const wrapper = mount(AppMultiSelect, { props: { modelValue: [], options: [] } });
 

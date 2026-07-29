@@ -559,6 +559,29 @@ export interface Issue {
   labels: string[];
   created_at: string;
   updated_at: string;
+  metadata_permissions: IssueMetadataPermissions;
+}
+
+export interface IssueMetadataPermissions {
+  can_edit_title_body: boolean | null;
+  can_change_state: boolean | null;
+  can_manage_labels: boolean | null;
+}
+
+export interface IssueComment {
+  id: number | string;
+  body: string;
+  author: User;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IssueMetadataUpdate {
+  title: string;
+  body: string;
+  state: Exclude<IssueState, "all">;
+  labels: string[];
+  expected_updated_at: string;
 }
 
 export interface CreateIssueRequest {

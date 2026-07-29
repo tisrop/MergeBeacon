@@ -2584,6 +2584,35 @@ impl GitPlatform for GitHubAdapter {
         Ok(Paginated { items: issues, page, total_pages: 1, total_count: 0, truncated: None })
     }
 
+    async fn get_issue(&self, owner: &str, repo: &str, issue_number: u64) -> Result<Issue, AppError> {
+        let url = format!("{}/repos/{}/{}/issues/{}", self.base_url, owner, repo, issue_number);
+        let json: Value = self.get_json(&url).await?;
+        let author = Self::map_user(&json["user"]);
+        let permissions = self.metadata_permissions(owner, repo, &author.login).await;
+
+        Ok(Issue {
+            number: json["number"].as_u64().unwrap_or(0),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+            body: json["body"].as_str().unwrap_or("").to_string(),
+            author,
+            state: match json["state"].as_str().unwrap_or("") {
+                "closed" => IssueState::Closed,
+                _ => IssueState::Open,
+            },
+            labels: json["labels"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            created_at: json["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            metadata_permissions: IssueMetadataPermissions {
+                can_edit_title_body: permissions.can_edit_title_body,
+                can_change_state: permissions.can_edit_title_body,
+                can_manage_labels: permissions.can_manage_labels,
+            },
+        })
+    }
+
     async fn create_issue(
         &self,
         owner: &str,
@@ -2616,6 +2645,88 @@ impl GitPlatform for GitHubAdapter {
                 .unwrap_or_default(),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            metadata_permissions: IssueMetadataPermissions::default(),
+        })
+    }
+
+    async fn update_issue_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        current: &Issue,
+        update: &IssueMetadataUpdate,
+    ) -> Result<Issue, AppError> {
+        let url = format!("{}/repos/{}/{}/issues/{}", self.base_url, owner, repo, issue_number);
+        let mut payload = serde_json::json!({});
+        if current.title != update.title {
+            payload["title"] = Value::String(update.title.clone());
+        }
+        if current.body != update.body {
+            payload["body"] = Value::String(update.body.clone());
+        }
+        if current.state != update.state {
+            payload["state"] = Value::String(update.state.as_str().into());
+        }
+        if current.labels != update.labels {
+            payload["labels"] = serde_json::to_value(&update.labels)?;
+        }
+        let json = self.patch_json(&url, &payload).await?;
+
+        Ok(Issue {
+            number: json["number"].as_u64().unwrap_or(0),
+            title: json["title"].as_str().unwrap_or("").to_string(),
+            body: json["body"].as_str().unwrap_or("").to_string(),
+            author: Self::map_user(&json["user"]),
+            state: match json["state"].as_str().unwrap_or("") {
+                "closed" => IssueState::Closed,
+                _ => IssueState::Open,
+            },
+            labels: json["labels"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|label| label["name"].as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            created_at: json["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            metadata_permissions: current.metadata_permissions.clone(),
+        })
+    }
+
+    async fn list_issue_comments(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+    ) -> Result<Vec<IssueComment>, AppError> {
+        let endpoint = format!("{}/repos/{}/{}/issues/{}/comments", self.base_url, owner, repo, issue_number);
+        let items = super::collect_json_pages(self, &endpoint).await?;
+        Ok(items
+            .iter()
+            .map(|comment| IssueComment {
+                id: comment["id"].clone(),
+                body: comment["body"].as_str().unwrap_or("").to_string(),
+                author: Self::map_user(&comment["user"]),
+                created_at: comment["created_at"].as_str().unwrap_or("").to_string(),
+                updated_at: comment["updated_at"].as_str().unwrap_or("").to_string(),
+            })
+            .collect())
+    }
+
+    async fn create_issue_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        body: &str,
+    ) -> Result<IssueComment, AppError> {
+        let url = format!("{}/repos/{}/{}/issues/{}/comments", self.base_url, owner, repo, issue_number);
+        let comment = self.post_json(&url, &serde_json::json!({ "body": body })).await?;
+        Ok(IssueComment {
+            id: comment["id"].clone(),
+            body: comment["body"].as_str().unwrap_or("").to_string(),
+            author: Self::map_user(&comment["user"]),
+            created_at: comment["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: comment["updated_at"].as_str().unwrap_or("").to_string(),
         })
     }
 

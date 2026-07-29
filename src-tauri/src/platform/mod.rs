@@ -759,6 +759,8 @@ pub trait GitPlatform: Send + Sync {
         page: u32,
     ) -> Result<Paginated<IssueSummary>, AppError>;
 
+    async fn get_issue(&self, owner: &str, repo: &str, issue_number: u64) -> Result<Issue, AppError>;
+
     async fn create_issue(
         &self,
         owner: &str,
@@ -767,6 +769,30 @@ pub trait GitPlatform: Send + Sync {
         body: &str,
         labels: &[String],
     ) -> Result<Issue, AppError>;
+
+    async fn update_issue_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        current: &Issue,
+        update: &IssueMetadataUpdate,
+    ) -> Result<Issue, AppError>;
+
+    async fn list_issue_comments(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+    ) -> Result<Vec<IssueComment>, AppError>;
+
+    async fn create_issue_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        body: &str,
+    ) -> Result<IssueComment, AppError>;
 
     async fn close_issue(&self, owner: &str, repo: &str, issue_number: u64) -> Result<(), AppError>;
 }

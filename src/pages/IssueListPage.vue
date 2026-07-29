@@ -15,6 +15,19 @@ const loading = ref(false);
 
 let requestSequence = 0;
 
+function issueDetailRoute(issue: IssueSummary) {
+  if (!repo.activeRepo) return "/issue";
+  return {
+    name: "issue-detail",
+    params: {
+      platform: auth.activePlatform,
+      owner: repo.activeRepo.owner,
+      repo: repo.activeRepo.repo,
+      number: issue.number,
+    },
+  };
+}
+
 async function fetchIssues() {
   const sequence = ++requestSequence;
   issues.value = [];
@@ -129,7 +142,14 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
     </div>
 
     <div v-else class="issue-list">
-      <IssueCard v-for="item in issues" :key="item.number" :issue="item" />
+      <router-link
+        v-for="item in issues"
+        :key="item.number"
+        :to="issueDetailRoute(item)"
+        class="issue-card-link"
+      >
+        <IssueCard :issue="item" />
+      </router-link>
     </div>
   </AppLayout>
 </template>

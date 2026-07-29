@@ -35,6 +35,8 @@ import type {
   IssueState,
   IssueSummary,
   Issue,
+  IssueComment,
+  IssueMetadataUpdate,
   IssueTemplate,
   Paginated,
   RepoSummary,
@@ -580,6 +582,44 @@ export async function issueList(
   page: number = 1,
 ): Promise<Paginated<IssueSummary>> {
   return invoke("issue_list", { platform, owner, repo, stateFilter: state, page });
+}
+
+export async function issueDetail(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<Issue> {
+  return invoke("issue_detail", { platform, owner, repo, number });
+}
+
+export async function issueMetadataUpdate(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+  update: IssueMetadataUpdate,
+): Promise<Issue> {
+  return invoke("issue_metadata_update", { platform, owner, repo, number, update });
+}
+
+export async function issueCommentsList(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<IssueComment[]> {
+  return invoke("issue_comments_list", { platform, owner, repo, number });
+}
+
+export async function issueCommentAdd(
+  platform: Platform,
+  owner: string,
+  repo: string,
+  number: number,
+  body: string,
+): Promise<IssueComment> {
+  return invoke("issue_comment_add", { platform, owner, repo, number, body });
 }
 
 export async function issueCreate(
