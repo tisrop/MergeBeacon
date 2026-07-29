@@ -1019,6 +1019,42 @@ impl GitPlatform for GitLabAdapter {
         } else {
             None
         };
+        let (reviewers, mut reviewer_statuses): (Vec<User>, Vec<PrReviewerStatus>) = json["reviewers"]
+            .as_array()
+            .map(|users| {
+                users
+                    .iter()
+                    .map(|value| {
+                        let user = Self::map_user(value);
+                        let status = PrReviewerStatus {
+                            user: user.clone(),
+                            status: PrReviewStatus::Pending,
+                            web_url: sanitize_web_url(&value["web_url"]),
+                        };
+                        (user, status)
+                    })
+                    .unzip()
+            })
+            .unwrap_or_default();
+        let approvals_url = format!("{}/projects/{}/merge_requests/{}/approvals", self.base_url, project_id, pr_number);
+        if let Ok(approvals) = self.get_json::<Value>(&approvals_url).await {
+            let approved_by = approvals["approved_by"].as_array().cloned().unwrap_or_default();
+            for reviewer in &mut reviewer_statuses {
+                let approval = approved_by.iter().find(|approval| {
+                    approval["user"]["username"]
+                        .as_str()
+                        .is_some_and(|login| login.eq_ignore_ascii_case(&reviewer.user.login))
+                });
+                if let Some(approval) = approval {
+                    reviewer.status = PrReviewStatus::Approved;
+                    if let Some(web_url) = sanitize_web_url(&approval["user"]["web_url"]) {
+                        reviewer.web_url = Some(web_url);
+                    }
+                } else {
+                    reviewer.status = PrReviewStatus::Pending;
+                }
+            }
+        }
         let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
@@ -1031,10 +1067,8 @@ impl GitPlatform for GitLabAdapter {
             head_sha: json["sha"].as_str().or_else(|| json["diff_refs"]["head_sha"].as_str()).unwrap_or("").to_string(),
             base_sha: json["diff_refs"]["base_sha"].as_str().unwrap_or("").to_string(),
             draft: json["draft"].as_bool().or_else(|| json["work_in_progress"].as_bool()),
-            reviewers: json["reviewers"]
-                .as_array()
-                .map(|users| users.iter().map(Self::map_user).collect())
-                .unwrap_or_default(),
+            reviewers,
+            reviewer_statuses,
             assignees: json["assignees"]
                 .as_array()
                 .map(|users| users.iter().map(Self::map_user).collect())

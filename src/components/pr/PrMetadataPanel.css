@@ -56,6 +56,73 @@
   font-size: 13px;
 }
 
+.metadata-reviewer-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.metadata-reviewer {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+a.metadata-reviewer:hover .metadata-reviewer-name {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+a.metadata-reviewer:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.metadata-reviewer-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.metadata-review-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.metadata-review-status::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.metadata-review-status-approved {
+  color: var(--color-success);
+}
+
+.metadata-review-status-changes_requested {
+  color: var(--color-danger);
+}
+
+.metadata-review-status-pending {
+  color: var(--color-warning);
+}
+
+.metadata-review-status-commented {
+  color: var(--color-primary);
+}
+
 .metadata-tags {
   display: flex;
   flex-wrap: wrap;

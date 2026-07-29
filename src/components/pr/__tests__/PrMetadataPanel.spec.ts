@@ -166,6 +166,31 @@ describe("PrMetadataPanel", () => {
     );
   });
 
+  it("展示审核人员检视状态并请求在浏览器打开检视页面", async () => {
+    const reviewUrl = "https://github.com/owner/repo/pull/42#pullrequestreview-7";
+    const wrapper = mountPanel({
+      detail: {
+        ...detail,
+        reviewer_statuses: [
+          { user: reviewer, status: "approved", web_url: reviewUrl },
+          {
+            user: { id: 4, login: "changes", name: "Changes", avatar_url: "" },
+            status: "changes_requested",
+            web_url: null,
+          },
+        ],
+      },
+    });
+
+    expect(wrapper.text()).toContain("已批准");
+    expect(wrapper.text()).toContain("请求修改");
+    const link = wrapper.get<HTMLAnchorElement>('[data-testid="metadata-reviewer-link"]');
+    expect(link.attributes("href")).toBe(reviewUrl);
+    expect(link.attributes("target")).toBe("_blank");
+    await link.trigger("click");
+    expect(wrapper.emitted("open-external")).toEqual([[reviewUrl]]);
+  });
+
   it("PR 正文代码块支持复制", async () => {
     const wrapper = mountPanel({
       detail: {

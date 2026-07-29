@@ -161,6 +161,20 @@ export interface PrMetadataPermissions {
   can_manage_milestone: boolean | null;
 }
 
+export type PrReviewStatus =
+  | "pending"
+  | "approved"
+  | "changes_requested"
+  | "commented"
+  | "dismissed"
+  | "unknown";
+
+export interface PrReviewerStatus {
+  user: User;
+  status: PrReviewStatus;
+  web_url: string | null;
+}
+
 export interface PrDetail {
   summary: PrSummary;
   body: string;
@@ -173,6 +187,7 @@ export interface PrDetail {
   base_sha: string;
   draft: boolean | null;
   reviewers: User[];
+  reviewer_statuses?: PrReviewerStatus[];
   assignees: User[];
   milestone: PrMilestone | null;
   metadata_permissions: PrMetadataPermissions;

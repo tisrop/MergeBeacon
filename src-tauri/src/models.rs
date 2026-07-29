@@ -146,6 +146,24 @@ pub struct PrMetadataPermissions {
     pub can_manage_milestone: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrReviewStatus {
+    Pending,
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrReviewerStatus {
+    pub user: User,
+    pub status: PrReviewStatus,
+    pub web_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrDetail {
     pub summary: PrSummary,
@@ -159,6 +177,8 @@ pub struct PrDetail {
     pub base_sha: String,
     pub draft: Option<bool>,
     pub reviewers: Vec<User>,
+    #[serde(default)]
+    pub reviewer_statuses: Vec<PrReviewerStatus>,
     pub assignees: Vec<User>,
     pub milestone: Option<PrMilestone>,
     pub metadata_permissions: PrMetadataPermissions,

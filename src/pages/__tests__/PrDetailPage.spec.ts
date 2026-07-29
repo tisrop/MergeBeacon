@@ -287,7 +287,7 @@ describe("PrDetailPage 关闭权限", () => {
 
   it("PR 元数据中的 Issue、PR 和外部链接使用对应跳转方式", async () => {
     const metadataStub = {
-      emits: ["open-issue", "open-link"],
+      emits: ["open-issue", "open-link", "open-external"],
       template: `<section>
         <button data-testid="metadata-issue-link" @click="$emit('open-issue', 12)">#12</button>
         <button
@@ -298,6 +298,10 @@ describe("PrDetailPage 关闭权限", () => {
           data-testid="metadata-external-link"
           @click="$emit('open-link', 'https://example.com/docs')"
         >文档</button>
+        <button
+          data-testid="metadata-reviewer-link"
+          @click="$emit('open-external', 'https://github.com/reviewer')"
+        >审核人员</button>
         <button
           data-testid="metadata-reference-link"
           @click="$emit('open-link', '/__mergebeacon__/reference/hash/7086')"
@@ -324,6 +328,9 @@ describe("PrDetailPage 关闭权限", () => {
 
     await wrapper.get('[data-testid="metadata-external-link"]').trigger("click");
     expect(mocks.openExternalUrl).toHaveBeenCalledWith("https://example.com/docs");
+
+    await wrapper.get('[data-testid="metadata-reviewer-link"]').trigger("click");
+    expect(mocks.openExternalUrl).toHaveBeenCalledWith("https://github.com/reviewer");
 
     await wrapper.get('[data-testid="metadata-redirect-issue-link"]').trigger("click");
     expect(mocks.router.push).toHaveBeenCalledWith({

@@ -2,7 +2,8 @@ use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
     Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, MergeQueueState, PrCommitTruncatedEnd,
     PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
-    PrMilestone, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
+    PrMilestone, PrReviewStatus, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship,
+    User,
 };
 use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
 use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
@@ -2234,6 +2235,16 @@ async fn test_github_file_content_rejects_invalid_base64() {
 async fn test_github_pr_detail_exposes_base_and_head_revisions() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/pulls/42/reviews"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 7,
+            "state": "APPROVED",
+            "html_url": "https://github.com/octocat/hello-world/pull/42#pullrequestreview-7",
+            "user": {"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}
+        }])))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
         .and(path("/repos/octocat/hello-world/pulls/42"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "number": 42,
@@ -2275,6 +2286,11 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
     assert_eq!(detail.head_repository_full_name.as_deref(), Some("eryajf/dbx"));
     assert_eq!(detail.draft, Some(true));
     assert_eq!(detail.reviewers[0].login, "reviewer");
+    assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Approved);
+    assert_eq!(
+        detail.reviewer_statuses[0].web_url.as_deref(),
+        Some("https://github.com/octocat/hello-world/pull/42#pullrequestreview-7")
+    );
     assert_eq!(detail.assignees[0].login, "assignee");
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
@@ -2676,6 +2692,7 @@ async fn test_github_updates_pull_request_metadata() {
             name: "".into(),
             avatar_url: "".into(),
         }],
+        reviewer_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(3),
             login: "old-assignee".into(),

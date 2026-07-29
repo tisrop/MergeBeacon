@@ -773,6 +773,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
         @save="handleMetadataSave"
         @open-issue="handleOpenIssueDetail"
         @open-link="handlePrContentLink"
+        @open-external="handleOpenInBrowser"
       />
 
       <div ref="tabsRef" class="tabs">

@@ -11,6 +11,7 @@ import type {
   PrLabel,
   PrMetadataPermissions,
   PrMetadataUpdate,
+  PrReviewStatus,
   User,
 } from "@/types";
 import { getErrorMessage } from "@/utils/error";
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   save: [update: PrMetadataUpdate];
   "open-issue": [number: number];
   "open-link": [href: string];
+  "open-external": [href: string];
 }>();
 
 const editing = ref(false);
@@ -94,6 +96,22 @@ const categoryLabels = computed(() =>
     ? { labels: "标签", milestone: "里程碑" }
     : { labels: "Labels", milestone: "Milestone" },
 );
+const reviewStatusLabels: Record<PrReviewStatus, string> = {
+  pending: "待检视",
+  approved: "已批准",
+  changes_requested: "请求修改",
+  commented: "已评论",
+  dismissed: "已撤销",
+  unknown: "状态未知",
+};
+const reviewerEntries = computed(() => {
+  if (props.detail.reviewer_statuses?.length) return props.detail.reviewer_statuses;
+  return props.detail.reviewers.map((user) => ({
+    user,
+    status: "unknown" as const,
+    web_url: null,
+  }));
+});
 
 const closingIssuePattern =
   /(?:^|[\s,])(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[\s:]+#(\d+)\b/gi;
@@ -138,6 +156,10 @@ function openIssue(number: number): void {
 
 function handleDescriptionLinkClick(payload: { href: string }): void {
   emit("open-link", payload.href);
+}
+
+function openReviewerPage(url: string): void {
+  emit("open-external", url);
 }
 
 function labelColor(value: string | null): string | undefined {
@@ -424,8 +446,37 @@ onUnmounted(invalidateOptions);
       </div>
       <div class="metadata-item">
         <span class="metadata-label">{{ participantLabels.reviewers }}</span>
-        <span class="metadata-value">
-          {{ detail.reviewers.map((user) => user.login).join("、") || "未指定" }}
+        <span v-if="reviewerEntries.length === 0" class="metadata-value">未指定</span>
+        <span v-else class="metadata-value metadata-reviewer-list">
+          <template v-for="reviewer in reviewerEntries" :key="reviewer.user.login">
+            <a
+              v-if="reviewer.web_url"
+              class="metadata-reviewer"
+              :href="reviewer.web_url"
+              target="_blank"
+              rel="noopener noreferrer"
+              :title="`在浏览器中打开 ${reviewer.user.login} 的检视页面`"
+              data-testid="metadata-reviewer-link"
+              @click.prevent="openReviewerPage(reviewer.web_url)"
+            >
+              <span class="metadata-reviewer-name">{{ reviewer.user.login }}</span>
+              <span
+                class="metadata-review-status"
+                :class="`metadata-review-status-${reviewer.status}`"
+              >
+                {{ reviewStatusLabels[reviewer.status] }}
+              </span>
+            </a>
+            <span v-else class="metadata-reviewer">
+              <span class="metadata-reviewer-name">{{ reviewer.user.login }}</span>
+              <span
+                class="metadata-review-status"
+                :class="`metadata-review-status-${reviewer.status}`"
+              >
+                {{ reviewStatusLabels[reviewer.status] }}
+              </span>
+            </span>
+          </template>
         </span>
       </div>
       <div v-if="capabilities?.supports_pr_assignee_management" class="metadata-item">

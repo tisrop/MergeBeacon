@@ -1034,12 +1034,22 @@ impl GitPlatform for GiteeAdapter {
 
         let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         let mut reviewers = Vec::new();
+        let mut reviewer_statuses = Vec::new();
         let mut reviewer_logins = std::collections::BTreeSet::new();
         for field in ["assignees", "api_reviewers"] {
             if let Some(users) = json[field].as_array() {
                 for user in users {
                     let mapped = Self::map_user(user);
                     if reviewer_logins.insert(mapped.login.to_lowercase()) {
+                        reviewer_statuses.push(PrReviewerStatus {
+                            user: mapped.clone(),
+                            status: match user["accept"].as_bool() {
+                                Some(true) => PrReviewStatus::Approved,
+                                Some(false) => PrReviewStatus::Pending,
+                                None => PrReviewStatus::Unknown,
+                            },
+                            web_url: sanitize_web_url(&user["html_url"]),
+                        });
                         reviewers.push(mapped);
                     }
                 }
@@ -1057,6 +1067,7 @@ impl GitPlatform for GiteeAdapter {
             base_sha: json["base"]["sha"].as_str().unwrap_or("").to_string(),
             draft: None,
             reviewers,
+            reviewer_statuses,
             assignees: json["testers"]
                 .as_array()
                 .map(|users| users.iter().map(Self::map_user).collect())

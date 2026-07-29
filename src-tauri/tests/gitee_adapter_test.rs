@@ -1,8 +1,8 @@
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
     Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, PrCreatePreviewRequest, PrCreateRequest,
-    PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrState, PrSummary,
-    ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
+    PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrReviewStatus, PrState,
+    PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{gitee::GiteeAdapter, GitPlatform};
 use wiremock::matchers::{body_json, method, path, query_param};
@@ -1761,8 +1761,37 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
             "head": {"ref": "feature", "sha": "head-sha"},
             "base": {"ref": "main", "sha": "base-sha"},
             "mergeable": true,
-            "assignees": [{"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}],
-            "api_reviewers": [{"id": 3, "login": "api-reviewer", "name": "API Reviewer", "avatar_url": ""}],
+            "assignees": [{
+                "id": 2,
+                "login": "reviewer",
+                "name": "Reviewer",
+                "avatar_url": "",
+                "accept": true,
+                "html_url": "https://gitee.com/reviewer"
+            }],
+            "api_reviewers": [
+                {
+                    "id": 3,
+                    "login": "api-reviewer",
+                    "name": "API Reviewer",
+                    "avatar_url": "",
+                    "accept": false,
+                    "html_url": "https://gitee.com/api-reviewer"
+                },
+                {
+                    "id": 5,
+                    "login": "missing-accept",
+                    "name": "Missing Accept",
+                    "avatar_url": ""
+                },
+                {
+                    "id": 6,
+                    "login": "invalid-accept",
+                    "name": "Invalid Accept",
+                    "avatar_url": "",
+                    "accept": "true"
+                }
+            ],
             "testers": [{"id": 4, "login": "tester", "name": "Tester", "avatar_url": ""}],
             "milestone": {"id": 9, "number": 4, "title": "0.6.0"},
             "html_url": "https://gitee.com/octocat/hello-world/pulls/42"
@@ -1780,8 +1809,13 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
     assert_eq!(detail.draft, None);
     assert_eq!(
         detail.reviewers.iter().map(|value| value.login.as_str()).collect::<Vec<_>>(),
-        vec!["reviewer", "api-reviewer"]
+        vec!["reviewer", "api-reviewer", "missing-accept", "invalid-accept"]
     );
+    assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Approved);
+    assert_eq!(detail.reviewer_statuses[1].status, PrReviewStatus::Pending);
+    assert_eq!(detail.reviewer_statuses[2].status, PrReviewStatus::Unknown);
+    assert_eq!(detail.reviewer_statuses[3].status, PrReviewStatus::Unknown);
+    assert_eq!(detail.reviewer_statuses[0].web_url.as_deref(), Some("https://gitee.com/reviewer"));
     assert_eq!(detail.assignees.iter().map(|value| value.login.as_str()).collect::<Vec<_>>(), vec!["tester"]);
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
@@ -2142,6 +2176,7 @@ async fn test_gitee_updates_pull_request_metadata_without_unsupported_fields() {
             name: "".into(),
             avatar_url: "".into(),
         }],
+        reviewer_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(8),
             login: "old-tester".into(),
@@ -2225,6 +2260,7 @@ async fn test_gitee_reports_reviewer_success_when_pull_patch_fails() {
         base_sha: "base".into(),
         draft: None,
         reviewers: Vec::new(),
+        reviewer_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: None,
         metadata_permissions: PrMetadataPermissions::default(),
@@ -2286,6 +2322,7 @@ async fn test_gitee_clears_pull_request_milestone_with_zero_number() {
         base_sha: "base".into(),
         draft: None,
         reviewers: Vec::new(),
+        reviewer_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),

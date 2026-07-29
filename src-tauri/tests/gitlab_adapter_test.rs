@@ -3,7 +3,8 @@ use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
     Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, MergeQueueState, PrCommitTruncatedEnd,
     PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
-    PrMilestone, PrState, PrSummary, ReadinessState, ReviewEvent, ReviewInboxCategory, ReviewInboxRelationship, User,
+    PrMilestone, PrReviewStatus, PrState, PrSummary, ReadinessState, ReviewEvent, ReviewInboxCategory,
+    ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{gitlab::GitLabAdapter, GitPlatform};
 use wiremock::matchers::{body_json, header, method, path, query_param};
@@ -1112,6 +1113,21 @@ async fn test_gitlab_closed_pr_list_omits_live_status_summary() {
 async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/3/approvals"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "approved_by": [{
+                "user": {
+                    "id": 2,
+                    "username": "reviewer",
+                    "name": "Reviewer",
+                    "avatar_url": "",
+                    "web_url": "javascript:alert(1)"
+                }
+            }]
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
         .and(path("/api/v4/projects/group%2Frepo/merge_requests/3"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "iid": 3,
@@ -1130,7 +1146,13 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
             "sha": "head-sha",
             "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"},
             "draft": true,
-            "reviewers": [gitlab_user()],
+            "reviewers": [{
+                "id": 2,
+                "username": "reviewer",
+                "name": "Reviewer",
+                "avatar_url": "",
+                "web_url": "https://git.example.com/reviewer"
+            }],
             "assignees": [{"id": 8, "username": "assignee", "name": "Assignee", "avatar_url": ""}],
             "milestone": {"id": 11, "iid": 2, "title": "0.6.0"},
             "web_url": "https://git.example.com/group/repo/-/merge_requests/3"
@@ -1149,6 +1171,8 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
     assert_eq!(detail.head_repository_full_name.as_deref(), Some("group/repo"));
     assert_eq!(detail.draft, Some(true));
     assert_eq!(detail.reviewers[0].login, "reviewer");
+    assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Approved);
+    assert_eq!(detail.reviewer_statuses[0].web_url.as_deref(), Some("https://git.example.com/reviewer"));
     assert_eq!(detail.assignees[0].login, "assignee");
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
@@ -1173,8 +1197,21 @@ async fn test_gitlab_fork_pr_detail_resolves_source_project_path() {
             "source_project_id": 17,
             "target_project_id": 7,
             "sha": "head-sha",
-            "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"}
+            "diff_refs": {"base_sha": "base-sha", "head_sha": "head-sha"},
+            "reviewers": [{
+                "id": 2,
+                "username": "pending-reviewer",
+                "name": "Pending Reviewer",
+                "avatar_url": "",
+                "web_url": "https://git.example.com/pending-reviewer"
+            }]
         })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/3/approvals"))
+        .respond_with(ResponseTemplate::new(403))
         .expect(1)
         .mount(&mock_server)
         .await;
@@ -1193,6 +1230,8 @@ async fn test_gitlab_fork_pr_detail_resolves_source_project_path() {
 
     assert_eq!(detail.base_repository_full_name.as_deref(), Some("group/repo"));
     assert_eq!(detail.head_repository_full_name.as_deref(), Some("fork-group/fork-repo"));
+    assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Pending);
+    assert_eq!(detail.reviewer_statuses[0].web_url.as_deref(), Some("https://git.example.com/pending-reviewer"));
 }
 
 #[tokio::test]
@@ -2187,6 +2226,7 @@ async fn test_gitlab_updates_merge_request_metadata() {
             name: "".into(),
             avatar_url: "".into(),
         }],
+        reviewer_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(3),
             login: "old-assignee".into(),
@@ -2261,6 +2301,7 @@ async fn test_gitlab_clears_merge_request_milestone_with_zero_id() {
         base_sha: "base".into(),
         draft: Some(false),
         reviewers: Vec::new(),
+        reviewer_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),

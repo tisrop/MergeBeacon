@@ -1352,6 +1352,54 @@ impl GitPlatform for GitHubAdapter {
             status: None,
         };
 
+        let (reviewers, mut reviewer_statuses): (Vec<User>, Vec<PrReviewerStatus>) = json["requested_reviewers"]
+            .as_array()
+            .map(|users| {
+                users
+                    .iter()
+                    .map(|value| {
+                        let user = Self::map_user(value);
+                        let status = PrReviewerStatus {
+                            user: user.clone(),
+                            status: PrReviewStatus::Pending,
+                            web_url: sanitize_web_url(&value["html_url"]),
+                        };
+                        (user, status)
+                    })
+                    .unzip()
+            })
+            .unwrap_or_default();
+        let mut reviewer_positions = reviewer_statuses
+            .iter()
+            .enumerate()
+            .map(|(index, reviewer)| (reviewer.user.login.to_lowercase(), index))
+            .collect::<std::collections::HashMap<_, _>>();
+        let reviews_url = format!("{}/repos/{}/{}/pulls/{}/reviews", self.base_url, owner, repo, pr_number);
+        if let Ok(reviews) = super::collect_json_pages(self, &reviews_url).await {
+            for review in reviews {
+                let user = Self::map_user(&review["user"]);
+                if user.login.is_empty() {
+                    continue;
+                }
+                let status = match review["state"].as_str().unwrap_or("").to_ascii_uppercase().as_str() {
+                    "PENDING" => PrReviewStatus::Pending,
+                    "APPROVED" => PrReviewStatus::Approved,
+                    "CHANGES_REQUESTED" => PrReviewStatus::ChangesRequested,
+                    "COMMENTED" => PrReviewStatus::Commented,
+                    "DISMISSED" => PrReviewStatus::Dismissed,
+                    _ => PrReviewStatus::Unknown,
+                };
+                let web_url =
+                    sanitize_web_url(&review["html_url"]).or_else(|| sanitize_web_url(&review["user"]["html_url"]));
+                let key = user.login.to_lowercase();
+                if let Some(index) = reviewer_positions.get(&key).copied() {
+                    reviewer_statuses[index] = PrReviewerStatus { user, status, web_url };
+                } else {
+                    reviewer_positions.insert(key, reviewer_statuses.len());
+                    reviewer_statuses.push(PrReviewerStatus { user, status, web_url });
+                }
+            }
+        }
         let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
@@ -1364,10 +1412,8 @@ impl GitPlatform for GitHubAdapter {
             head_sha: json["head"]["sha"].as_str().unwrap_or("").to_string(),
             base_sha: json["base"]["sha"].as_str().unwrap_or("").to_string(),
             draft: json["draft"].as_bool(),
-            reviewers: json["requested_reviewers"]
-                .as_array()
-                .map(|users| users.iter().map(Self::map_user).collect())
-                .unwrap_or_default(),
+            reviewers,
+            reviewer_statuses,
             assignees: json["assignees"]
                 .as_array()
                 .map(|users| users.iter().map(Self::map_user).collect())
