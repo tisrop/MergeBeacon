@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import PrStatusSummary from "@/components/pr/PrStatusSummary.vue";
 import type { PrSummary } from "@/types";
+import { labelTagColorClass } from "@/utils/labelColorClass";
 
 defineProps<{
   pr: PrSummary;
@@ -32,7 +33,12 @@ defineEmits<{
         <span>由 {{ pr.author.login }} 更新</span>
         <span>{{ new Date(pr.updated_at).toLocaleDateString("zh-CN") }}</span>
         <span v-if="pr.labels.length" class="pr-labels">
-          <span v-for="label in pr.labels" :key="label" class="label-tag">
+          <span
+            v-for="label in pr.labels"
+            :key="label"
+            class="label-tag"
+            :class="labelTagColorClass(pr.label_colors?.[label])"
+          >
             {{ label }}
           </span>
         </span>

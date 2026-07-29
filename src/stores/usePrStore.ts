@@ -80,6 +80,9 @@ export const usePrStore = defineStore("pr", () => {
   let detailContextKey = "";
 
   function clearContext() {
+    const filtersChanged = filters.value.state !== "open" || filters.value.page !== 1;
+    filters.value.state = "open";
+    filters.value.page = 1;
     listRequestSequence++;
     detailRequestSequence++;
     diffRequestSequence++;
@@ -105,6 +108,7 @@ export const usePrStore = defineStore("pr", () => {
     listTotalCount.value = 0;
     listTruncated.value = false;
     stateCounts.value = { open: 0, closed: 0, merged: 0, all: 0 };
+    return filtersChanged;
   }
 
   function nextPage() {

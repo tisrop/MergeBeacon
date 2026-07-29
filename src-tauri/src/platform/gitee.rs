@@ -692,6 +692,7 @@ impl GiteeAdapter {
                         state: PrState::Open,
                         created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
                         updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
+                        label_colors: Default::default(),
                         labels: pr["labels"]
                             .as_array()
                             .map(|labels| {
@@ -932,6 +933,7 @@ impl GitPlatform for GiteeAdapter {
                     state: pr_state,
                     created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
                     updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
+                    label_colors: Default::default(),
                     labels: pr["labels"]
                         .as_array()
                         .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
@@ -1013,6 +1015,7 @@ impl GitPlatform for GiteeAdapter {
             },
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            label_colors: Default::default(),
             labels: json["labels"]
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())

@@ -896,6 +896,7 @@ impl GitPlatform for GitLabAdapter {
                     state: mr_state,
                     created_at: mr["created_at"].as_str().unwrap_or("").to_string(),
                     updated_at: mr["updated_at"].as_str().unwrap_or("").to_string(),
+                    label_colors: Default::default(),
                     labels: mr["labels"]
                         .as_array()
                         .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
@@ -955,6 +956,7 @@ impl GitPlatform for GitLabAdapter {
                     state: PrState::Open,
                     created_at: mr["created_at"].as_str().unwrap_or("").to_string(),
                     updated_at: mr["updated_at"].as_str().unwrap_or("").to_string(),
+                    label_colors: Default::default(),
                     labels: mr["labels"]
                         .as_array()
                         .map(|labels| labels.iter().filter_map(|label| label.as_str().map(str::to_string)).collect())
@@ -990,6 +992,7 @@ impl GitPlatform for GitLabAdapter {
             },
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
+            label_colors: Default::default(),
             labels: json["labels"]
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())

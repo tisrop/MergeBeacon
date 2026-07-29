@@ -67,6 +67,8 @@ pub struct PrSummary {
     pub created_at: String,
     pub updated_at: String,
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub label_colors: std::collections::BTreeMap<String, String>,
     pub status: Option<PrStatusSummary>,
 }
 
