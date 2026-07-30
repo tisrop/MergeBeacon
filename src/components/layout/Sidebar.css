@@ -304,15 +304,39 @@
   flex-shrink: 0;
 }
 
-.repo-list button {
+.starred-group-icon {
+  color: var(--color-warning);
+}
+
+.repo-item-row {
   display: flex;
   min-height: 32px;
   align-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: none;
+  transition: background-color var(--transition-fast);
+}
+
+.repo-item-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.repo-item-row.active {
+  background: var(--color-primary-light);
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+
+.repo-main-button {
+  display: flex;
+  min-width: 0;
+  min-height: 32px;
+  flex: 1;
+  align-items: center;
   gap: var(--space-1);
-  padding: 5px var(--space-2) 5px var(--space-4);
+  padding: 5px var(--space-1) 5px var(--space-4);
   overflow: hidden;
   border: none;
-  border-radius: var(--radius-md);
   background: none;
   color: var(--color-text);
   font-size: 13px;
@@ -321,7 +345,6 @@
   letter-spacing: normal;
   text-align: left;
   white-space: nowrap;
-  transition: background var(--transition-fast);
 }
 
 .repo-item-name {
@@ -331,19 +354,48 @@
   white-space: nowrap;
 }
 
-.repo-list button:hover {
-  background: var(--color-surface-hover);
-}
-
-.repo-list button.active {
-  background: var(--color-primary-light);
+.repo-item-row.active .repo-main-button {
   color: var(--color-primary);
   font-weight: 600;
-  box-shadow: inset 2px 0 0 var(--color-primary);
 }
 
-.repo-list button.is-fork {
+.repo-main-button.is-fork {
   color: var(--color-text-secondary);
+}
+
+.repo-star-button {
+  display: flex;
+  width: 30px;
+  height: 32px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-tertiary);
+  opacity: 0.72;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.repo-star-button:hover,
+.repo-star-button:focus-visible {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+  opacity: 1;
+}
+
+.repo-star-button.active {
+  color: var(--color-warning);
+  opacity: 1;
+}
+
+.repo-star-button.active svg {
+  fill: currentColor;
 }
 
 .fork-icon {

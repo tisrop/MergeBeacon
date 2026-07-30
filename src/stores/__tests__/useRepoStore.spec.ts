@@ -228,4 +228,38 @@ describe("useRepoStore", () => {
     expect(store.forkContexts.github).toBeNull();
     expect(store.forkContexts.gitee?.forkOwner).toBe("gitee-owner");
   });
+
+  it("按平台持久化星标仓库并支持取消", () => {
+    const store = useRepoStore();
+
+    store.toggleRepoStar("team/project", "github");
+
+    expect(store.isRepoStarred("team/project", "github")).toBe(true);
+    expect(store.isRepoStarred("team/project", "gitlab")).toBe(false);
+    expect(JSON.parse(storage.get("mergebeacon:starred-repos:v1") ?? "{}")).toEqual({
+      github: ["team/project"],
+      gitlab: [],
+      gitee: [],
+    });
+
+    setActivePinia(createPinia());
+    const restoredStore = useRepoStore();
+    expect(restoredStore.isRepoStarred("team/project", "github")).toBe(true);
+
+    restoredStore.toggleRepoStar("team/project", "github");
+    expect(restoredStore.isRepoStarred("team/project", "github")).toBe(false);
+  });
+
+  it("忽略损坏或无效的星标持久化数据", () => {
+    storage.set(
+      "mergebeacon:starred-repos:v1",
+      JSON.stringify({ github: ["valid/repo", "invalid", 42], gitlab: "wrong-shape" }),
+    );
+
+    const store = useRepoStore();
+
+    expect(store.starredReposByPlatform.github).toEqual(["valid/repo"]);
+    expect(store.starredReposByPlatform.gitlab).toEqual([]);
+    expect(store.starredReposByPlatform.gitee).toEqual([]);
+  });
 });
