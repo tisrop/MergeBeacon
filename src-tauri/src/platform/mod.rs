@@ -555,6 +555,22 @@ pub trait GitPlatform: Send + Sync {
         per_page: u32,
     ) -> Result<Paginated<PrSummary>, AppError>;
 
+    async fn search_pull_requests(
+        &self,
+        owner: &str,
+        repo: &str,
+        state: &PrState,
+        query: &PrListQuery,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Paginated<PrSummary>, AppError> {
+        if query.is_default() {
+            self.list_pull_requests(owner, repo, state, page, per_page).await
+        } else {
+            Err(AppError::NotImplemented(format!("{} 暂不支持这些 PR / MR 筛选条件", self.name())))
+        }
+    }
+
     async fn list_review_inbox(
         &self,
         category: &ReviewInboxCategory,

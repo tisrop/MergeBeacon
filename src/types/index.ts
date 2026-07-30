@@ -98,6 +98,24 @@ export interface SupportInfo {
 
 // ── PR ──
 export type PrState = "open" | "closed" | "merged" | "all";
+export type PrReviewFilter = "none" | "required" | "approved" | "changes_requested";
+export type PrListSort =
+  | "best_match"
+  | "updated_desc"
+  | "updated_asc"
+  | "created_desc"
+  | "created_asc"
+  | "comments_desc"
+  | "comments_asc";
+
+export interface PrListQuery {
+  title: string;
+  author: string;
+  label: string;
+  reviews: PrReviewFilter | null;
+  assignee: string;
+  sort: PrListSort;
+}
 
 export interface PrSummary {
   number: number;

@@ -410,6 +410,7 @@ fn build_pr_dependency_graph(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn pr_list(
     state: State<'_, AppState>,
     platform: String,
@@ -418,6 +419,7 @@ pub async fn pr_list(
     state_filter: Option<String>,
     page: Option<u32>,
     per_page: Option<u32>,
+    query: Option<PrListQuery>,
 ) -> CommandResult<Paginated<PrSummary>> {
     let p = build_platform(&platform, &state).map_err(CommandError::from)?;
     let pr_state = match state_filter.as_deref() {
@@ -426,7 +428,22 @@ pub async fn pr_list(
         Some("all") => PrState::All,
         _ => PrState::Open,
     };
-    p.list_pull_requests(&owner, &repo, &pr_state, page.unwrap_or(1), per_page.unwrap_or(20))
+    let mut query = query.unwrap_or_default();
+    for (value, label) in [
+        (&mut query.title, "标题"),
+        (&mut query.author, "作者"),
+        (&mut query.label, "标签"),
+        (&mut query.assignee, "Assignee"),
+    ] {
+        *value = value.trim().to_string();
+        if value.chars().count() > 100 {
+            return Err(format!("{label}筛选值不能超过 100 个字符").into());
+        }
+        if value.chars().any(char::is_control) {
+            return Err(format!("{label}筛选值包含无效字符").into());
+        }
+    }
+    p.search_pull_requests(&owner, &repo, &pr_state, &query, page.unwrap_or(1), per_page.unwrap_or(20))
         .await
         .map_err(CommandError::from)
 }

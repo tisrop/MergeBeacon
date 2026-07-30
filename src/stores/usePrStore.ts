@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type {
   Platform,
   PrSummary,
@@ -12,6 +12,7 @@ import type {
   PrMergeReadiness,
   PrMetadataUpdate,
   PrMetadataUpdateOutcome,
+  PrListQuery,
 } from "@/types";
 import {
   prList,
@@ -32,6 +33,20 @@ import {
 } from "@/utils/commitRange";
 
 const PAGE_SIZES = [10, 20, 50, 100] as const;
+export const DEFAULT_LIST_QUERY: Readonly<Required<PrListQuery>> = {
+  title: "",
+  author: "",
+  label: "",
+  reviews: null,
+  assignee: "",
+  sort: "updated_desc",
+};
+
+export function isDefaultPrListQuery(query: PrListQuery): boolean {
+  return (Object.keys(DEFAULT_LIST_QUERY) as Array<keyof PrListQuery>).every(
+    (field) => query[field] === DEFAULT_LIST_QUERY[field],
+  );
+}
 
 export const usePrStore = defineStore("pr", () => {
   const list = ref<PrSummary[]>([]);
@@ -62,6 +77,8 @@ export const usePrStore = defineStore("pr", () => {
     state: "open",
     page: 1,
   });
+  const listQuery = ref<PrListQuery>({ ...DEFAULT_LIST_QUERY });
+  const hasListQuery = computed(() => !isDefaultPrListQuery(listQuery.value));
   const stateCounts = ref<Record<PrState, number>>({
     open: 0,
     closed: 0,
@@ -80,9 +97,13 @@ export const usePrStore = defineStore("pr", () => {
   let detailContextKey = "";
 
   function clearContext() {
-    const filtersChanged = filters.value.state !== "open" || filters.value.page !== 1;
+    const filtersChanged =
+      filters.value.state !== "open" ||
+      filters.value.page !== 1 ||
+      !isDefaultPrListQuery(listQuery.value);
     filters.value.state = "open";
     filters.value.page = 1;
+    listQuery.value = { ...DEFAULT_LIST_QUERY };
     listRequestSequence++;
     detailRequestSequence++;
     diffRequestSequence++;
@@ -146,14 +167,24 @@ export const usePrStore = defineStore("pr", () => {
     loading.value = true;
     error.value = null;
     try {
-      const result = await prList(
-        platform,
-        owner,
-        repo,
-        filters.value.state,
-        filters.value.page,
-        perPage.value,
-      );
+      const result = hasListQuery.value
+        ? await prList(
+            platform,
+            owner,
+            repo,
+            filters.value.state,
+            filters.value.page,
+            perPage.value,
+            listQuery.value,
+          )
+        : await prList(
+            platform,
+            owner,
+            repo,
+            filters.value.state,
+            filters.value.page,
+            perPage.value,
+          );
       if (sequence !== listRequestSequence) return;
       list.value = result.items;
       totalPages.value = result.total_pages;
@@ -345,6 +376,22 @@ export const usePrStore = defineStore("pr", () => {
     filters.value.page = 1;
   }
 
+  function setListQuery(query: PrListQuery) {
+    listQuery.value = {
+      title: query.title.trim(),
+      author: query.author.trim(),
+      label: query.label.trim(),
+      reviews: query.reviews,
+      assignee: query.assignee.trim(),
+      sort: query.sort,
+    };
+    filters.value.page = 1;
+  }
+
+  function clearListQuery() {
+    setListQuery({ ...DEFAULT_LIST_QUERY });
+  }
+
   async function fetchStateCounts(platform: Platform, owner: string, repo: string) {
     const sequence = ++countsRequestSequence;
     const states: PrState[] = ["open", "closed", "merged", "all"];
@@ -468,6 +515,8 @@ export const usePrStore = defineStore("pr", () => {
     perPage,
     pageSizes: PAGE_SIZES,
     filters,
+    listQuery,
+    hasListQuery,
     nextPage,
     prevPage,
     setPage,
@@ -484,6 +533,8 @@ export const usePrStore = defineStore("pr", () => {
     updateMetadata,
     fetchStateCounts,
     setFilter,
+    setListQuery,
+    clearListQuery,
     mergePr,
     closePr,
     reopenPr,

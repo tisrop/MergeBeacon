@@ -544,28 +544,85 @@ impl GitHubAdapter {
         page: u32,
         per_page: u32,
     ) -> Result<Paginated<PrSummary>, AppError> {
+        let query = PrListQuery { sort: PrListSort::UpdatedDesc, ..Default::default() };
+        self.search_pull_requests_with_query(owner, repo, state, &query, page, per_page).await
+    }
+
+    fn search_value(value: &str) -> String {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('\"', "\\\""))
+    }
+
+    fn search_sort(sort: PrListSort) -> Option<(&'static str, &'static str)> {
+        match sort {
+            PrListSort::BestMatch => None,
+            PrListSort::UpdatedDesc => Some(("updated", "desc")),
+            PrListSort::UpdatedAsc => Some(("updated", "asc")),
+            PrListSort::CreatedDesc => Some(("created", "desc")),
+            PrListSort::CreatedAsc => Some(("created", "asc")),
+            PrListSort::CommentsDesc => Some(("comments", "desc")),
+            PrListSort::CommentsAsc => Some(("comments", "asc")),
+        }
+    }
+
+    fn pull_request_search_query(owner: &str, repo: &str, state: &PrState, filters: &PrListQuery) -> String {
+        let mut qualifiers = vec![format!("repo:{owner}/{repo}"), "is:pr".into()];
+        match state {
+            PrState::Open => qualifiers.push("is:open".into()),
+            PrState::Closed => qualifiers.extend(["is:closed".into(), "is:unmerged".into()]),
+            PrState::Merged => qualifiers.push("is:merged".into()),
+            PrState::All => {}
+        }
+        if !filters.title.is_empty() {
+            qualifiers.push(format!("{} in:title", Self::search_value(&filters.title)));
+        }
+        if !filters.author.is_empty() {
+            qualifiers.push(format!("author:{}", Self::search_value(&filters.author)));
+        }
+        if !filters.label.is_empty() {
+            qualifiers.push(format!("label:{}", Self::search_value(&filters.label)));
+        }
+        if let Some(review) = filters.reviews {
+            let value = match review {
+                PrReviewFilter::None => "none",
+                PrReviewFilter::Required => "required",
+                PrReviewFilter::Approved => "approved",
+                PrReviewFilter::ChangesRequested => "changes_requested",
+            };
+            qualifiers.push(format!("review:{value}"));
+        }
+        if !filters.assignee.is_empty() {
+            qualifiers.push(format!("assignee:{}", Self::search_value(&filters.assignee)));
+        }
+        qualifiers.join(" ")
+    }
+
+    async fn search_pull_requests_with_query(
+        &self,
+        owner: &str,
+        repo: &str,
+        state: &PrState,
+        filters: &PrListQuery,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Paginated<PrSummary>, AppError> {
         const SEARCH_RESULT_LIMIT: u32 = 1_000;
 
         let page = page.max(1);
         let per_page = per_page.clamp(1, 100);
-        let state_qualifier = match state {
-            PrState::Merged => "is:merged",
-            PrState::Closed => "is:closed is:unmerged",
-            _ => return Err(AppError::Unknown("GitHub PR 搜索状态无效".into())),
-        };
         let url = format!("{}/search/issues", self.base_url);
-        let query = format!("repo:{owner}/{repo} is:pr {state_qualifier}");
-        let response = self
+        let query = Self::pull_request_search_query(owner, repo, state, filters);
+        let mut request = self
             .client
             .raw_client()
             .get(&url)
             .header("Authorization", self.auth_header())
             .header("User-Agent", "mergebeacon")
             .header("Accept", "application/vnd.github.v3+json")
-            .query(&[("q", query.as_str()), ("sort", "updated"), ("order", "desc")])
-            .query(&[("page", page), ("per_page", per_page)])
-            .send()
-            .await?;
+            .query(&[("q", query.as_str())]);
+        if let Some((sort, order)) = Self::search_sort(filters.sort) {
+            request = request.query(&[("sort", sort), ("order", order)]);
+        }
+        let response = request.query(&[("page", page), ("per_page", per_page)]).send().await?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -577,28 +634,54 @@ impl GitHubAdapter {
         let reported_total_count = json["total_count"].as_u64().unwrap_or(0);
         let searchable_count = reported_total_count.min(u64::from(SEARCH_RESULT_LIMIT)) as u32;
         let total_count = reported_total_count.min(u64::from(u32::MAX)) as u32;
-        let result_state = if matches!(state, PrState::Merged) { PrState::Merged } else { PrState::Closed };
-        let items = json["items"]
-            .as_array()
-            .ok_or_else(|| AppError::Api("GitHub PR 搜索响应缺少 items".into()))?
+        let raw_items = json["items"].as_array().ok_or_else(|| AppError::Api("GitHub PR 搜索响应缺少 items".into()))?;
+        let node_ids = raw_items
             .iter()
-            .map(|pr| PrSummary {
-                number: pr["number"].as_u64().unwrap_or(0),
-                title: pr["title"].as_str().unwrap_or("").to_string(),
-                author: Self::map_user(&pr["user"]),
-                state: result_state.clone(),
-                created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
-                updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
-                label_colors: Self::map_label_colors(&pr["labels"]),
-                labels: pr["labels"]
-                    .as_array()
-                    .map(|labels| {
-                        labels.iter().filter_map(|label| label["name"].as_str().map(str::to_string)).collect()
-                    })
-                    .unwrap_or_default(),
-                status: None,
+            .filter_map(|pr| Some((pr["number"].as_u64()?, pr["node_id"].as_str()?.to_string())))
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut items = raw_items
+            .iter()
+            .map(|pr| {
+                let merged = matches!(state, PrState::Merged) || pr["pull_request"]["merged_at"].as_str().is_some();
+                let item_state = if merged {
+                    PrState::Merged
+                } else if matches!(state, PrState::Closed) || pr["state"].as_str() == Some("closed") {
+                    PrState::Closed
+                } else {
+                    PrState::Open
+                };
+                PrSummary {
+                    number: pr["number"].as_u64().unwrap_or(0),
+                    title: pr["title"].as_str().unwrap_or("").to_string(),
+                    author: Self::map_user(&pr["user"]),
+                    status: matches!(item_state, PrState::Open).then(PrStatusSummary::default),
+                    state: item_state,
+                    created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
+                    updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
+                    label_colors: Self::map_label_colors(&pr["labels"]),
+                    labels: pr["labels"]
+                        .as_array()
+                        .map(|labels| {
+                            labels.iter().filter_map(|label| label["name"].as_str().map(str::to_string)).collect()
+                        })
+                        .unwrap_or_default(),
+                }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let requested_ids = items
+            .iter()
+            .filter(|pr| matches!(pr.state, PrState::Open))
+            .filter_map(|pr| node_ids.get(&pr.number).cloned())
+            .collect::<Vec<_>>();
+        if !requested_ids.is_empty() {
+            if let Ok(statuses) = self.inbox_statuses(&requested_ids).await {
+                for pr in &mut items {
+                    if let Some(status) = node_ids.get(&pr.number).and_then(|id| statuses.get(id)) {
+                        pr.status = Some(status.status.clone());
+                    }
+                }
+            }
+        }
         let total_pages = searchable_count.div_ceil(per_page).max(1);
 
         Ok(Paginated {
@@ -1046,6 +1129,7 @@ impl GitHubAdapter {
             .ok_or_else(|| AppError::Api(format!("GitHub 仓库中不存在 Milestone：{title}")))
     }
 }
+
 #[async_trait]
 impl super::JsonPageSource for GitHubAdapter {
     async fn fetch_json_page(&self, endpoint: &str, page: u32) -> Result<super::JsonPage, AppError> {
@@ -1181,7 +1265,7 @@ impl GitPlatform for GitHubAdapter {
             other => other.as_str(),
         };
         let url = format!(
-            "{}/repos/{}/{}/pulls?state={}&per_page={}&page={}",
+            "{}/repos/{}/{}/pulls?state={}&sort=updated&direction=desc&per_page={}&page={}",
             self.base_url, owner, repo, api_state, per_page, page
         );
 
@@ -1256,6 +1340,22 @@ impl GitPlatform for GitHubAdapter {
         };
 
         Ok(Paginated { items: prs, page, total_pages: last_page, total_count, truncated: None })
+    }
+
+    async fn search_pull_requests(
+        &self,
+        owner: &str,
+        repo: &str,
+        state: &PrState,
+        query: &PrListQuery,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Paginated<PrSummary>, AppError> {
+        if query.is_default() {
+            self.list_pull_requests(owner, repo, state, page, per_page).await
+        } else {
+            self.search_pull_requests_with_query(owner, repo, state, query, page, per_page).await
+        }
     }
 
     async fn list_review_inbox(
@@ -2851,5 +2951,34 @@ impl GitPlatform for GitHubAdapter {
         let payload = serde_json::json!({ "state": "closed" });
         self.patch_json(&url, &payload).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod pr_search_tests {
+    use super::GitHubAdapter;
+    use crate::models::{PrListQuery, PrListSort, PrReviewFilter, PrState};
+
+    #[test]
+    fn builds_github_qualifiers_for_all_pr_filters() {
+        let query = PrListQuery {
+            title: "fix \"parser\"".into(),
+            author: "octo cat".into(),
+            label: "help wanted".into(),
+            reviews: Some(PrReviewFilter::ChangesRequested),
+            assignee: "hubot".into(),
+            sort: PrListSort::CommentsDesc,
+        };
+
+        assert_eq!(
+            GitHubAdapter::pull_request_search_query("octocat", "hello-world", &PrState::Open, &query),
+            r#"repo:octocat/hello-world is:pr is:open "fix \"parser\"" in:title author:"octo cat" label:"help wanted" review:changes_requested assignee:"hubot""#,
+        );
+    }
+
+    #[test]
+    fn keeps_best_match_sort_unset() {
+        assert_eq!(GitHubAdapter::search_sort(PrListSort::BestMatch), None);
+        assert_eq!(GitHubAdapter::search_sort(PrListSort::UpdatedAsc), Some(("updated", "asc")));
     }
 }

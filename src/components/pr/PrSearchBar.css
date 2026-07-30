@@ -1,0 +1,122 @@
+.pr-search {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.search-primary {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto;
+  align-items: center;
+  min-height: 38px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+.search-primary:focus-within {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+.search-icon {
+  display: inline-flex;
+  margin-left: var(--space-3);
+  color: var(--color-text-tertiary);
+}
+.search-title-input {
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+}
+.search-title-input:focus-visible {
+  outline: 2px solid transparent;
+}
+.search-title-input::placeholder {
+  color: var(--color-text-tertiary);
+}
+.search-submit {
+  min-height: 32px;
+  height: 32px;
+  margin-right: 3px;
+}
+.search-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(112px, 1fr)) minmax(150px, 1fr) minmax(140px, 0.9fr) auto;
+  gap: var(--space-2);
+  align-items: end;
+}
+.filter-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.select-field :deep(.app-select) {
+  min-height: 34px;
+  height: 34px;
+  font-size: 12px;
+}
+.filter-options-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 12px;
+}
+.filter-options-error button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.filter-options-error button:hover {
+  text-decoration: underline;
+}
+.clear-filters {
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.clear-filters:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+@media (max-width: 1120px) {
+  .search-filters {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+  .select-field,
+  .sort-field {
+    grid-row: 2;
+  }
+  .clear-filters {
+    grid-row: 2;
+    justify-self: start;
+  }
+}

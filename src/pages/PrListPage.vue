@@ -4,9 +4,15 @@ import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useRepoStore } from "@/stores/useRepoStore";
 import { usePrStore } from "@/stores/usePrStore";
-import type { Platform } from "@/types";
+import type { Platform, PrListQuery } from "@/types";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import PrFilterBar from "@/components/pr/PrFilterBar.vue";
+import PrSearchBar from "@/components/pr/PrSearchBar.vue";
+import {
+  labelFilterOptions,
+  userFilterOptions,
+  usePrListFilterOptions,
+} from "@/components/pr/usePrListFilterOptions";
 import PrCard from "@/components/pr/PrCard.vue";
 import AppSelect from "@/components/shared/AppSelect.vue";
 
@@ -15,6 +21,7 @@ const route = useRoute();
 const auth = useAuthStore();
 const repo = useRepoStore();
 const pr = usePrStore();
+const listFilterOptions = usePrListFilterOptions();
 let ignoreNextFilterChange = false;
 const createLabel = computed(() => (auth.activePlatform === "gitlab" ? "创建 MR" : "创建 PR"));
 const pageInput = ref("1");
@@ -27,10 +34,34 @@ const canJumpToPage = computed(
     pageJumpTarget.value !== pr.filters.page &&
     !pr.loading,
 );
+const participantCandidates = computed(() => [
+  ...listFilterOptions.participants.value,
+  ...pr.list.map((item) => item.author),
+]);
+const authorOptions = computed(() =>
+  userFilterOptions(participantCandidates.value, pr.listQuery.author),
+);
+const assigneeOptions = computed(() =>
+  userFilterOptions(listFilterOptions.participants.value, pr.listQuery.assignee),
+);
+const repositoryLabelOptions = computed(() =>
+  labelFilterOptions(
+    [
+      ...listFilterOptions.labels.value,
+      ...pr.list.flatMap((item) =>
+        item.labels.map((name) => ({ name, color: null, description: null })),
+      ),
+    ],
+    pr.listQuery.label,
+  ),
+);
 const truncatedListNotice = computed(() => {
   if (!pr.listTruncated) return "";
   if (auth.activePlatform === "github") {
     const total = pr.listTotalCount.toLocaleString("zh-CN");
+    if (pr.hasListQuery) {
+      return `共 ${total} 条符合条件的 Pull Request，仅可浏览前 1,000 条。`;
+    }
     return `共 ${total} 条已关闭或已合并 Pull Request，仅可浏览前 1,000 条。`;
   }
   if (auth.activePlatform === "gitlab") {
@@ -51,6 +82,11 @@ async function fetchPrs() {
   if (!auth.isLoggedIn || !repo.activeRepo) return;
   const { owner, repo: repoName } = repo.activeRepo;
   const platform = auth.activePlatform;
+  if (platform === "github") {
+    void listFilterOptions.load(platform, owner, repoName);
+  } else {
+    listFilterOptions.clear();
+  }
   await pr.fetchPrList(platform, owner, repoName);
   if (!isCurrentRepoContext(platform, owner, repoName)) return;
   await pr.fetchStateCounts(platform, owner, repoName);
@@ -89,6 +125,24 @@ function changePageSize(value: string) {
   pr.setPerPage(Number(value));
 }
 
+function applyListQuery(query: PrListQuery) {
+  pr.setListQuery(query);
+}
+
+function clearListQuery() {
+  pr.clearListQuery();
+}
+
+function retryFilterOptions() {
+  if (!auth.isLoggedIn || !repo.activeRepo) return;
+  void listFilterOptions.load(
+    auth.activePlatform,
+    repo.activeRepo.owner,
+    repo.activeRepo.repo,
+    true,
+  );
+}
+
 onMounted(() => {
   if (auth.isLoggedIn) {
     fetchPrs();
@@ -99,12 +153,14 @@ watch(
   () => auth.isLoggedIn,
   (loggedIn) => {
     if (loggedIn) fetchPrs();
+    else listFilterOptions.clear();
   },
 );
 
 watch(
   () => [auth.activePlatform, repo.activeRepo] as const,
   () => {
+    listFilterOptions.clear();
     if (pr.clearContext()) {
       ignoreNextFilterChange = true;
     }
@@ -112,14 +168,20 @@ watch(
   },
 );
 watch(
-  () => [pr.filters.state, pr.filters.page, pr.perPage] as const,
-  ([state], [previousState]) => {
+  () => ({
+    state: pr.filters.state,
+    page: pr.filters.page,
+    perPage: pr.perPage,
+    query: pr.listQuery,
+  }),
+  ({ state }, { state: previousState }) => {
     if (ignoreNextFilterChange) {
       ignoreNextFilterChange = false;
       return;
     }
     fetchPrPage(state !== previousState);
   },
+  { deep: true },
 );
 watch(
   () => pr.filters.page,
@@ -200,6 +262,19 @@ function onSelectPr(prNumber: number) {
         </template>
       </div>
       <PrFilterBar />
+      <PrSearchBar
+        v-if="auth.activePlatform === 'github'"
+        :query="pr.listQuery"
+        :loading="pr.loading"
+        :options-loading="listFilterOptions.loading.value"
+        :options-error="listFilterOptions.error.value"
+        :author-options="authorOptions"
+        :label-options="repositoryLabelOptions"
+        :assignee-options="assigneeOptions"
+        @apply="applyListQuery"
+        @clear="clearListQuery"
+        @retry-options="retryFilterOptions"
+      />
     </template>
 
     <div v-if="pr.loading" class="loading-skeleton">
@@ -260,7 +335,10 @@ function onSelectPr(prNumber: number) {
         <path d="M6 9v9" />
         <path d="M13 6h3a2 2 0 0 1 2 2v3" />
       </svg>
-      <p>暂无 Pull Request</p>
+      <p>{{ pr.hasListQuery ? "没有符合筛选条件的 Pull Request" : "暂无 Pull Request" }}</p>
+      <button v-if="pr.hasListQuery" class="btn btn-sm" type="button" @click="clearListQuery">
+        清除筛选条件
+      </button>
       <p v-if="repo.activeFullName" class="empty-repo text-secondary font-mono">
         当前仓库：{{ repo.activeFullName }}
       </p>

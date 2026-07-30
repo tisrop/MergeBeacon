@@ -10,7 +10,7 @@ import {
   prMergeReadiness,
   prMetadataUpdate,
 } from "@/api";
-import { usePrStore } from "@/stores/usePrStore";
+import { DEFAULT_LIST_QUERY, isDefaultPrListQuery, usePrStore } from "@/stores/usePrStore";
 import type {
   DiffResult,
   Paginated,
@@ -44,6 +44,20 @@ function deferred<T>() {
 }
 
 describe("usePrStore", () => {
+  it("默认查询判断不依赖字段顺序，并识别非默认字段", () => {
+    const reorderedQuery = {
+      sort: DEFAULT_LIST_QUERY.sort,
+      assignee: DEFAULT_LIST_QUERY.assignee,
+      reviews: DEFAULT_LIST_QUERY.reviews,
+      label: DEFAULT_LIST_QUERY.label,
+      author: DEFAULT_LIST_QUERY.author,
+      title: DEFAULT_LIST_QUERY.title,
+    };
+
+    expect(isDefaultPrListQuery(reorderedQuery)).toBe(true);
+    expect(isDefaultPrListQuery({ ...reorderedQuery, label: "bug" })).toBe(false);
+  });
+
   beforeEach(() => {
     setActivePinia(createPinia());
   });
@@ -171,6 +185,57 @@ describe("usePrStore", () => {
 
     expect(store.filters.state).toBe("merged");
     expect(prList).toHaveBeenLastCalledWith("github", "owner", "repo", "merged", 1, 20);
+  });
+
+  it("应用高级筛选时回到第一页并把完整查询传给后端", async () => {
+    vi.mocked(prList).mockResolvedValue({ items: [], page: 1, total_pages: 1, total_count: 0 });
+    const store = usePrStore();
+    await store.fetchPrList("github", "owner", "repo");
+    store.setPage(1);
+
+    store.setListQuery({
+      title: "  parser  ",
+      author: " octocat ",
+      label: " help wanted ",
+      reviews: "approved",
+      assignee: " hubot ",
+      sort: "comments_desc",
+    });
+    await store.fetchPrList("github", "owner", "repo");
+
+    expect(store.filters.page).toBe(1);
+    expect(prList).toHaveBeenLastCalledWith("github", "owner", "repo", "open", 1, 20, {
+      title: "parser",
+      author: "octocat",
+      label: "help wanted",
+      reviews: "approved",
+      assignee: "hubot",
+      sort: "comments_desc",
+    });
+  });
+
+  it("清空仓库上下文时恢复默认排序且作废筛选请求", () => {
+    const store = usePrStore();
+    store.setListQuery({
+      title: "fix",
+      author: "",
+      label: "",
+      reviews: null,
+      assignee: "",
+      sort: "updated_asc",
+    });
+
+    expect(store.hasListQuery).toBe(true);
+    expect(store.clearContext()).toBe(true);
+    expect(store.listQuery).toEqual({
+      title: "",
+      author: "",
+      label: "",
+      reviews: null,
+      assignee: "",
+      sort: "updated_desc",
+    });
+    expect(store.hasListQuery).toBe(false);
   });
 
   it("详情上下文变化且请求返回 404 时清除旧详情并显示明确提示", async () => {
