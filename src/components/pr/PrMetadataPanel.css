@@ -175,8 +175,6 @@ a.metadata-reviewer:focus-visible {
 
 .metadata-description {
   grid-column: 1 / -1;
-  max-height: 200px;
-  overflow: auto;
   padding-top: var(--space-3);
   border-top: 1px solid var(--color-border-light);
   overflow-wrap: anywhere;
@@ -390,8 +388,6 @@ a.metadata-reviewer:focus-visible {
 
 .metadata-description-preview {
   min-height: 116px;
-  max-height: 260px;
-  overflow: auto;
   padding: var(--space-2) var(--space-3);
   overflow-wrap: anywhere;
   border: 1px solid var(--color-border);
