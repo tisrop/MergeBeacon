@@ -84,7 +84,7 @@ describe("Sidebar", () => {
     expect(wrapper.find(".repo-section").exists()).toBe(true);
     expect(wrapper.get('[aria-label="PR 收件箱"]').attributes("title")).toBe("PR 收件箱");
     expect(wrapper.get('[aria-label="拉取请求（PR）"]').attributes("title")).toBe("拉取请求（PR）");
-    expect(wrapper.get('[aria-label="创建 PR"]').attributes("title")).toBe("创建 PR");
+    expect(wrapper.find('[aria-label="创建 PR"]').exists()).toBe(false);
     expect(wrapper.get('[aria-label="Issues"]').attributes("title")).toBe("Issues");
     expect(wrapper.find('[aria-label="设置"]').exists()).toBe(false);
     expect(wrapper.get(".compact-platform").attributes("aria-label")).toBe("当前平台：GitHub");

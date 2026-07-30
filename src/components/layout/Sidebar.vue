@@ -101,7 +101,6 @@ const activePlatformShortLabel = computed(() => {
   const labels: Record<Platform, string> = { github: "GH", gitlab: "GL", gitee: "GE" };
   return labels[auth.activePlatform];
 });
-const createLabel = computed(() => (auth.activePlatform === "gitlab" ? "创建 MR" : "创建 PR"));
 const isSidebarCollapsed = computed(
   () => props.compactSidebar || (props.isDiffFocusMode && !uiSettings.isDiffSidebarExpanded),
 );
@@ -340,27 +339,6 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
           <path d="M13 6h3a2 2 0 0 1 2 2v3" />
         </svg>
         <span class="nav-label">Pull Requests</span>
-      </router-link>
-      <router-link
-        :to="`/pr/new/${auth.activePlatform}`"
-        :class="{ active: route.name === 'pr-new' }"
-        :aria-label="createLabel"
-        :title="isSidebarCollapsed ? createLabel : undefined"
-      >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        <span class="nav-label">{{ createLabel }}</span>
       </router-link>
       <router-link
         to="/issue"
