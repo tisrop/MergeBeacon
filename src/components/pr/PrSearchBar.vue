@@ -1,22 +1,23 @@
 <script setup lang="ts">
-import { toRef } from "vue";
-import type { PrListQuery } from "@/types";
+import { computed, toRef } from "vue";
+import type { Platform, PrListQuery } from "@/types";
 import AppSelect from "@/components/shared/AppSelect.vue";
+import type { SelectOption } from "@/components/shared/selectOptions";
 import { usePrSearchBar } from "./usePrSearchBar";
-
-type FilterOption = { value: string; label: string };
 
 const props = withDefaults(
   defineProps<{
     query: PrListQuery;
+    platform?: Platform;
     loading?: boolean;
     optionsLoading?: boolean;
     optionsError?: string | null;
-    authorOptions?: FilterOption[];
-    labelOptions?: FilterOption[];
-    assigneeOptions?: FilterOption[];
+    authorOptions?: SelectOption[];
+    labelOptions?: SelectOption[];
+    assigneeOptions?: SelectOption[];
   }>(),
   {
+    platform: "github",
     optionsError: null,
     authorOptions: () => [],
     labelOptions: () => [],
@@ -24,13 +25,17 @@ const props = withDefaults(
   },
 );
 const emit = defineEmits<{ apply: [query: PrListQuery]; clear: []; retryOptions: [] }>();
-const reviewOptions = [
+const reviewOptions = computed<SelectOption[]>(() => [
   { value: "", label: "所有评审状态" },
   { value: "none", label: "无评审" },
   { value: "required", label: "需要评审" },
   { value: "approved", label: "已批准" },
-  { value: "changes_requested", label: "要求更改" },
-];
+  {
+    value: "changes_requested",
+    label: props.platform === "gitee" ? "要求更改（Gitee 不支持）" : "要求更改",
+    disabled: props.platform === "gitee",
+  },
+]);
 const sortOptions = [
   { value: "best_match", label: "最佳匹配" },
   { value: "updated_desc", label: "最近更新" },
@@ -40,7 +45,7 @@ const sortOptions = [
   { value: "comments_desc", label: "评论最多" },
   { value: "comments_asc", label: "评论最少" },
 ];
-const withAllOption = (label: string, options: FilterOption[]) => [
+const withAllOption = (label: string, options: SelectOption[]) => [
   { value: "", label },
   ...options,
 ];

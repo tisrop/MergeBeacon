@@ -559,6 +559,110 @@ impl GitLabAdapter {
         ReviewInboxStatusSummary { status, draft, has_conflicts, checks_status, approvals_status, blocking_reasons }
     }
 
+    fn map_merge_request_summary(mr: &Value) -> PrSummary {
+        let state = mr["state"].as_str().unwrap_or("");
+        let mr_state = match (state, mr["merged_at"].is_null()) {
+            ("merged", _) | (_, false) => PrState::Merged,
+            ("closed", _) => PrState::Closed,
+            _ => PrState::Open,
+        };
+        PrSummary {
+            number: mr["iid"].as_u64().unwrap_or(0),
+            title: mr["title"].as_str().unwrap_or("").to_string(),
+            author: Self::map_user(&mr["author"]),
+            status: matches!(mr_state, PrState::Open).then(|| Self::inbox_status(mr)),
+            state: mr_state,
+            created_at: mr["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: mr["updated_at"].as_str().unwrap_or("").to_string(),
+            label_colors: Default::default(),
+            labels: mr["labels"]
+                .as_array()
+                .map(|labels| labels.iter().filter_map(|label| label.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+        }
+    }
+
+    fn merge_request_matches_query(mr: &Value, query: &PrListQuery) -> bool {
+        let matches_login = |user: &Value, expected: &str| {
+            user["username"].as_str().is_some_and(|login| login.eq_ignore_ascii_case(expected))
+        };
+        let matches_user_list = |field: &str, expected: &str| {
+            mr[field].as_array().is_some_and(|users| users.iter().any(|user| matches_login(user, expected)))
+        };
+        let title_matches = query.title.is_empty()
+            || mr["title"].as_str().is_some_and(|title| title.to_lowercase().contains(&query.title.to_lowercase()));
+        let author_matches = query.author.is_empty() || matches_login(&mr["author"], &query.author);
+        let label_matches = query.label.is_empty()
+            || mr["labels"].as_array().is_some_and(|labels| {
+                labels.iter().filter_map(Value::as_str).any(|label| label.eq_ignore_ascii_case(&query.label))
+            });
+        let assignee_matches = query.assignee.is_empty() || matches_user_list("assignees", &query.assignee);
+        let review_matches = match query.reviews {
+            None => true,
+            Some(PrReviewFilter::None) => mr["reviewers"].as_array().is_none_or(Vec::is_empty),
+            Some(PrReviewFilter::Required) => {
+                let merge_status =
+                    mr["detailed_merge_status"].as_str().or_else(|| mr["merge_status"].as_str()).unwrap_or("");
+                mr["reviewers"].as_array().is_some_and(|reviewers| !reviewers.is_empty())
+                    && !matches!(merge_status, "mergeable" | "can_be_merged" | "requested_changes")
+            }
+            Some(PrReviewFilter::Approved) => {
+                let merge_status =
+                    mr["detailed_merge_status"].as_str().or_else(|| mr["merge_status"].as_str()).unwrap_or("");
+                mr["reviewers"].as_array().is_some_and(|reviewers| !reviewers.is_empty())
+                    && matches!(merge_status, "mergeable" | "can_be_merged")
+            }
+            Some(PrReviewFilter::ChangesRequested) => {
+                mr["detailed_merge_status"].as_str().or_else(|| mr["merge_status"].as_str())
+                    == Some("requested_changes")
+            }
+        };
+
+        title_matches && author_matches && label_matches && assignee_matches && review_matches
+    }
+
+    fn sort_merge_request_results(items: &mut [Value], sort: PrListSort) {
+        let string_field = |item: &Value, field: &str| item[field].as_str().unwrap_or("").to_string();
+        match sort {
+            PrListSort::BestMatch => {
+                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
+            }
+            PrListSort::UpdatedDesc => {
+                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
+            }
+            PrListSort::UpdatedAsc => items.sort_by_key(|item| string_field(item, "updated_at")),
+            PrListSort::CreatedDesc => {
+                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "created_at")));
+            }
+            PrListSort::CreatedAsc => items.sort_by_key(|item| string_field(item, "created_at")),
+            PrListSort::CommentsDesc => {
+                items.sort_by_key(|item| std::cmp::Reverse(item["user_notes_count"].as_u64().unwrap_or(0)));
+            }
+            PrListSort::CommentsAsc => {
+                items.sort_by_key(|item| item["user_notes_count"].as_u64().unwrap_or(0));
+            }
+        }
+    }
+
+    fn sort_merge_request_best_matches(items: &mut [Value], title: &str) {
+        if title.is_empty() {
+            Self::sort_merge_request_results(items, PrListSort::UpdatedDesc);
+            return;
+        }
+        let expected = title.to_lowercase();
+        items.sort_by_key(|item| {
+            let candidate = item["title"].as_str().unwrap_or("").to_lowercase();
+            let score = if candidate == expected {
+                2
+            } else if candidate.starts_with(&expected) {
+                1
+            } else {
+                0
+            };
+            std::cmp::Reverse((score, item["updated_at"].as_str().unwrap_or("").to_string()))
+        });
+    }
+
     /// 把 GitLab commit 对象映射为统一提交摘要。
     ///
     /// 提交列表、单提交详情和 compare 响应中的 commit 结构一致，`fallback_sha` 只在缺少 `id` 时兜底。
@@ -879,33 +983,121 @@ impl GitPlatform for GitLabAdapter {
 
         let items: Vec<Value> = resp.json().await?;
 
-        let mrs: Vec<PrSummary> = items
-            .iter()
-            .map(|mr| {
-                let state = mr["state"].as_str().unwrap_or("");
-                let mr_state = match (state, mr["merged_at"].is_null()) {
-                    ("merged", _) | (_, false) => PrState::Merged,
-                    ("closed", _) => PrState::Closed,
-                    _ => PrState::Open,
-                };
-                PrSummary {
-                    number: mr["iid"].as_u64().unwrap_or(0),
-                    title: mr["title"].as_str().unwrap_or("").to_string(),
-                    author: Self::map_user(&mr["author"]),
-                    status: matches!(mr_state, PrState::Open).then(|| Self::inbox_status(mr)),
-                    state: mr_state,
-                    created_at: mr["created_at"].as_str().unwrap_or("").to_string(),
-                    updated_at: mr["updated_at"].as_str().unwrap_or("").to_string(),
-                    label_colors: Default::default(),
-                    labels: mr["labels"]
-                        .as_array()
-                        .map(|arr| arr.iter().filter_map(|l| l.as_str().map(String::from)).collect())
-                        .unwrap_or_default(),
-                }
-            })
-            .collect();
+        let mrs = items.iter().map(Self::map_merge_request_summary).collect();
 
         Ok(Paginated { items: mrs, page, total_pages, total_count, truncated: None })
+    }
+
+    async fn search_pull_requests(
+        &self,
+        owner: &str,
+        repo: &str,
+        state: &PrState,
+        query: &PrListQuery,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Paginated<PrSummary>, AppError> {
+        const SEARCH_RESULT_LIMIT: usize = 1_000;
+        const REMOTE_PAGE_SIZE: u32 = 100;
+
+        if query.is_default() {
+            return self.list_pull_requests(owner, repo, state, page, per_page).await;
+        }
+
+        let project_id = urlencoding(owner, repo);
+        let state_param = match state {
+            PrState::All => "all",
+            PrState::Merged => "merged",
+            PrState::Closed => "closed",
+            PrState::Open => "opened",
+        };
+        let url = format!("{}/projects/{project_id}/merge_requests", self.base_url);
+        let mut remote_page = 1_u32;
+        let mut candidates = Vec::new();
+        let mut truncated = false;
+
+        loop {
+            let mut params = vec![
+                ("state", state_param.to_string()),
+                ("page", remote_page.to_string()),
+                ("per_page", REMOTE_PAGE_SIZE.to_string()),
+            ];
+            if !query.title.is_empty() {
+                params.push(("search", query.title.clone()));
+                params.push(("in", "title".into()));
+            }
+            if !query.author.is_empty() {
+                params.push(("author_username", query.author.clone()));
+            }
+            if !query.assignee.is_empty() {
+                params.push(("assignee_username", query.assignee.clone()));
+            }
+            if !query.label.is_empty() {
+                params.push(("labels", query.label.clone()));
+            }
+            match query.sort {
+                PrListSort::UpdatedDesc | PrListSort::UpdatedAsc => params.push(("order_by", "updated_at".into())),
+                PrListSort::CreatedDesc | PrListSort::CreatedAsc => params.push(("order_by", "created_at".into())),
+                PrListSort::BestMatch | PrListSort::CommentsDesc | PrListSort::CommentsAsc => {}
+            }
+            match query.sort {
+                PrListSort::UpdatedAsc | PrListSort::CreatedAsc | PrListSort::CommentsAsc => {
+                    params.push(("sort", "asc".into()));
+                }
+                PrListSort::BestMatch
+                | PrListSort::UpdatedDesc
+                | PrListSort::CreatedDesc
+                | PrListSort::CommentsDesc => params.push(("sort", "desc".into())),
+            }
+
+            let response = self
+                .client
+                .raw_client()
+                .get(&url)
+                .header("PRIVATE-TOKEN", &self.token)
+                .header("User-Agent", "mergebeacon")
+                .query(&params)
+                .send()
+                .await?;
+            let status = response.status();
+            let total_pages = response
+                .headers()
+                .get("x-total-pages")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u32>().ok());
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                return Err(AppError::Api(format!("GitLab API {status} ({url}): {body}")));
+            }
+            let remote_items: Vec<Value> = response.json().await?;
+            let fetched = remote_items.len();
+            candidates.extend(remote_items);
+            if candidates.len() >= SEARCH_RESULT_LIMIT {
+                candidates.truncate(SEARCH_RESULT_LIMIT);
+                truncated = total_pages.is_none_or(|total| remote_page < total) || fetched == REMOTE_PAGE_SIZE as usize;
+                break;
+            }
+            if total_pages.map_or(fetched < REMOTE_PAGE_SIZE as usize, |total| remote_page >= total) {
+                break;
+            }
+            remote_page = remote_page.saturating_add(1);
+        }
+
+        candidates.retain(|mr| Self::merge_request_matches_query(mr, query));
+        if query.sort == PrListSort::BestMatch {
+            Self::sort_merge_request_best_matches(&mut candidates, &query.title);
+        } else {
+            Self::sort_merge_request_results(&mut candidates, query.sort);
+        }
+        let total_count = candidates.len() as u32;
+        let per_page = per_page.clamp(1, 100);
+        let page = page.max(1);
+        let total_pages = total_count.div_ceil(per_page).max(1);
+        let start = page.saturating_sub(1).saturating_mul(per_page) as usize;
+        let items =
+            candidates.iter().skip(start).take(per_page as usize).map(Self::map_merge_request_summary).collect();
+
+        Ok(Paginated { items, page, total_pages, total_count, truncated: truncated.then_some(true) })
     }
 
     async fn list_review_inbox(

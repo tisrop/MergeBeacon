@@ -168,13 +168,14 @@ describe("PrListPage 截断提示", () => {
     mocks.listFilterOptions.clear.mockReset();
   });
 
-  it.each(["gitlab", "gitee"] as const)("%s 不加载 GitHub 专用筛选选项", async (platform) => {
+  it.each(["github", "gitlab", "gitee"] as const)("%s 加载平台对应的筛选选项", async (platform) => {
     mocks.authStore.isLoggedIn = true;
-    mountPage(platform);
+    const wrapper = mountPage(platform);
     await flushPromises();
 
-    expect(mocks.listFilterOptions.load).not.toHaveBeenCalled();
-    expect(mocks.listFilterOptions.clear).toHaveBeenCalled();
+    expect(wrapper.find(".pr-search-stub").exists()).toBe(true);
+    expect(mocks.listFilterOptions.load).toHaveBeenCalledWith(platform, "team", "repo");
+    expect(mocks.listFilterOptions.clear).not.toHaveBeenCalled();
   });
 
   it("GitHub 提示真实总数和可浏览上限", () => {

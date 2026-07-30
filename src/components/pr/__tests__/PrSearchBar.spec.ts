@@ -39,4 +39,18 @@ describe("PrSearchBar", () => {
     expect(wrapper.findAll(".app-select")).toHaveLength(5);
     expect(wrapper.findAll('.search-filters input[type="text"]')).toHaveLength(0);
   });
+
+  it("Gitee 明确禁用不支持的要求更改筛选", async () => {
+    const wrapper = mount(PrSearchBar, {
+      props: { platform: "gitee", query: query() },
+    });
+
+    await wrapper.get('[aria-label="评审状态筛选"]').trigger("click");
+
+    const option = wrapper.get<HTMLButtonElement>(
+      '.dropdown-option[data-value="changes_requested"]',
+    );
+    expect(option.text()).toBe("要求更改（Gitee 不支持）");
+    expect(option.element.disabled).toBe(true);
+  });
 });

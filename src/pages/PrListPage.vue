@@ -82,11 +82,7 @@ async function fetchPrs() {
   if (!auth.isLoggedIn || !repo.activeRepo) return;
   const { owner, repo: repoName } = repo.activeRepo;
   const platform = auth.activePlatform;
-  if (platform === "github") {
-    void listFilterOptions.load(platform, owner, repoName);
-  } else {
-    listFilterOptions.clear();
-  }
+  void listFilterOptions.load(platform, owner, repoName);
   await pr.fetchPrList(platform, owner, repoName);
   if (!isCurrentRepoContext(platform, owner, repoName)) return;
   await pr.fetchStateCounts(platform, owner, repoName);
@@ -263,7 +259,7 @@ function onSelectPr(prNumber: number) {
       </div>
       <PrFilterBar />
       <PrSearchBar
-        v-if="auth.activePlatform === 'github'"
+        :platform="auth.activePlatform"
         :query="pr.listQuery"
         :loading="pr.loading"
         :options-loading="listFilterOptions.loading.value"
