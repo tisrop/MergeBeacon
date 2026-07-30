@@ -43,6 +43,22 @@ function markdownLink(label, repository, tag, asset) {
   return `[${label}](${assetUrl(repository, tag, asset)})`;
 }
 
+function downloadBadge(repository, tag, asset, label = "downloads") {
+  const [owner, name] = repository.split("/");
+  const badgeUrl = [
+    "https://img.shields.io/github/downloads",
+    encodeURIComponent(owner),
+    encodeURIComponent(name),
+    encodeURIComponent(tag),
+    encodeURIComponent(asset.name),
+  ].join("/");
+  return `![${label}](${badgeUrl}?label=${encodeURIComponent(label)}&cacheSeconds=300)`;
+}
+
+function downloadLink(label, repository, tag, asset, countLabel = "downloads") {
+  return `${markdownLink(label, repository, tag, asset)} ${downloadBadge(repository, tag, asset, countLabel)}`;
+}
+
 function stripExistingGuide(body) {
   const start = body.indexOf(GUIDE_START);
   const end = body.indexOf(GUIDE_END);
@@ -89,22 +105,39 @@ export function buildReleaseDownloadGuide({ body, assets, repository, tag }) {
   const linuxDeb = optionalUniqueAsset(assets, "Linux DEB", (name) => /\.deb$/i.test(name));
   const linuxRpm = optionalUniqueAsset(assets, "Linux RPM", (name) => /\.rpm$/i.test(name));
 
-  const linuxLinks = [markdownLink("AppImage", repository, tag, linuxAppImage)];
-  if (linuxDeb) linuxLinks.push(markdownLink("Debian / Ubuntu (.deb)", repository, tag, linuxDeb));
-  if (linuxRpm) linuxLinks.push(markdownLink("Fedora / RPM (.rpm)", repository, tag, linuxRpm));
+  const macArmUpdater = uniqueAsset(assets, "macOS Apple Silicon updater", (name) =>
+    /(?:aarch64|arm64)\.app\.tar\.gz$/i.test(name),
+  );
+  const macIntelUpdater = uniqueAsset(assets, "macOS Intel updater", (name) =>
+    /(?:x64|x86_64)\.app\.tar\.gz$/i.test(name),
+  );
+
+  const linuxLinks = [downloadLink("AppImage", repository, tag, linuxAppImage, "manual + in-app")];
+  if (linuxDeb) {
+    linuxLinks.push(downloadLink("Debian / Ubuntu (.deb)", repository, tag, linuxDeb));
+  }
+  if (linuxRpm) {
+    linuxLinks.push(downloadLink("Fedora / RPM (.rpm)", repository, tag, linuxRpm));
+  }
 
   const guide = [
     GUIDE_START,
     "**Download based on your device:**",
     "",
-    `- **macOS (Apple Silicon / arm64):** ${markdownLink("Download DMG", repository, tag, macArm)}`,
-    `- **macOS (Intel / x64):** ${markdownLink("Download DMG", repository, tag, macIntel)}`,
+    `- **macOS (Apple Silicon / arm64):** ${downloadLink("Download DMG", repository, tag, macArm)}`,
+    `- **macOS (Intel / x64):** ${downloadLink("Download DMG", repository, tag, macIntel)}`,
     `- **Windows (64-bit):** ${[
-      markdownLink("MSI installer", repository, tag, windowsMsi),
-      markdownLink("EXE installer", repository, tag, windowsExe),
-      markdownLink("Portable ZIP", repository, tag, windowsPortable),
+      downloadLink("MSI installer", repository, tag, windowsMsi, "manual + in-app"),
+      downloadLink("EXE installer", repository, tag, windowsExe, "manual + in-app"),
+      downloadLink("Portable ZIP", repository, tag, windowsPortable, "manual + app update"),
     ].join(" · ")}`,
     `- **Linux (64-bit):** ${linuxLinks.join(" · ")}`,
+    "",
+    "**In-app updater downloads:**",
+    "",
+    `- **macOS:** Apple Silicon ${downloadBadge(repository, tag, macArmUpdater, "in-app")} · Intel ${downloadBadge(repository, tag, macIntelUpdater, "in-app")}`,
+    "",
+    '_Counts come from GitHub Release assets and may be cached for up to 5 minutes. Badges marked "manual + in-app" include downloads started by the app updater. Update checks (`latest.json`) are excluded._',
     GUIDE_END,
   ].join("\n");
 
