@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
     Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, MergeQueueState, PrCommitTruncatedEnd,
@@ -1805,6 +1807,62 @@ async fn test_github_list_repos_with_fork() {
     assert!(!normal.fork, "should not be a fork");
     assert_eq!(normal.parent_full_name, None);
     assert_eq!(normal.parent_owner, None);
+}
+
+#[tokio::test]
+async fn test_github_list_repos_fetches_missing_fork_parents_concurrently() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/user/repos"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "id": 1,
+                "name": "first",
+                "full_name": "me/first",
+                "private": false,
+                "fork": true,
+                "description": "",
+                "owner": { "login": "me", "type": "User" }
+            },
+            {
+                "id": 2,
+                "name": "second",
+                "full_name": "me/second",
+                "private": false,
+                "fork": true,
+                "description": "",
+                "owner": { "login": "me", "type": "User" }
+            }
+        ])))
+        .mount(&mock_server)
+        .await;
+
+    for (repo, parent) in [("first", "upstream/first"), ("second", "upstream/second")] {
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/me/{repo}")))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(400)).set_body_json(
+                serde_json::json!({
+                    "parent": {
+                        "full_name": parent,
+                        "owner": { "login": "upstream" }
+                    }
+                }),
+            ))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+    }
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let started_at = Instant::now();
+    let result = adapter.list_repos(1).await.expect("should list repos");
+
+    assert!(started_at.elapsed() < Duration::from_millis(700), "fork detail requests should run concurrently");
+    assert_eq!(result.items[0].parent_full_name.as_deref(), Some("upstream/first"));
+    assert_eq!(result.items[1].parent_full_name.as_deref(), Some("upstream/second"));
+    assert_eq!(result.items[0].parent_owner.as_deref(), Some("upstream"));
+    assert_eq!(result.items[1].parent_owner.as_deref(), Some("upstream"));
 }
 
 #[tokio::test]

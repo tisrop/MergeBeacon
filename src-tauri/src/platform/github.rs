@@ -150,8 +150,7 @@ impl GitHubAdapter {
     }
 
     /// Fetch org/enterprise display names via `/orgs/{login}`.
-    /// Updates `owner_display_name` in place for org repos.
-    async fn resolve_org_display_names(&self, repos: &mut [RepoSummary]) {
+    async fn fetch_org_display_names(&self, repos: &[RepoSummary]) -> std::collections::HashMap<String, String> {
         let orgs: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
             repos
@@ -161,48 +160,61 @@ impl GitHubAdapter {
                 .collect()
         };
         if orgs.is_empty() {
-            return;
+            return std::collections::HashMap::new();
         }
 
         let auth = self.auth_header();
         let client = self.client.clone();
         let base = self.base_url.clone();
 
-        let futs: Vec<_> = orgs
-            .into_iter()
-            .map(|login| {
-                let url = format!("{}/orgs/{}", base, login);
-                let c = client.clone();
-                let a = auth.clone();
-                tokio::spawn(async move {
-                    let resp = c
-                        .get(&url)
-                        .header("Authorization", &a)
-                        .header("User-Agent", "mergebeacon")
-                        .header("Accept", "application/vnd.github.v3+json")
-                        .send()
-                        .await
-                        .ok()?;
-                    let json: serde_json::Value = resp.json().await.ok()?;
-                    let name = json["name"].as_str()?.to_string();
-                    Some((login, name))
-                })
-            })
+        stream::iter(orgs.into_iter().map(|login| {
+            let url = format!("{}/orgs/{}", base, login);
+            let c = client.clone();
+            let a = auth.clone();
+            async move {
+                let resp = c
+                    .get(&url)
+                    .header("Authorization", &a)
+                    .header("User-Agent", "mergebeacon")
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .send()
+                    .await
+                    .ok()?;
+                let json: serde_json::Value = resp.json().await.ok()?;
+                let name = json["name"].as_str()?.to_string();
+                Some((login, name))
+            }
+        }))
+        .buffer_unordered(8)
+        .filter_map(|result| async move { result })
+        .collect()
+        .await
+    }
+
+    async fn fetch_missing_fork_parents(
+        &self,
+        repos: &[RepoSummary],
+    ) -> std::collections::HashMap<String, (Option<String>, Option<String>)> {
+        let missing: Vec<String> = repos
+            .iter()
+            .filter(|repo| repo.fork && (repo.parent_full_name.is_none() || repo.parent_owner.is_none()))
+            .map(|repo| repo.full_name.clone())
             .collect();
+        let base = self.base_url.clone();
 
-        let results = futures::future::join_all(futs).await;
-        let mut name_map = std::collections::HashMap::new();
-        for r in results {
-            if let Ok(Some((login, name))) = r {
-                name_map.insert(login, name);
+        stream::iter(missing.into_iter().map(|full_name| {
+            let url = format!("{}/repos/{}", base, full_name);
+            async move {
+                let detail = self.get_json::<Value>(&url).await.ok()?;
+                let parent_full_name = detail["parent"]["full_name"].as_str().map(str::to_string);
+                let parent_owner = detail["parent"]["owner"]["login"].as_str().map(str::to_string);
+                Some((full_name, (parent_full_name, parent_owner)))
             }
-        }
-
-        for r in repos.iter_mut() {
-            if let Some(name) = name_map.get(&r.owner) {
-                r.owner_display_name = name.clone();
-            }
-        }
+        }))
+        .buffer_unordered(8)
+        .filter_map(|result| async move { result })
+        .collect()
+        .await
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, AppError> {
@@ -1108,22 +1120,10 @@ impl GitPlatform for GitHubAdapter {
             let parts: Vec<&str> = full_name.splitn(2, '/').collect();
             let fork = r["fork"].as_bool().unwrap_or(false);
             let (parent_full_name, parent_owner) = if fork {
-                let mut pn = r["parent"]["full_name"].as_str().map(|s| s.to_string());
-                let mut po = r["parent"]["owner"]["login"].as_str().map(|s| s.to_string());
-                eprintln!("[mergebeacon] fork repo: {} parent_full_name={:?} parent_owner={:?}", full_name, pn, po);
-                // Fallback: fetch repo detail if parent info missing from list endpoint
-                if pn.is_none() || po.is_none() {
-                    let detail_url = format!("{}/repos/{}", self.base_url, full_name);
-                    if let Ok(detail) = self.get_json::<Value>(&detail_url).await {
-                        pn = detail["parent"]["full_name"].as_str().map(|s| s.to_string());
-                        po = detail["parent"]["owner"]["login"].as_str().map(|s| s.to_string());
-                        eprintln!(
-                            "[mergebeacon] fork repo fallback: {} parent_full_name={:?} parent_owner={:?}",
-                            full_name, pn, po
-                        );
-                    }
-                }
-                (pn, po)
+                (
+                    r["parent"]["full_name"].as_str().map(str::to_string),
+                    r["parent"]["owner"]["login"].as_str().map(str::to_string),
+                )
             } else {
                 (None, None)
             };
@@ -1144,8 +1144,21 @@ impl GitPlatform for GitHubAdapter {
             });
         }
 
-        // Fetch org display names from API
-        self.resolve_org_display_names(&mut repos).await;
+        let (fork_parents, org_names) =
+            tokio::join!(self.fetch_missing_fork_parents(&repos), self.fetch_org_display_names(&repos),);
+        for repo in &mut repos {
+            if let Some((parent_full_name, parent_owner)) = fork_parents.get(&repo.full_name) {
+                if repo.parent_full_name.is_none() {
+                    repo.parent_full_name.clone_from(parent_full_name);
+                }
+                if repo.parent_owner.is_none() {
+                    repo.parent_owner.clone_from(parent_owner);
+                }
+            }
+            if let Some(display_name) = org_names.get(&repo.owner) {
+                repo.owner_display_name.clone_from(display_name);
+            }
+        }
 
         Ok(Paginated { items: repos, page, total_pages, total_count, truncated: None })
     }
