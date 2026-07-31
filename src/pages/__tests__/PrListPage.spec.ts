@@ -47,6 +47,15 @@ const mocks = vi.hoisted(() => ({
     perPage: 20,
     pageSizes: [10, 20, 50, 100],
     filters: { state: "closed", page: 1 },
+    listQuery: {
+      title: "",
+      author: "",
+      label: "",
+      reviews: null,
+      assignee: "",
+      sort: "updated_desc",
+    },
+    hasListQuery: false,
     stateCounts: { open: 1, closed: 1, merged: 0, all: 2 },
     fetchStateCounts: vi.fn(),
     fetchPrList: vi.fn(),
@@ -56,6 +65,16 @@ const mocks = vi.hoisted(() => ({
     setPage: vi.fn(),
     setFilter: vi.fn(),
     setPerPage: vi.fn(),
+    setListQuery: vi.fn(),
+    clearListQuery: vi.fn(),
+  },
+  listFilterOptions: {
+    participants: { value: [] },
+    labels: { value: [] },
+    loading: { value: false },
+    error: { value: null },
+    load: vi.fn(),
+    clear: vi.fn(),
   },
 }));
 
@@ -71,6 +90,11 @@ vi.mock("vue-router", () => ({
 vi.mock("@/stores/useAuthStore", () => ({ useAuthStore: () => mocks.authStore }));
 vi.mock("@/stores/useRepoStore", () => ({ useRepoStore: () => reactiveRepoStore }));
 vi.mock("@/stores/usePrStore", () => ({ usePrStore: () => reactivePrStore }));
+vi.mock("@/components/pr/usePrListFilterOptions", () => ({
+  usePrListFilterOptions: () => mocks.listFilterOptions,
+  userFilterOptions: () => [],
+  labelFilterOptions: () => [],
+}));
 
 function mountPage(platform: Platform) {
   mocks.authStore.activePlatform = platform;
@@ -99,6 +123,7 @@ function mountPage(platform: Platform) {
       stubs: {
         AppLayout: { template: "<main><slot name='header' /><slot /></main>" },
         PrCard: { template: "<article />" },
+        PrSearchBar: { template: "<form class='pr-search-stub' />" },
         AppSelect: {
           template:
             "<button class=\"page-size-select\" @click=\"$emit('update:modelValue', '50')\" />",
@@ -122,6 +147,14 @@ describe("PrListPage 截断提示", () => {
     mocks.prStore.filters.state = "closed";
     mocks.prStore.filters.page = 1;
     mocks.prStore.perPage = 20;
+    mocks.prStore.listQuery = {
+      title: "",
+      author: "",
+      label: "",
+      reviews: null,
+      assignee: "",
+      sort: "updated_desc",
+    };
     mocks.prStore.fetchPrList.mockReset();
     mocks.prStore.fetchStateCounts.mockReset();
     mocks.prStore.clearContext.mockReset();
@@ -131,6 +164,18 @@ describe("PrListPage 截断提示", () => {
     mocks.prStore.prevPage.mockReset();
     mocks.prStore.nextPage.mockReset();
     mocks.prStore.setPerPage.mockReset();
+    mocks.listFilterOptions.load.mockReset();
+    mocks.listFilterOptions.clear.mockReset();
+  });
+
+  it.each(["github", "gitlab", "gitee"] as const)("%s 加载平台对应的筛选选项", async (platform) => {
+    mocks.authStore.isLoggedIn = true;
+    const wrapper = mountPage(platform);
+    await flushPromises();
+
+    expect(wrapper.find(".pr-search-stub").exists()).toBe(true);
+    expect(mocks.listFilterOptions.load).toHaveBeenCalledWith(platform, "team", "repo");
+    expect(mocks.listFilterOptions.clear).not.toHaveBeenCalled();
   });
 
   it("GitHub 提示真实总数和可浏览上限", () => {
@@ -196,6 +241,24 @@ describe("PrListPage 截断提示", () => {
 
     expect(mocks.prStore.setFilter).toHaveBeenCalledWith("open");
     expect(mocks.prStore.filters.page).toBe(1);
+    expect(mocks.prStore.fetchPrList).toHaveBeenCalledWith("github", "team", "repo");
+    expect(mocks.prStore.fetchStateCounts).not.toHaveBeenCalled();
+  });
+
+  it("查询对象变化后刷新列表且不刷新状态计数", async () => {
+    mocks.authStore.isLoggedIn = true;
+    mountPage("github");
+    await flushPromises();
+    mocks.prStore.fetchPrList.mockClear();
+    mocks.prStore.fetchStateCounts.mockClear();
+
+    reactivePrStore.listQuery = {
+      ...reactivePrStore.listQuery,
+      label: "bug",
+    };
+    await flushPromises();
+
+    expect(mocks.prStore.fetchPrList).toHaveBeenCalledOnce();
     expect(mocks.prStore.fetchPrList).toHaveBeenCalledWith("github", "team", "repo");
     expect(mocks.prStore.fetchStateCounts).not.toHaveBeenCalled();
   });

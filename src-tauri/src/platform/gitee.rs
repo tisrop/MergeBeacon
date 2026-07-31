@@ -309,6 +309,121 @@ impl GiteeAdapter {
         ReviewInboxStatusSummary { status, draft, has_conflicts, checks_status, approvals_status, blocking_reasons }
     }
 
+    fn map_pull_request_summary(pr: &Value) -> PrSummary {
+        let state = pr["state"].as_str().unwrap_or("");
+        let merged = !pr["merged_at"].is_null() || state == "merged";
+        let pr_state = if merged {
+            PrState::Merged
+        } else if state == "closed" {
+            PrState::Closed
+        } else {
+            PrState::Open
+        };
+        PrSummary {
+            number: pr["number"].as_u64().unwrap_or(0),
+            title: pr["title"].as_str().unwrap_or("").to_string(),
+            author: Self::map_user(&pr["user"]),
+            status: matches!(pr_state, PrState::Open).then(|| Self::inbox_status(pr)),
+            state: pr_state,
+            created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
+            label_colors: Self::map_label_colors(&pr["labels"]),
+            labels: pr["labels"]
+                .as_array()
+                .map(|labels| labels.iter().filter_map(|label| label["name"].as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+        }
+    }
+
+    fn pull_request_matches_query(pr: &Value, state: &PrState, query: &PrListQuery) -> bool {
+        let matches_login = |user: &Value, expected: &str| {
+            user["login"].as_str().is_some_and(|login| login.eq_ignore_ascii_case(expected))
+        };
+        let matches_user_list = |field: &str, expected: &str| {
+            pr[field].as_array().is_some_and(|users| users.iter().any(|user| matches_login(user, expected)))
+        };
+        let mapped_state = Self::map_pull_request_summary(pr).state;
+        let state_matches = match state {
+            PrState::All => true,
+            PrState::Open => matches!(mapped_state, PrState::Open),
+            PrState::Closed => matches!(mapped_state, PrState::Closed),
+            PrState::Merged => matches!(mapped_state, PrState::Merged),
+        };
+        let title_matches = query.title.is_empty()
+            || pr["title"].as_str().is_some_and(|title| title.to_lowercase().contains(&query.title.to_lowercase()));
+        let author_matches = query.author.is_empty() || matches_login(&pr["user"], &query.author);
+        let label_matches = query.label.is_empty()
+            || pr["labels"].as_array().is_some_and(|labels| {
+                labels
+                    .iter()
+                    .any(|label| label["name"].as_str().is_some_and(|name| name.eq_ignore_ascii_case(&query.label)))
+            });
+        let assignee_matches = query.assignee.is_empty()
+            || matches_user_list("testers", &query.assignee)
+            || matches_user_list("assignees", &query.assignee);
+        let review_progress = Self::inbox_acceptance_progress(
+            pr,
+            &[("assignees_number", "assignees"), ("api_reviewers_number", "api_reviewers")],
+        );
+        let review_matches = match query.reviews {
+            None => true,
+            Some(PrReviewFilter::None) => review_progress == (Some(0), Some(0)),
+            Some(PrReviewFilter::Required) => matches!(
+                review_progress,
+                (Some(required), Some(received)) if required > 0 && received < required
+            ),
+            Some(PrReviewFilter::Approved) => matches!(
+                review_progress,
+                (Some(required), Some(received)) if required > 0 && received >= required
+            ),
+            Some(PrReviewFilter::ChangesRequested) => false,
+        };
+
+        state_matches && title_matches && author_matches && label_matches && assignee_matches && review_matches
+    }
+
+    fn sort_pull_request_results(items: &mut [Value], sort: PrListSort) {
+        let string_field = |item: &Value, field: &str| item[field].as_str().unwrap_or("").to_string();
+        let comments_count =
+            |item: &Value| item["comments_count"].as_u64().or_else(|| item["comments"].as_u64()).unwrap_or(0);
+        match sort {
+            PrListSort::BestMatch => {
+                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
+            }
+            PrListSort::UpdatedDesc => {
+                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
+            }
+            PrListSort::UpdatedAsc => items.sort_by_key(|item| string_field(item, "updated_at")),
+            PrListSort::CreatedDesc => {
+                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "created_at")));
+            }
+            PrListSort::CreatedAsc => items.sort_by_key(|item| string_field(item, "created_at")),
+            PrListSort::CommentsDesc => {
+                items.sort_by_key(|item| std::cmp::Reverse(comments_count(item)));
+            }
+            PrListSort::CommentsAsc => items.sort_by_key(comments_count),
+        }
+    }
+
+    fn sort_pull_request_best_matches(items: &mut [Value], title: &str) {
+        if title.is_empty() {
+            Self::sort_pull_request_results(items, PrListSort::UpdatedDesc);
+            return;
+        }
+        let expected = title.to_lowercase();
+        items.sort_by_key(|item| {
+            let candidate = item["title"].as_str().unwrap_or("").to_lowercase();
+            let score = if candidate == expected {
+                2
+            } else if candidate.starts_with(&expected) {
+                1
+            } else {
+                0
+            };
+            std::cmp::Reverse((score, item["updated_at"].as_str().unwrap_or("").to_string()))
+        });
+    }
+
     fn inbox_relationship(filter_name: &str) -> ReviewInboxRelationship {
         match filter_name {
             "assignee" => ReviewInboxRelationship::Reviewer,
@@ -922,34 +1037,7 @@ impl GitPlatform for GiteeAdapter {
 
         let items: Vec<Value> = resp.json().await?;
 
-        let all_prs: Vec<PrSummary> = items
-            .iter()
-            .map(|pr| {
-                let state_str = pr["state"].as_str().unwrap_or("");
-                let merged = !pr["merged_at"].is_null();
-                let pr_state = if merged || state_str == "merged" {
-                    PrState::Merged
-                } else if state_str == "closed" {
-                    PrState::Closed
-                } else {
-                    PrState::Open
-                };
-                PrSummary {
-                    number: pr["number"].as_u64().unwrap_or(0),
-                    title: pr["title"].as_str().unwrap_or("").to_string(),
-                    author: Self::map_user(&pr["user"]),
-                    status: matches!(pr_state, PrState::Open).then(|| Self::inbox_status(pr)),
-                    state: pr_state,
-                    created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
-                    updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
-                    label_colors: Default::default(),
-                    labels: pr["labels"]
-                        .as_array()
-                        .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
-                        .unwrap_or_default(),
-                }
-            })
-            .collect();
+        let all_prs: Vec<PrSummary> = items.iter().map(Self::map_pull_request_summary).collect();
 
         let prs: Vec<PrSummary> = match state {
             PrState::Merged => all_prs.into_iter().filter(|p| matches!(p.state, PrState::Merged)).collect(),
@@ -968,6 +1056,85 @@ impl GitPlatform for GiteeAdapter {
         };
 
         Ok(Paginated { items: prs, page, total_pages: last_page, total_count, truncated: None })
+    }
+
+    async fn search_pull_requests(
+        &self,
+        owner: &str,
+        repo: &str,
+        state: &PrState,
+        query: &PrListQuery,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Paginated<PrSummary>, AppError> {
+        const SEARCH_RESULT_LIMIT: usize = 1_000;
+        const REMOTE_PAGE_SIZE: u32 = 100;
+
+        if query.is_default() {
+            return self.list_pull_requests(owner, repo, state, page, per_page).await;
+        }
+
+        let url = format!("{}/repos/{owner}/{repo}/pulls", self.base_url);
+        let remote_state = match state {
+            PrState::Closed | PrState::Merged | PrState::All => "all",
+            PrState::Open => "open",
+        };
+        let mut remote_page = 1_u32;
+        let mut candidates = Vec::new();
+        let mut truncated = false;
+
+        loop {
+            let params = [
+                ("state", remote_state.to_string()),
+                ("page", remote_page.to_string()),
+                ("per_page", REMOTE_PAGE_SIZE.to_string()),
+                ("access_token", self.token.clone()),
+            ];
+            let response = self.client.get(&url).header("User-Agent", "mergebeacon").query(&params).send().await?;
+            let status = response.status();
+            let total_pages = response
+                .headers()
+                .get("total_page")
+                .or_else(|| response.headers().get("x-total-pages"))
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u32>().ok());
+            let link = response.headers().get("link").and_then(|value| value.to_str().ok()).map(str::to_string);
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                return Err(AppError::Api(format!("Gitee API {status} ({url}): {body}")));
+            }
+            let remote_items: Vec<Value> = response.json().await?;
+            let fetched = remote_items.len();
+            candidates.extend(remote_items);
+            if candidates.len() >= SEARCH_RESULT_LIMIT {
+                candidates.truncate(SEARCH_RESULT_LIMIT);
+                let link_pages = Self::parse_last_page_gitee(link.as_deref(), remote_page);
+                truncated = total_pages.map_or(link_pages > remote_page, |total| remote_page < total)
+                    || fetched == REMOTE_PAGE_SIZE as usize;
+                break;
+            }
+            let pagination_known = total_pages.is_some() || link.is_some();
+            let last_page = total_pages.unwrap_or_else(|| Self::parse_last_page_gitee(link.as_deref(), remote_page));
+            if fetched < REMOTE_PAGE_SIZE as usize || (pagination_known && remote_page >= last_page) {
+                break;
+            }
+            remote_page = remote_page.saturating_add(1);
+        }
+
+        candidates.retain(|pr| Self::pull_request_matches_query(pr, state, query));
+        if query.sort == PrListSort::BestMatch {
+            Self::sort_pull_request_best_matches(&mut candidates, &query.title);
+        } else {
+            Self::sort_pull_request_results(&mut candidates, query.sort);
+        }
+        let total_count = candidates.len() as u32;
+        let per_page = per_page.clamp(1, 100);
+        let page = page.max(1);
+        let total_pages = total_count.div_ceil(per_page).max(1);
+        let start = page.saturating_sub(1).saturating_mul(per_page) as usize;
+        let items = candidates.iter().skip(start).take(per_page as usize).map(Self::map_pull_request_summary).collect();
+
+        Ok(Paginated { items, page, total_pages, total_count, truncated: truncated.then_some(true) })
     }
 
     async fn list_review_inbox(

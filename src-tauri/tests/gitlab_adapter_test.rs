@@ -2,9 +2,9 @@ use mergebeacon_lib::error::AppError;
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
     Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, MergeQueueState, PrCommitTruncatedEnd,
-    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
-    PrMilestone, PrReviewStatus, PrState, PrSummary, ReadinessState, ReviewEvent, ReviewInboxCategory,
-    ReviewInboxRelationship, User,
+    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrListQuery, PrListSort, PrMetadataField, PrMetadataPermissions,
+    PrMetadataUpdate, PrMilestone, PrReviewFilter, PrReviewStatus, PrState, PrSummary, ReadinessState, ReviewEvent,
+    ReviewInboxCategory, ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{gitlab::GitLabAdapter, GitPlatform};
 use wiremock::matchers::{body_json, header, method, path, query_param};
@@ -1107,6 +1107,104 @@ async fn test_gitlab_closed_pr_list_omits_live_status_summary() {
         .expect("should list closed merge requests");
 
     assert!(result.items[0].status.is_none());
+}
+
+#[tokio::test]
+async fn test_gitlab_searches_filters_sorts_and_paginates_merge_requests() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Fsubgroup%2Frepo/merge_requests"))
+        .and(query_param("state", "opened"))
+        .and(query_param("search", "fix"))
+        .and(query_param("in", "title"))
+        .and(query_param("author_username", "alice"))
+        .and(query_param("assignee_username", "bob"))
+        .and(query_param("labels", "bug"))
+        .and(query_param("sort", "desc"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "100"))
+        .respond_with(ResponseTemplate::new(200).insert_header("x-total-pages", "1").set_body_json(serde_json::json!([
+            {
+                "iid": 11,
+                "title": "Fix first bug",
+                "author": {
+                    "id": 1,
+                    "username": "alice",
+                    "name": "Alice",
+                    "avatar_url": ""
+                },
+                "assignees": [{ "username": "bob" }],
+                "reviewers": [{ "username": "reviewer" }],
+                "state": "opened",
+                "merged_at": null,
+                "created_at": "2026-07-20T10:00:00Z",
+                "updated_at": "2026-07-21T10:00:00Z",
+                "labels": ["bug"],
+                "detailed_merge_status": "mergeable",
+                "user_notes_count": 3
+            },
+            {
+                "iid": 12,
+                "title": "Fix second bug",
+                "author": {
+                    "id": 1,
+                    "username": "alice",
+                    "name": "Alice",
+                    "avatar_url": ""
+                },
+                "assignees": [{ "username": "bob" }],
+                "reviewers": [{ "username": "reviewer" }],
+                "state": "opened",
+                "merged_at": null,
+                "created_at": "2026-07-22T10:00:00Z",
+                "updated_at": "2026-07-23T10:00:00Z",
+                "labels": ["bug"],
+                "detailed_merge_status": "can_be_merged",
+                "user_notes_count": 9
+            },
+            {
+                "iid": 13,
+                "title": "Fix pending bug",
+                "author": {
+                    "id": 1,
+                    "username": "alice",
+                    "name": "Alice",
+                    "avatar_url": ""
+                },
+                "assignees": [{ "username": "bob" }],
+                "reviewers": [{ "username": "reviewer" }],
+                "state": "opened",
+                "merged_at": null,
+                "created_at": "2026-07-24T10:00:00Z",
+                "updated_at": "2026-07-25T10:00:00Z",
+                "labels": ["bug"],
+                "detailed_merge_status": "not_approved",
+                "user_notes_count": 20
+            }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".into()).with_base_url(mock_server.uri());
+    let query = PrListQuery {
+        title: "fix".into(),
+        author: "alice".into(),
+        label: "bug".into(),
+        reviews: Some(PrReviewFilter::Approved),
+        assignee: "bob".into(),
+        sort: PrListSort::CommentsDesc,
+    };
+    let result = adapter
+        .search_pull_requests("group/subgroup", "repo", &PrState::Open, &query, 1, 1)
+        .await
+        .expect("should search merge requests");
+
+    assert_eq!(result.total_count, 2);
+    assert_eq!(result.total_pages, 2);
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].number, 12);
+    assert_eq!(result.truncated, None);
 }
 
 #[tokio::test]

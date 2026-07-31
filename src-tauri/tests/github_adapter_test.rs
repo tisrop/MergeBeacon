@@ -1,9 +1,11 @@
+use std::time::{Duration, Instant};
+
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
     Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, MergeQueueState, PrCommitTruncatedEnd,
-    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate,
-    PrMilestone, PrReviewStatus, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship,
-    User,
+    PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrListQuery, PrListSort, PrMetadataField, PrMetadataPermissions,
+    PrMetadataUpdate, PrMilestone, PrReviewFilter, PrReviewStatus, PrState, PrSummary, ReadinessState,
+    ReviewInboxCategory, ReviewInboxRelationship, User,
 };
 use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
 use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
@@ -614,6 +616,52 @@ async fn test_github_list_prs() {
     let graphql = requests.iter().find(|request| request.url.path() == "/graphql").expect("GraphQL request");
     let body: serde_json::Value = serde_json::from_slice(&graphql.body).expect("GraphQL JSON body");
     assert_eq!(body["variables"]["ids"], serde_json::json!(["PR_node_42"]));
+}
+
+#[tokio::test]
+async fn test_github_search_prs_uses_filters_sort_and_server_pagination() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search/issues"))
+        .and(query_param(
+            "q",
+            r#"repo:octocat/hello-world is:pr is:open "parser fix" in:title author:"dev one" label:"help wanted" review:approved assignee:"hubot""#,
+        ))
+        .and(query_param("sort", "comments"))
+        .and(query_param("order", "desc"))
+        .and(query_param("page", "2"))
+        .and(query_param("per_page", "20"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "total_count": 45,
+            "items": []
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".into()).with_base_url(mock_server.uri());
+
+    let result = adapter
+        .search_pull_requests(
+            "octocat",
+            "hello-world",
+            &PrState::Open,
+            &PrListQuery {
+                title: "parser fix".into(),
+                author: "dev one".into(),
+                label: "help wanted".into(),
+                reviews: Some(PrReviewFilter::Approved),
+                assignee: "hubot".into(),
+                sort: PrListSort::CommentsDesc,
+            },
+            2,
+            20,
+        )
+        .await
+        .expect("should search PRs");
+
+    assert_eq!(result.page, 2);
+    assert_eq!(result.total_pages, 3);
+    assert_eq!(result.total_count, 45);
 }
 
 #[tokio::test]
@@ -1805,6 +1853,62 @@ async fn test_github_list_repos_with_fork() {
     assert!(!normal.fork, "should not be a fork");
     assert_eq!(normal.parent_full_name, None);
     assert_eq!(normal.parent_owner, None);
+}
+
+#[tokio::test]
+async fn test_github_list_repos_fetches_missing_fork_parents_concurrently() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/user/repos"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "id": 1,
+                "name": "first",
+                "full_name": "me/first",
+                "private": false,
+                "fork": true,
+                "description": "",
+                "owner": { "login": "me", "type": "User" }
+            },
+            {
+                "id": 2,
+                "name": "second",
+                "full_name": "me/second",
+                "private": false,
+                "fork": true,
+                "description": "",
+                "owner": { "login": "me", "type": "User" }
+            }
+        ])))
+        .mount(&mock_server)
+        .await;
+
+    for (repo, parent) in [("first", "upstream/first"), ("second", "upstream/second")] {
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/me/{repo}")))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(400)).set_body_json(
+                serde_json::json!({
+                    "parent": {
+                        "full_name": parent,
+                        "owner": { "login": "upstream" }
+                    }
+                }),
+            ))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+    }
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let started_at = Instant::now();
+    let result = adapter.list_repos(1).await.expect("should list repos");
+
+    assert!(started_at.elapsed() < Duration::from_millis(700), "fork detail requests should run concurrently");
+    assert_eq!(result.items[0].parent_full_name.as_deref(), Some("upstream/first"));
+    assert_eq!(result.items[1].parent_full_name.as_deref(), Some("upstream/second"));
+    assert_eq!(result.items[0].parent_owner.as_deref(), Some("upstream"));
+    assert_eq!(result.items[1].parent_owner.as_deref(), Some("upstream"));
 }
 
 #[tokio::test]

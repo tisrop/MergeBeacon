@@ -1,4 +1,5 @@
-import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
+import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from "@vue/test-utils";
+import { reactive } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
 import type {
@@ -116,6 +117,8 @@ vi.mock("@/api", () => ({
   openExternalUrl: mocks.openExternalUrl,
 }));
 
+mocks.uiSettingsStore = reactive(mocks.uiSettingsStore);
+
 enableAutoUnmount(afterEach);
 
 const author: User = {
@@ -192,6 +195,12 @@ function mountPage(stubs: Record<string, unknown> = {}) {
       },
     },
   });
+}
+
+async function selectTab(wrapper: VueWrapper, label: string): Promise<void> {
+  const button = wrapper.findAll(".tabs button").find((item) => item.text() === label);
+  expect(button).toBeDefined();
+  await button!.trigger("click");
 }
 
 describe("PrDetailPage 关闭权限", () => {
@@ -402,6 +411,7 @@ describe("PrDetailPage 关闭权限", () => {
       mocks.capabilityStore.values.github.supports_remote_file_viewed_state = true;
 
       const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await selectTab(wrapper, "Diff");
       await flushPromises();
 
       const viewer = wrapper.get('[data-testid="diff-viewer"]');
@@ -426,6 +436,7 @@ describe("PrDetailPage 关闭权限", () => {
       mocks.capabilityStore.values.github.supports_remote_file_viewed_state = true;
 
       const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await selectTab(wrapper, "Diff");
       await flushPromises();
 
       const viewer = wrapper.get('[data-testid="diff-viewer"]');
@@ -445,6 +456,7 @@ describe("PrDetailPage 关闭权限", () => {
       };
 
       const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await selectTab(wrapper, "Diff");
       await flushPromises();
       wrapper
         .findComponent({ name: "DiffCommitSelector" })
@@ -476,6 +488,7 @@ describe("PrDetailPage 关闭权限", () => {
       mocks.prStore.rangeDiffError = "无法确定所选提交的对比基准，请改用整体 Diff。";
 
       const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await selectTab(wrapper, "Diff");
       await flushPromises();
 
       expect(wrapper.text()).toContain("无法确定所选提交的对比基准");
@@ -490,6 +503,7 @@ describe("PrDetailPage 关闭权限", () => {
       mocks.prStore.rangeDiffLoading = true;
 
       const wrapper = mountPage({ DiffViewer: diffViewerStub });
+      await selectTab(wrapper, "Diff");
       await flushPromises();
 
       expect(wrapper.get(".commit-scope-status").text()).toContain("正在读取");
@@ -516,7 +530,7 @@ describe("PrDetailPage 关闭权限", () => {
     });
   });
 
-  it("将 fork PR 的 base 和 head 仓库分别传给 DiffViewer", () => {
+  it("将 fork PR 的 base 和 head 仓库分别传给 DiffViewer", async () => {
     mocks.prStore.currentPr = {
       ...detail,
       base_repository_full_name: "t8y2/dbx",
@@ -528,11 +542,12 @@ describe("PrDetailPage 关闭权限", () => {
         template: `<span data-testid="diff-repositories">{{ baseOwner }}/{{ baseRepo }}|{{ headOwner }}/{{ headRepo }}</span>`,
       },
     });
+    await selectTab(wrapper, "Diff");
 
     expect(wrapper.get('[data-testid="diff-repositories"]').text()).toBe("t8y2/dbx|eryajf/dbx");
   });
 
-  it("源仓库不可解析时不将 DiffViewer 的 head 回退到目标仓库", () => {
+  it("源仓库不可解析时不将 DiffViewer 的 head 回退到目标仓库", async () => {
     mocks.prStore.currentPr = {
       ...detail,
       base_repository_full_name: "t8y2/dbx",
@@ -544,11 +559,12 @@ describe("PrDetailPage 关闭权限", () => {
         template: `<span data-testid="diff-repositories">{{ baseOwner }}/{{ baseRepo }}|{{ headOwner ?? "none" }}/{{ headRepo ?? "none" }}</span>`,
       },
     });
+    await selectTab(wrapper, "Diff");
 
     expect(wrapper.get('[data-testid="diff-repositories"]').text()).toBe("t8y2/dbx|none/none");
   });
 
-  it("源仓库路径格式非法时不将 DiffViewer 的 head 回退到目标仓库", () => {
+  it("源仓库路径格式非法时不将 DiffViewer 的 head 回退到目标仓库", async () => {
     mocks.prStore.currentPr = {
       ...detail,
       base_repository_full_name: "t8y2/dbx",
@@ -560,6 +576,7 @@ describe("PrDetailPage 关闭权限", () => {
         template: `<span data-testid="diff-repositories">{{ baseOwner }}/{{ baseRepo }}|{{ headOwner ?? "none" }}/{{ headRepo ?? "none" }}</span>`,
       },
     });
+    await selectTab(wrapper, "Diff");
 
     expect(wrapper.get('[data-testid="diff-repositories"]').text()).toBe("t8y2/dbx|none/none");
   });
@@ -694,15 +711,38 @@ describe("PrDetailPage 关闭权限", () => {
     );
   });
 
-  it("按 Diff、依赖关系、评审意见和 AI 评审排列页签", () => {
+  it("按评审意见、依赖关系、Diff 和 AI 评审排列页签", () => {
     const wrapper = mountPage();
 
     expect(wrapper.findAll(".tabs button").map((button) => button.text())).toEqual([
-      "Diff",
-      "依赖关系",
       "评审意见",
+      "依赖关系",
+      "Diff",
       "AI 评审",
     ]);
+  });
+
+  it("默认展示评审意见，并按元数据、意见列表的顺序排列", async () => {
+    const wrapper = mountPage({
+      PrMetadataPanel: { template: '<section data-testid="pr-metadata" />' },
+      ReviewList: { template: '<section data-testid="review-list" />' },
+    });
+    const reviewsTab = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text() === "评审意见");
+    const diffTab = wrapper.findAll(".tabs button").find((button) => button.text() === "Diff");
+
+    const reviewContent = wrapper.get('[data-testid="pr-metadata"]').element.parentElement!;
+    const reviewChildren = Array.from(reviewContent.children);
+    expect(reviewsTab!.classes()).toContain("active");
+    expect(reviewContent.getAttribute("style") ?? "").not.toContain("display: none");
+    expect(reviewChildren.indexOf(wrapper.get('[data-testid="pr-metadata"]').element)).toBeLessThan(
+      reviewChildren.indexOf(wrapper.get('[data-testid="review-list"]').element),
+    );
+
+    await diffTab!.trigger("click");
+
+    expect(reviewContent.getAttribute("style")).toContain("display: none");
   });
 
   it("依赖关系页签按需挂载且切换后保留状态", async () => {
@@ -761,6 +801,20 @@ describe("PrDetailPage 关闭权限", () => {
     expect(wrapper.find('[data-testid="merge-queue-panel"]').exists()).toBe(false);
   });
 
+  it("查看依赖关系时关闭该功能会回到评审意见", async () => {
+    const wrapper = mountPage();
+
+    await selectTab(wrapper, "依赖关系");
+    mocks.uiSettingsStore.isPrDependenciesVisible = false;
+    await flushPromises();
+
+    const reviewsTab = wrapper
+      .findAll(".tabs button")
+      .find((button) => button.text() === "评审意见");
+    expect(reviewsTab?.classes()).toContain("active");
+    expect(wrapper.get('[data-testid="app-layout"]').attributes("data-focus-mode")).toBe("false");
+  });
+
   it("可以仅展示分支依赖而不挂载 Merge Queue 面板", async () => {
     mocks.uiSettingsStore.isMergeQueueVisible = false;
     const wrapper = mountPage({
@@ -786,8 +840,8 @@ describe("PrDetailPage 关闭权限", () => {
     });
 
     expect(wrapper.findAll(".tabs button").map((button) => button.text())).toEqual([
-      "Diff",
       "评审意见",
+      "Diff",
       "AI 评审",
     ]);
     expect(wrapper.find('[data-testid="dependency-panel"]').exists()).toBe(false);
@@ -951,6 +1005,7 @@ describe("PrDetailPage 关闭权限", () => {
       },
     });
 
+    await selectTab(wrapper, "Diff");
     await wrapper.get('[data-testid="add-left-comment"]').trigger("click");
     await flushPromises();
     expect(mocks.reviewCommentAdd).toHaveBeenLastCalledWith(
@@ -987,14 +1042,12 @@ describe("PrDetailPage 关闭权限", () => {
   it("仅在 Diff 标签启用侧栏专注模式", async () => {
     const wrapper = mountPage();
 
-    expect(wrapper.get('[data-testid="app-layout"]').attributes("data-focus-mode")).toBe("true");
-    const reviewsTab = wrapper
-      .findAll(".tabs button")
-      .find((button) => button.text() === "评审意见");
-    expect(reviewsTab).toBeDefined();
-    await reviewsTab!.trigger("click");
-
     expect(wrapper.get('[data-testid="app-layout"]').attributes("data-focus-mode")).toBe("false");
+    const diffTab = wrapper.findAll(".tabs button").find((button) => button.text() === "Diff");
+    expect(diffTab).toBeDefined();
+    await diffTab!.trigger("click");
+
+    expect(wrapper.get('[data-testid="app-layout"]').attributes("data-focus-mode")).toBe("true");
   });
   it("保存元数据后同步详情列表和已加载收件箱摘要", async () => {
     const updatedDetail: PrDetail = {

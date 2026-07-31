@@ -19,6 +19,7 @@ function releaseAssets() {
     asset("MergeBeacon_0.10.0_amd64.deb"),
     asset("MergeBeacon_0.10.0-1.x86_64.rpm"),
     asset("MergeBeacon_0.10.0_aarch64.app.tar.gz"),
+    asset("MergeBeacon_0.10.0_x64.app.tar.gz"),
     asset("latest.json"),
   ];
 }
@@ -50,7 +51,7 @@ describe("Release 下载引导", () => {
     expect(() => parseArguments(["release.json"])).toThrow("命令参数无效：release.json");
   });
 
-  it("按设备生成安装包直链，并排除 updater 专用资源", () => {
+  it("按设备生成安装包直链，并区分手动下载与应用内更新统计", () => {
     const body = buildReleaseDownloadGuide({
       body: "## What's Changed\n\n- 新功能",
       assets: releaseAssets(),
@@ -69,8 +70,16 @@ describe("Release 下载引导", () => {
     expect(body).toContain("AppImage");
     expect(body).toContain("Debian / Ubuntu (.deb)");
     expect(body).toContain("Fedora / RPM (.rpm)");
-    expect(body).not.toContain("app.tar.gz");
-    expect(body).not.toContain("latest.json");
+    expect(body).toContain("**In-app updater downloads:**");
+    expect(body).toContain(
+      "img.shields.io/github/downloads/tisrop/MergeBeacon/v0.10.0/MergeBeacon_0.10.0_aarch64.app.tar.gz?label=in-app&cacheSeconds=300",
+    );
+    expect(body).toContain(
+      "img.shields.io/github/downloads/tisrop/MergeBeacon/v0.10.0/MergeBeacon_0.10.0_x64.app.tar.gz?label=in-app&cacheSeconds=300",
+    );
+    expect(body).toContain("label=manual%20%2B%20in-app&cacheSeconds=300");
+    expect(body).not.toContain("/releases/download/v0.10.0/latest.json");
+    expect(body).not.toContain("/v0.10.0/latest.json?label=");
   });
 
   it("保留 Tag 中的路径分隔符并编码各路径段", () => {
@@ -82,7 +91,7 @@ describe("Release 下载引导", () => {
     });
 
     expect(body).toContain("/releases/download/v0.10.0/rc%201/");
-    expect(body).not.toContain("v0.10.0%2Frc%201");
+    expect(body).toContain("/github/downloads/tisrop/MergeBeacon/v0.10.0%2Frc%201/");
   });
 
   it("重复执行时替换已有下载引导而不是继续追加", () => {
@@ -125,5 +134,10 @@ describe("Release 下载引导", () => {
     expect(() =>
       buildReleaseDownloadGuide({ body: "说明", assets: duplicate, repository, tag }),
     ).toThrow("macOS Intel DMG无法唯一匹配 Release 资源");
+
+    const missingUpdater = releaseAssets().filter(({ name }) => !name.endsWith("x64.app.tar.gz"));
+    expect(() =>
+      buildReleaseDownloadGuide({ body: "说明", assets: missingUpdater, repository, tag }),
+    ).toThrow("macOS Intel updater无法唯一匹配 Release 资源");
   });
 });

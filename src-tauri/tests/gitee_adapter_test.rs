@@ -1,8 +1,9 @@
 use mergebeacon_lib::http_client::HttpClient;
 use mergebeacon_lib::models::{
     Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, PrCreatePreviewRequest, PrCreateRequest,
-    PrDetail, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate, PrMilestone, PrReviewStatus, PrState,
-    PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship, User,
+    PrDetail, PrListQuery, PrListSort, PrMetadataField, PrMetadataPermissions, PrMetadataUpdate, PrMilestone,
+    PrReviewFilter, PrReviewStatus, PrState, PrSummary, ReadinessState, ReviewInboxCategory, ReviewInboxRelationship,
+    User,
 };
 use mergebeacon_lib::platform::{gitee::GiteeAdapter, GitPlatform};
 use wiremock::matchers::{body_json, method, path, query_param};
@@ -654,6 +655,93 @@ async fn test_gitee_list_prs_merged() {
     assert!(result.items[1].status.is_none());
     assert_eq!(result.total_count, 2);
     assert_eq!(result.total_pages, 1);
+}
+
+#[tokio::test]
+async fn test_gitee_searches_filters_sorts_and_paginates_pull_requests() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls"))
+        .and(query_param("state", "all"))
+        .and(query_param("access_token", "test-token"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "100"))
+        .respond_with(ResponseTemplate::new(200).append_header("total_page", "1").set_body_json(serde_json::json!([
+            {
+                "number": 41,
+                "title": "Fix first bug",
+                "state": "open",
+                "merged_at": null,
+                "created_at": "2026-07-20T10:00:00Z",
+                "updated_at": "2026-07-21T10:00:00Z",
+                "user": { "id": 1, "login": "alice", "name": "Alice", "avatar_url": "" },
+                "labels": [{ "name": "bug", "color": "d73a4a" }],
+                "assignees_number": 1,
+                "assignees": [{ "login": "bob", "accept": true }],
+                "api_reviewers_number": 0,
+                "api_reviewers": [],
+                "comments_count": 3
+            },
+            {
+                "number": 42,
+                "title": "Fix second bug",
+                "state": "open",
+                "merged_at": null,
+                "created_at": "2026-07-22T10:00:00Z",
+                "updated_at": "2026-07-23T10:00:00Z",
+                "user": { "id": 1, "login": "alice", "name": "Alice", "avatar_url": "" },
+                "labels": [{ "name": "bug", "color": "d73a4a" }],
+                "assignees_number": 1,
+                "assignees": [{ "login": "bob", "accept": true }],
+                "api_reviewers_number": 0,
+                "api_reviewers": [],
+                "comments_count": 9
+            },
+            {
+                "number": 43,
+                "title": "Fix pending bug",
+                "state": "open",
+                "merged_at": null,
+                "created_at": "2026-07-24T10:00:00Z",
+                "updated_at": "2026-07-25T10:00:00Z",
+                "user": { "id": 1, "login": "alice", "name": "Alice", "avatar_url": "" },
+                "labels": [{ "name": "bug", "color": "d73a4a" }],
+                "assignees_number": 1,
+                "assignees": [{ "login": "bob", "accept": false }],
+                "api_reviewers_number": 0,
+                "api_reviewers": [],
+                "comments_count": 20
+            }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".into())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let query = PrListQuery {
+        title: "fix".into(),
+        author: "alice".into(),
+        label: "bug".into(),
+        reviews: Some(PrReviewFilter::Approved),
+        assignee: "bob".into(),
+        sort: PrListSort::CommentsDesc,
+    };
+    let result = adapter
+        .search_pull_requests("octocat", "hello-world", &PrState::All, &query, 1, 1)
+        .await
+        .expect("should search pull requests");
+
+    assert_eq!(result.total_count, 2);
+    assert_eq!(result.total_pages, 2);
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].number, 42);
+    assert_eq!(result.items[0].label_colors.get("bug").map(String::as_str), Some("d73a4a"));
+    assert_eq!(result.truncated, None);
+
+    let requests = mock_server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].url.query_pairs().all(|(name, _)| name != "author" && name != "assignee"));
 }
 
 #[tokio::test]

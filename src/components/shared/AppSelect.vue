@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useSelectDropdown } from "@/composables/useSelectDropdown";
-
-type SelectOption = { value: string; label: string; disabled?: boolean };
+import type { SelectOption } from "./selectOptions";
 
 const props = withDefaults(
   defineProps<{

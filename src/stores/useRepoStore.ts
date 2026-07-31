@@ -13,14 +13,51 @@ export interface ForkContext {
 
 type RepoSelection = { owner: string; repo: string };
 
+const STARRED_REPOS_STORAGE_KEY = "mergebeacon:starred-repos:v1";
+const MAX_STARRED_REPOS_PER_PLATFORM = 500;
+
 const platformRecord = <T>(factory: () => T): Record<Platform, T> => ({
   github: factory(),
   gitlab: factory(),
   gitee: factory(),
 });
 
+function loadStarredRepos(): Record<Platform, string[]> {
+  const result = platformRecord<string[]>(() => []);
+  try {
+    const stored = localStorage.getItem(STARRED_REPOS_STORAGE_KEY);
+    if (!stored) return result;
+    const parsed: unknown = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return result;
+    for (const platform of Object.keys(result) as Platform[]) {
+      const values = (parsed as Record<string, unknown>)[platform];
+      if (!Array.isArray(values)) continue;
+      result[platform] = [
+        ...new Set(
+          values.filter(
+            (value): value is string =>
+              typeof value === "string" && value.includes("/") && value.length <= 512,
+          ),
+        ),
+      ].slice(0, MAX_STARRED_REPOS_PER_PLATFORM);
+    }
+  } catch {
+    // Local persistence is best effort; starred repositories still work for this session.
+  }
+  return result;
+}
+
+function persistStarredRepos(value: Record<Platform, string[]>): void {
+  try {
+    localStorage.setItem(STARRED_REPOS_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Keep in-memory stars available when storage is disabled by the WebView.
+  }
+}
+
 export const useRepoStore = defineStore("repo", () => {
   const reposCache = ref<Record<Platform, RepoSummary[]>>(platformRecord(() => []));
+  const starredReposByPlatform = ref<Record<Platform, string[]>>(loadStarredRepos());
   const activeRepos = ref<Record<Platform, RepoSelection | null>>(platformRecord(() => null));
   const forkContexts = ref<Record<Platform, ForkContext | null>>(platformRecord(() => null));
   const pages = ref<Record<Platform, number>>(platformRecord(() => 0));
@@ -131,6 +168,18 @@ export const useRepoStore = defineStore("repo", () => {
     return fetchRepos(platform, failedPages.value[platform] ?? Math.max(pages.value[platform], 1));
   }
 
+  function isRepoStarred(fullName: string, platform: Platform = activePlatform.value): boolean {
+    return starredReposByPlatform.value[platform].includes(fullName);
+  }
+
+  function toggleRepoStar(fullName: string, platform: Platform = activePlatform.value): void {
+    const current = starredReposByPlatform.value[platform];
+    starredReposByPlatform.value[platform] = current.includes(fullName)
+      ? current.filter((item) => item !== fullName)
+      : [...current, fullName].slice(-MAX_STARRED_REPOS_PER_PLATFORM);
+    persistStarredRepos(starredReposByPlatform.value);
+  }
+
   function setActiveRepo(owner: string, repo: string, platform: Platform = activePlatform.value) {
     activeRepos.value[platform] = { owner, repo };
   }
@@ -154,6 +203,7 @@ export const useRepoStore = defineStore("repo", () => {
   return {
     repos,
     reposCache,
+    starredReposByPlatform,
     activeRepos,
     activeRepo,
     activeFullName,
@@ -177,6 +227,8 @@ export const useRepoStore = defineStore("repo", () => {
     refreshRepos,
     loadMore,
     retry,
+    isRepoStarred,
+    toggleRepoStar,
     setActiveRepo,
     setForkContext,
     switchForkView,

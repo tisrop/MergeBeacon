@@ -8,6 +8,7 @@ import type {
   PlatformCapabilities,
   PrComment,
   PrState,
+  PrListQuery,
   PrSummary,
   ReviewInboxCategory,
   ReviewInboxItem,
@@ -221,8 +222,9 @@ export async function prList(
   state: PrState = "open",
   page: number = 1,
   perPage: number = 20,
+  query?: PrListQuery,
 ): Promise<Paginated<PrSummary>> {
-  return invoke("pr_list", { platform, owner, repo, stateFilter: state, page, perPage });
+  return invoke("pr_list", { platform, owner, repo, stateFilter: state, page, perPage, query });
 }
 
 export async function prDetail(

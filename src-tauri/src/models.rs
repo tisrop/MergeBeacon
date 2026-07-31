@@ -58,6 +58,50 @@ impl PrState {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrListQuery {
+    pub title: String,
+    pub author: String,
+    pub label: String,
+    pub reviews: Option<PrReviewFilter>,
+    pub assignee: String,
+    pub sort: PrListSort,
+}
+
+impl PrListQuery {
+    pub fn is_default(&self) -> bool {
+        self.title.is_empty()
+            && self.author.is_empty()
+            && self.label.is_empty()
+            && self.reviews.is_none()
+            && self.assignee.is_empty()
+            && self.sort == PrListSort::UpdatedDesc
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrReviewFilter {
+    None,
+    Required,
+    Approved,
+    ChangesRequested,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrListSort {
+    BestMatch,
+    #[default]
+    UpdatedDesc,
+    UpdatedAsc,
+    CreatedDesc,
+    CreatedAsc,
+    CommentsDesc,
+    CommentsAsc,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrSummary {
     pub number: u64,

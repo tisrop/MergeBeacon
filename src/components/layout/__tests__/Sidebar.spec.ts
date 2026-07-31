@@ -84,7 +84,7 @@ describe("Sidebar", () => {
     expect(wrapper.find(".repo-section").exists()).toBe(true);
     expect(wrapper.get('[aria-label="PR 收件箱"]').attributes("title")).toBe("PR 收件箱");
     expect(wrapper.get('[aria-label="拉取请求（PR）"]').attributes("title")).toBe("拉取请求（PR）");
-    expect(wrapper.get('[aria-label="创建 PR"]').attributes("title")).toBe("创建 PR");
+    expect(wrapper.find('[aria-label="创建 PR"]').exists()).toBe(false);
     expect(wrapper.get('[aria-label="Issues"]').attributes("title")).toBe("Issues");
     expect(wrapper.find('[aria-label="设置"]').exists()).toBe(false);
     expect(wrapper.get(".compact-platform").attributes("aria-label")).toBe("当前平台：GitHub");
@@ -209,6 +209,46 @@ describe("Sidebar", () => {
 
     await search.setValue("tisrop team");
     expect(wrapper.findAll(".repo-item-name").map((item) => item.text())).toEqual(["MergeBeacon"]);
+  });
+
+  it("星标仓库后置顶展示且不会触发仓库跳转", async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/pr", name: "pr-list", component: { template: "<div />" } }],
+    });
+    await router.push("/pr");
+    await router.isReady();
+
+    const auth = useAuthStore();
+    auth.platforms.github.isLoggedIn = true;
+    auth.platforms.gitlab.isLoggedIn = true;
+    auth.platforms.gitee.isLoggedIn = true;
+    const repo = useRepoStore();
+    repo.reposCache.github = [
+      repository(1, "alpha/first"),
+      repository(2, "beta/second"),
+      repository(3, "alpha/third"),
+    ];
+    const wrapper = mount(Sidebar, { global: { plugins: [router] } });
+
+    const starButton = wrapper.get('[aria-label="星标 beta/second"]');
+    expect(starButton.attributes("aria-pressed")).toBe("false");
+    await starButton.trigger("click");
+
+    expect(router.currentRoute.value.fullPath).toBe("/pr");
+    expect(repo.activeRepo).toBeNull();
+    expect(wrapper.findAll(".repo-group-header").map((item) => item.text())).toEqual([
+      "星标",
+      "alpha",
+    ]);
+    expect(wrapper.findAll(".repo-item-name").map((item) => item.text())).toEqual([
+      "second",
+      "first",
+      "third",
+    ]);
+    expect(wrapper.get('[aria-label="取消星标 beta/second"]').attributes("aria-pressed")).toBe(
+      "true",
+    );
   });
 
   it("仓库搜索无匹配时显示空状态", async () => {

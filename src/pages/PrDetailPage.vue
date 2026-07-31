@@ -78,7 +78,7 @@ const headRepository = computed<RepositoryCoordinates | null>(() => {
 
 type PrDetailTab = "diff" | "dependencies" | "reviews" | "ai";
 
-const activeTab = ref<PrDetailTab>("diff");
+const activeTab = ref<PrDetailTab>("reviews");
 const aiPanelMounted = ref(false);
 const dependencyPanelMounted = ref(false);
 const locatingAiSuggestion = ref(false);
@@ -122,7 +122,7 @@ function selectTab(tab: PrDetailTab) {
 }
 
 watch(isMergeContextVisible, (visible) => {
-  if (!visible && activeTab.value === "dependencies") selectTab("diff");
+  if (!visible && activeTab.value === "dependencies") selectTab("reviews");
 });
 
 const diffLocationRequest = ref<DiffLocationRequest | null>(null);
@@ -777,23 +777,8 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
     </div>
 
     <div v-else-if="pr.currentPr" class="pr-detail">
-      <PrMetadataPanel
-        :detail="pr.currentPr"
-        :platform="platform"
-        :owner="owner"
-        :repo="repo"
-        :capabilities="platformCapabilities ?? null"
-        :saving="metadataSaving"
-        :status-message="metadataStatus"
-        :error-message="metadataError"
-        @save="handleMetadataSave"
-        @open-issue="handleOpenIssueDetail"
-        @open-link="handlePrContentLink"
-        @open-external="handleOpenInBrowser"
-      />
-
       <div ref="tabsRef" class="tabs">
-        <button :class="{ active: activeTab === 'diff' }" @click="selectTab('diff')">
+        <button :class="{ active: activeTab === 'reviews' }" @click="selectTab('reviews')">
           <svg
             width="14"
             height="14"
@@ -804,9 +789,9 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             stroke-linecap="round"
             stroke-linejoin="round"
           >
-            <path d="M12 3v18M3 12h18" />
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
-          Diff
+          评审意见
         </button>
         <button
           v-if="isMergeContextVisible"
@@ -831,7 +816,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
           </svg>
           依赖关系
         </button>
-        <button :class="{ active: activeTab === 'reviews' }" @click="selectTab('reviews')">
+        <button :class="{ active: activeTab === 'diff' }" @click="selectTab('diff')">
           <svg
             width="14"
             height="14"
@@ -842,9 +827,9 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             stroke-linecap="round"
             stroke-linejoin="round"
           >
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            <path d="M12 3v18M3 12h18" />
           </svg>
-          评审意见
+          Diff
         </button>
         <button :class="{ active: activeTab === 'ai' }" @click="selectTab('ai')">
           <svg
@@ -946,6 +931,20 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
           />
         </div>
         <div v-show="activeTab === 'reviews'">
+          <PrMetadataPanel
+            :detail="pr.currentPr"
+            :platform="platform"
+            :owner="owner"
+            :repo="repo"
+            :capabilities="platformCapabilities ?? null"
+            :saving="metadataSaving"
+            :status-message="metadataStatus"
+            :error-message="metadataError"
+            @save="handleMetadataSave"
+            @open-issue="handleOpenIssueDetail"
+            @open-link="handlePrContentLink"
+            @open-external="handleOpenInBrowser"
+          />
           <ReviewList
             ref="reviewListRef"
             :platform="platform"

@@ -23,6 +23,7 @@ interface OwnerGroup {
   platform: Platform;
   owner: string;
   isOrganization: boolean;
+  isStarredGroup: boolean;
   repos: RepoSummary[];
 }
 
@@ -32,11 +33,16 @@ const normalizedRepoSearch = computed(() => repoSearch.value.trim().toLocaleLowe
 const repoGroups = computed(() => {
   const platform = auth.activePlatform;
   const groups = new Map<string, OwnerGroup>();
+  const starredRepos: RepoSummary[] = [];
   for (const r of repo.repos) {
     const searchableText = [r.name, r.full_name, r.owner, r.owner_display_name]
       .join("\n")
       .toLocaleLowerCase();
     if (normalizedRepoSearch.value && !searchableText.includes(normalizedRepoSearch.value)) {
+      continue;
+    }
+    if (repo.isRepoStarred(r.full_name, platform)) {
+      starredRepos.push(r);
       continue;
     }
     const key = r.owner;
@@ -48,6 +54,7 @@ const repoGroups = computed(() => {
           r.owner_type === "organization" ||
           r.owner_type === "group" ||
           r.owner_type === "enterprise",
+        isStarredGroup: false,
         repos: [],
       });
     }
@@ -59,7 +66,18 @@ const repoGroups = computed(() => {
     if (a.isOrganization !== b.isOrganization) return a.isOrganization ? -1 : 1;
     return a.owner.localeCompare(b.owner);
   });
-  return sorted;
+  return starredRepos.length > 0
+    ? [
+        {
+          platform,
+          owner: "星标",
+          isOrganization: false,
+          isStarredGroup: true,
+          repos: starredRepos,
+        },
+        ...sorted,
+      ]
+    : sorted;
 });
 
 const router = useRouter();
@@ -83,7 +101,6 @@ const activePlatformShortLabel = computed(() => {
   const labels: Record<Platform, string> = { github: "GH", gitlab: "GL", gitee: "GE" };
   return labels[auth.activePlatform];
 });
-const createLabel = computed(() => (auth.activePlatform === "gitlab" ? "创建 MR" : "创建 PR"));
 const isSidebarCollapsed = computed(
   () => props.compactSidebar || (props.isDiffFocusMode && !uiSettings.isDiffSidebarExpanded),
 );
@@ -324,27 +341,6 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
         <span class="nav-label">Pull Requests</span>
       </router-link>
       <router-link
-        :to="`/pr/new/${auth.activePlatform}`"
-        :class="{ active: route.name === 'pr-new' }"
-        :aria-label="createLabel"
-        :title="isSidebarCollapsed ? createLabel : undefined"
-      >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        <span class="nav-label">{{ createLabel }}</span>
-      </router-link>
-      <router-link
         to="/issue"
         :class="{ active: isActive('issue') }"
         aria-label="Issues"
@@ -436,10 +432,30 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
         <div v-if="normalizedRepoSearch && repoGroups.length === 0" class="repo-search-empty">
           已加载仓库中没有匹配项
         </div>
-        <template v-for="group in repoGroups" :key="group.owner">
+        <template
+          v-for="group in repoGroups"
+          :key="group.isStarredGroup ? '__starred__' : group.owner"
+        >
           <div class="repo-group-header">
             <svg
-              v-if="group.isOrganization"
+              v-if="group.isStarredGroup"
+              class="starred-group-icon"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polygon
+                points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+              />
+            </svg>
+            <svg
+              v-else-if="group.isOrganization"
               width="12"
               height="12"
               viewBox="0 0 24 24"
@@ -471,42 +487,81 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
             </svg>
             <span>{{ group.owner }}</span>
           </div>
-          <button
+          <div
             v-for="r in group.repos"
             :key="r.id"
+            class="repo-item-row"
             :class="{
               active:
                 repo.activeFullName === r.full_name ||
                 (repo.activeFullName !== null && repo.activeFullName === r.parent_full_name),
-              'is-fork': r.fork,
             }"
-            :title="r.fork && r.parent_full_name ? 'Fork from ' + r.parent_full_name : r.full_name"
-            @click="
-              r.fork
-                ? selectForkRepo(r, true, group.platform)
-                : (selectRepo(getRepoOwner(r.full_name), group.platform),
-                  repo.setForkContext(null, group.platform))
-            "
           >
-            <svg
-              v-if="r.fork"
-              class="fork-icon"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+            <button
+              type="button"
+              class="repo-main-button"
+              :class="{ 'is-fork': r.fork }"
+              :title="
+                r.fork && r.parent_full_name ? 'Fork from ' + r.parent_full_name : r.full_name
+              "
+              :aria-label="`打开仓库 ${r.full_name}`"
+              @click="
+                r.fork
+                  ? selectForkRepo(r, true, group.platform)
+                  : (selectRepo(getRepoOwner(r.full_name), group.platform),
+                    repo.setForkContext(null, group.platform))
+              "
             >
-              <line x1="6" y1="3" x2="6" y2="15" />
-              <circle cx="18" cy="6" r="3" />
-              <circle cx="6" cy="6" r="3" />
-              <circle cx="18" cy="18" r="3" />
-            </svg>
-            <span class="repo-item-name">{{ r.name }}</span>
-          </button>
+              <svg
+                v-if="r.fork"
+                class="fork-icon"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="6" y1="3" x2="6" y2="15" />
+                <circle cx="18" cy="6" r="3" />
+                <circle cx="6" cy="6" r="3" />
+                <circle cx="18" cy="18" r="3" />
+              </svg>
+              <span class="repo-item-name">{{ r.name }}</span>
+            </button>
+            <button
+              type="button"
+              class="repo-star-button"
+              :class="{ active: repo.isRepoStarred(r.full_name, group.platform) }"
+              :aria-label="
+                repo.isRepoStarred(r.full_name, group.platform)
+                  ? `取消星标 ${r.full_name}`
+                  : `星标 ${r.full_name}`
+              "
+              :aria-pressed="repo.isRepoStarred(r.full_name, group.platform)"
+              :title="repo.isRepoStarred(r.full_name, group.platform) ? '取消星标' : '添加星标'"
+              @click="repo.toggleRepoStar(r.full_name, group.platform)"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polygon
+                  points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+                />
+              </svg>
+            </button>
+          </div>
         </template>
       </div>
       <div v-if="repo.error" class="repo-load-error">
