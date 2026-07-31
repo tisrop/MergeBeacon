@@ -12,6 +12,7 @@ const router = useRouter();
 const route = useRoute();
 const updates = useUpdateStore();
 const { updateResult, updatePromptVersion } = storeToRefs(updates);
+const SETTINGS_PAGE_START_ID = "settings-page-start";
 const APP_UPDATE_SECTION_ID = "app-update";
 const APP_UPDATE_HASH = `#${APP_UPDATE_SECTION_ID}`;
 
@@ -32,12 +33,29 @@ const isUpdateDialogOpen = computed(
     hasMatchingUpdatePrompt.value && !isCommandPaletteOpen.value && !isEditingControlFocused.value,
 );
 
-async function goToSettings() {
+async function navigateToSettings(hash = "") {
   updates.dismissUpdatePrompt();
-  if (route.path !== "/settings" || route.hash !== APP_UPDATE_HASH) {
-    await router.push({ path: "/settings", hash: APP_UPDATE_HASH });
-    await nextTick();
+  if (route.path !== "/settings" || route.hash !== hash) {
+    const target = hash ? { path: "/settings", hash } : { path: "/settings" };
+    if (route.path === "/settings") {
+      await router.replace(target);
+    } else {
+      await router.push(target);
+    }
   }
+  await nextTick();
+}
+
+async function openSettings() {
+  await navigateToSettings();
+  document.getElementById(SETTINGS_PAGE_START_ID)?.scrollIntoView({
+    behavior: "smooth",
+    block: "start",
+  });
+}
+
+async function openUpdateSettings() {
+  await navigateToSettings(APP_UPDATE_HASH);
   document.getElementById(APP_UPDATE_SECTION_ID)?.scrollIntoView({
     behavior: "smooth",
     block: "start",
@@ -80,7 +98,7 @@ function handleDocumentFocusChange() {
 }
 
 onMounted(() => {
-  window.__goToSettings = goToSettings;
+  window.__goToSettings = openSettings;
   window.__openCommandPalette = openCommandPalette;
   document.addEventListener("focusin", handleDocumentFocusChange);
   document.addEventListener("focusout", handleDocumentFocusChange);
@@ -114,6 +132,6 @@ onUnmounted(() => {
     :version="updatePromptVersion ?? ''"
     :notes="updateResult?.notes ?? null"
     @close="updates.dismissUpdatePrompt"
-    @confirm="goToSettings"
+    @confirm="openUpdateSettings"
   />
 </template>

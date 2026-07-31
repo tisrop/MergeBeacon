@@ -241,7 +241,9 @@ describe("App", () => {
         { path: "/pr", component: { template: "<div>PR 列表</div>" } },
         {
           path: "/settings",
-          component: { template: '<section id="app-update">设置</section>' },
+          component: {
+            template: '<div id="settings-page-start"><section id="app-update">设置</section></div>',
+          },
         },
       ],
     });
@@ -262,6 +264,41 @@ describe("App", () => {
     expect(router.currentRoute.value.fullPath).toBe("/settings#app-update");
     expect(useUpdateStore(pinia).updatePromptVersion).toBeNull();
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect((scrollIntoView.mock.instances[0] as HTMLElement).id).toBe("app-update");
+    wrapper.unmount();
+  });
+
+  it("从应用菜单打开普通设置时停留在设置页顶部", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue(noUpdate);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/pr", component: { template: "<div>PR 列表</div>" } },
+        {
+          path: "/settings",
+          component: {
+            template: '<div id="settings-page-start"><section id="app-update">设置</section></div>',
+          },
+        },
+      ],
+    });
+    await router.push("/pr");
+    await router.isReady();
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: {
+        plugins: [createPinia(), router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
+    await flushPromises();
+
+    await window.__goToSettings?.();
+    await flushPromises();
+
+    expect(router.currentRoute.value.fullPath).toBe("/settings");
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect((scrollIntoView.mock.instances[0] as HTMLElement).id).toBe("settings-page-start");
     wrapper.unmount();
   });
 

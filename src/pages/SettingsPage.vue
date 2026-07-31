@@ -217,7 +217,7 @@ async function copyRecentErrorLogs() {
       </div>
     </template>
 
-    <div class="settings-page">
+    <div id="settings-page-start" class="settings-page">
       <section class="card section">
         <div class="section-heading">
           <span class="section-icon" aria-hidden="true">
