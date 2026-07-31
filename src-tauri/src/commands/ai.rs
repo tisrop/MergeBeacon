@@ -96,6 +96,7 @@ pub async fn ai_pr_draft(
     let operation = state.operations.begin_ai().await?;
     let registry = state.ai_tasks.clone();
     let generation = registry.next_generation();
+    // Keep a copy for generation-safe removal after registry.replace consumes the original ID.
     let task_request_id = request_id.clone();
     let (start_tx, start_rx) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
@@ -115,6 +116,7 @@ pub async fn ai_pr_draft(
     });
 
     registry.replace(request_id, generation, task.abort_handle()).await;
+    // A dropped receiver means the task was already cancelled or exited before starting.
     let _ = start_tx.send(());
     let result = task.await;
     registry.remove_if_current(&task_request_id, generation).await;
@@ -135,24 +137,53 @@ pub async fn ai_pr_draft_cancel(state: State<'_, AppState>, request_id: String) 
 }
 
 #[tauri::command]
-pub async fn ai_review(state: State<'_, AppState>, request: AiReviewRequest) -> CommandResult<AiReviewResult> {
+pub async fn ai_review(
+    state: State<'_, AppState>,
+    request_id: String,
+    request: AiReviewRequest,
+) -> CommandResult<Option<AiReviewResult>> {
+    let request_id = validate_ai_request_id(request_id)?;
     let (config, client) = configured_ai_client(&state)?;
-    let _operation = state.operations.begin_ai().await?;
-
-    client
-        .review(
-            &request.diff,
-            request.context.as_ref(),
-            AiReviewOptions {
-                focus: request.focus.as_ref(),
-                language: &request.language,
-                custom_prompt: config.system_prompt.as_deref(),
-                temperature: config.temperature.unwrap_or(0.3),
-                max_tokens: config.max_tokens.unwrap_or(8192),
-            },
+    let operation = state.operations.begin_ai().await?;
+    let registry = state.ai_tasks.clone();
+    let generation = registry.next_generation();
+    // Keep a copy for generation-safe removal after registry.replace consumes the original ID.
+    let task_request_id = request_id.clone();
+    let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let _operation = operation;
+        if start_rx.await.is_err() {
+            return None;
+        }
+        Some(
+            client
+                .review(
+                    &request.diff,
+                    request.context.as_ref(),
+                    AiReviewOptions {
+                        focus: request.focus.as_ref(),
+                        language: &request.language,
+                        custom_prompt: config.system_prompt.as_deref(),
+                        temperature: config.temperature.unwrap_or(0.3),
+                        max_tokens: config.max_tokens.unwrap_or(8192),
+                    },
+                )
+                .await,
         )
-        .await
-        .map_err(CommandError::from)
+    });
+
+    registry.replace(request_id, generation, task.abort_handle()).await;
+    // A dropped receiver means the task was already cancelled or exited before starting.
+    let _ = start_tx.send(());
+    let result = task.await;
+    registry.remove_if_current(&task_request_id, generation).await;
+
+    match result {
+        Ok(Some(result)) => result.map(Some).map_err(CommandError::from),
+        Ok(None) => Ok(None),
+        Err(error) if error.is_cancelled() => Ok(None),
+        Err(_) => Err(CommandError::from(AppError::Ai("AI 评审任务异常终止".into()))),
+    }
 }
 
 /// Streaming AI review — registers a cancellable background task and emits request-scoped events.
@@ -172,6 +203,7 @@ pub async fn ai_review_stream(
     let operation = state.operations.begin_ai().await?;
     let registry = state.ai_tasks.clone();
     let generation = registry.next_generation();
+    // Keep a copy for generation-safe removal after registry.replace consumes the original ID.
     let task_request_id = request_id.clone();
     let task_registry = registry.clone();
     let task_error_logs = error_logs.inner().clone();
@@ -237,6 +269,7 @@ pub async fn ai_review_stream(
     });
 
     registry.replace(request_id, generation, task.abort_handle()).await;
+    // A dropped receiver means the task was already cancelled or exited before starting.
     let _ = start_tx.send(());
     Ok(())
 }

@@ -89,6 +89,7 @@ const useStreaming = ref(true);
 const loading = ref(false);
 const error = ref("");
 const errorDetails = ref<ApiError | null>(null);
+const reviewStatus = ref("");
 const result = ref<AiReviewResult | null>(null);
 const resultHeadSha = ref("");
 const resultFocus = ref<AiReviewFocus | null>(null);
@@ -397,6 +398,7 @@ async function startReview() {
   loading.value = true;
   error.value = "";
   errorDetails.value = null;
+  reviewStatus.value = "";
   draftError.value = "";
   streamReceivedData.value = false;
   activeReviewHeadSha = reviewHeadSha;
@@ -449,15 +451,17 @@ async function startReview() {
   currentHistoryId.value = "";
 
   if (useStreaming.value) {
-    await startStreamingReview();
+    await startStreamingReview(sequence);
   } else {
-    await startNonStreamingReview();
+    await startNonStreamingReview(sequence);
   }
 }
 
 defineExpose({ startReview });
 
-async function startNonStreamingReview() {
+async function startNonStreamingReview(sequence: number) {
+  const requestId = crypto.randomUUID();
+  activeRequestId = requestId;
   const metadata: ReviewResultMetadata = {
     headSha: activeReviewHeadSha,
     baseSha: activeReviewBaseSha,
@@ -471,13 +475,17 @@ async function startNonStreamingReview() {
   const diff = activeReviewDiff;
   const context = activeReviewContext;
   try {
-    result.value = await aiReview({
+    const reviewResult = await aiReview(requestId, {
       diff,
       context,
       file_filter: null,
       focus: metadata.focus,
       language: metadata.language,
     });
+    if (!reviewResult || disposed || sequence !== reviewSequence || activeRequestId !== requestId) {
+      return;
+    }
+    result.value = reviewResult;
     resultHeadSha.value = metadata.headSha;
     resultFocus.value = metadata.focus;
     resultMode.value = metadata.mode;
@@ -488,23 +496,32 @@ async function startNonStreamingReview() {
     saveLastSuccessfulHeadSha(metadata.headSha, storageKey);
     recordSuccessfulReview(result.value, metadata);
   } catch (e) {
+    if (disposed || sequence !== reviewSequence || activeRequestId !== requestId) return;
     errorDetails.value = normalizeApiError(e);
     error.value = getErrorMessage(errorDetails.value, t("ai.reviewFailed"));
   } finally {
-    loading.value = false;
+    if (sequence === reviewSequence && activeRequestId === requestId) {
+      activeRequestId = null;
+      loading.value = false;
+    }
   }
 }
 
-async function startStreamingReview() {
+async function startStreamingReview(sequence: number) {
   const requestId = crypto.randomUUID();
   activeRequestId = requestId;
   try {
-    unlistenChunk = await listen<AiStreamEvent<string>>("ai-review-chunk", (event) => {
+    const chunkUnlisten = await listen<AiStreamEvent<string>>("ai-review-chunk", (event) => {
       if (event.payload.request_id !== activeRequestId) return;
       streamReceivedData.value = true;
     });
+    if (disposed || sequence !== reviewSequence || activeRequestId !== requestId) {
+      chunkUnlisten();
+      return;
+    }
+    unlistenChunk = chunkUnlisten;
 
-    unlistenDone = await listen<AiStreamEvent<AiReviewResult>>("ai-review-done", (event) => {
+    const doneUnlisten = await listen<AiStreamEvent<AiReviewResult>>("ai-review-done", (event) => {
       if (event.payload.request_id !== activeRequestId) return;
       result.value = event.payload.payload;
       resultHeadSha.value = activeReviewHeadSha;
@@ -528,8 +545,13 @@ async function startStreamingReview() {
       loading.value = false;
       cleanupListeners();
     });
+    if (disposed || sequence !== reviewSequence || activeRequestId !== requestId) {
+      doneUnlisten();
+      return;
+    }
+    unlistenDone = doneUnlisten;
 
-    unlistenError = await listen<AiStreamEvent<CommandErrorPayload | string>>(
+    const errorUnlisten = await listen<AiStreamEvent<CommandErrorPayload | string>>(
       "ai-review-error",
       (event) => {
         if (event.payload.request_id !== activeRequestId) return;
@@ -540,6 +562,11 @@ async function startStreamingReview() {
         cleanupListeners();
       },
     );
+    if (disposed || sequence !== reviewSequence || activeRequestId !== requestId) {
+      errorUnlisten();
+      return;
+    }
+    unlistenError = errorUnlisten;
 
     await aiReviewStream(requestId, {
       diff: activeReviewDiff,
@@ -561,6 +588,7 @@ async function startStreamingReview() {
 
 async function cancelActiveReview() {
   const requestId = activeRequestId;
+  // Invalidate late events immediately; backend cancellation is best-effort and is not retried.
   activeRequestId = null;
   if (!requestId) return;
   try {
@@ -568,6 +596,19 @@ async function cancelActiveReview() {
   } catch {
     // Cancellation is best-effort and must not be presented as an AI review error.
   }
+}
+
+async function interruptReview() {
+  if (!loading.value) return;
+  reviewSequence += 1;
+  loading.value = false;
+  streamReceivedData.value = false;
+  error.value = "";
+  errorDetails.value = null;
+  reviewStatus.value = t("ai.reviewInterrupted");
+  const cancellation = cancelActiveReview();
+  cleanupListeners();
+  await cancellation;
 }
 
 function cleanupListeners() {
@@ -802,31 +843,50 @@ async function submitDrafts() {
       </div>
 
       <label class="stream-toggle" :title="t('ai.streamingHint')">
-        <input type="checkbox" v-model="useStreaming" />
+        <input type="checkbox" v-model="useStreaming" :disabled="loading" />
         {{ t("ai.streaming") }}
       </label>
 
-      <button
-        class="btn btn-primary"
-        :disabled="(loading && !useStreaming) || !canStartReview"
-        @click="startReview"
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+      <div class="review-actions">
+        <button
+          class="btn btn-primary"
+          :disabled="(loading && !useStreaming) || !canStartReview"
+          @click="startReview"
         >
-          <polygon points="5 3 19 12 5 21 5 3" />
-        </svg>
-        {{
-          loading ? (useStreaming ? t("ai.reviewRestart") : t("ai.reviewing")) : t("ai.reviewStart")
-        }}
-      </button>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+          {{
+            loading
+              ? useStreaming
+                ? t("ai.reviewRestart")
+                : t("ai.reviewing")
+              : t("ai.reviewStart")
+          }}
+        </button>
+        <button
+          v-if="loading"
+          type="button"
+          class="btn ai-interrupt-button"
+          data-testid="interrupt-ai-review"
+          @click="interruptReview"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="5" y="5" width="14" height="14" rx="1" />
+          </svg>
+          {{ t("ai.reviewInterrupt") }}
+        </button>
+      </div>
     </div>
 
     <div class="ai-context-tools">
@@ -897,6 +957,10 @@ async function submitDrafts() {
     <div v-if="error" class="error-box">
       {{ error }}
     </div>
+
+    <p v-if="reviewStatus" class="review-status" role="status" aria-live="polite">
+      {{ reviewStatus }}
+    </p>
 
     <div v-if="result" class="ai-result">
       <div v-if="isResultOutdated" class="outdated-warning" role="alert">

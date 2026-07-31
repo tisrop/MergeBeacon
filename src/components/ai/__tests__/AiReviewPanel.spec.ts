@@ -348,7 +348,10 @@ describe("AiReviewPanel", () => {
     resolveReview({ summary: "完成", suggestions: [] });
     await flushPromises();
 
-    expect(aiReview).toHaveBeenCalledWith(expect.objectContaining({ language: "zh-CN" }));
+    expect(aiReview).toHaveBeenCalledWith(
+      "request-1",
+      expect.objectContaining({ language: "zh-CN" }),
+    );
     expect(wrapper.text()).toContain("意见语言：简体中文");
     const history = JSON.parse(
       localStorage.getItem("mergebeacon:ai-review-history:v1:github:octocat:hello-world:42") ??
@@ -620,6 +623,62 @@ describe("AiReviewPanel", () => {
     wrapper.unmount();
     await flushPromises();
     expect(aiReviewCancel).toHaveBeenCalledWith("request-2");
+  });
+
+  it("允许用户中断流式评审并忽略中断后的完成事件", async () => {
+    const wrapper = mountPanel();
+
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="interrupt-ai-review"]').text()).toContain("中断评审");
+
+    await wrapper.get('[data-testid="interrupt-ai-review"]').trigger("click");
+    await flushPromises();
+
+    expect(aiReviewCancel).toHaveBeenCalledWith("request-1");
+    expect(wrapper.find('[data-testid="interrupt-ai-review"]').exists()).toBe(false);
+    expect(wrapper.find(".stream-preview").exists()).toBe(false);
+    expect(wrapper.text()).toContain("AI 评审已中断");
+    expect(wrapper.get("button.btn-primary").text()).toContain("开始 AI 评审");
+
+    latestListener("ai-review-done")?.({
+      payload: {
+        request_id: "request-1",
+        payload: { summary: "不应写回的旧结果", suggestions: [] },
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).not.toContain("不应写回的旧结果");
+  });
+
+  it("允许用户中断非流式评审且取消响应不会显示为错误", async () => {
+    let resolveReview!: (value: Awaited<ReturnType<typeof aiReview>>) => void;
+    vi.mocked(aiReview).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReview = resolve;
+        }),
+    );
+    const wrapper = mountPanel();
+    await wrapper.get(".stream-toggle input").setValue(false);
+
+    await wrapper.get("button.btn-primary").trigger("click");
+    await flushPromises();
+    expect(aiReview).toHaveBeenCalledWith(
+      "request-1",
+      expect.objectContaining({ diff: "+changed" }),
+    );
+
+    await wrapper.get('[data-testid="interrupt-ai-review"]').trigger("click");
+    await flushPromises();
+    resolveReview(null);
+    await flushPromises();
+
+    expect(aiReviewCancel).toHaveBeenCalledWith("request-1");
+    expect(wrapper.find(".loading-state").exists()).toBe(false);
+    expect(wrapper.find(".error-box").exists()).toBe(false);
+    expect(wrapper.text()).toContain("AI 评审已中断");
   });
 
   it("重新评审后忽略旧监听器交错到达的 chunk、done 和 error", async () => {

@@ -667,8 +667,11 @@ export async function aiPrDraftCancel(requestId: string): Promise<void> {
   return invoke("ai_pr_draft_cancel", { requestId });
 }
 
-export async function aiReview(request: AiReviewRequest): Promise<AiReviewResult> {
-  return invoke("ai_review", { request });
+export async function aiReview(
+  requestId: string,
+  request: AiReviewRequest,
+): Promise<AiReviewResult | null> {
+  return invoke("ai_review", { requestId, request });
 }
 
 export async function aiReviewStream(requestId: string, request: AiReviewRequest): Promise<void> {
