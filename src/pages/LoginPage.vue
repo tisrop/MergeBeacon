@@ -8,10 +8,12 @@ import BrandMark from "@/components/shared/BrandMark.vue";
 import { authLogin } from "@/api";
 import { getErrorMessage } from "@/utils/error";
 import { open } from "@tauri-apps/plugin-shell";
+import { useI18n } from "@/i18n";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const { t } = useI18n();
 
 function parsePlatform(value: unknown): Platform | undefined {
   return value === "github" || value === "gitlab" || value === "gitee" ? value : undefined;
@@ -52,7 +54,7 @@ function getCustomUrl(): string | undefined {
 
 async function handleLogin() {
   if (!token.value.trim()) {
-    error.value = "请输入 Token";
+    error.value = t("login.tokenRequired");
     return;
   }
   loading.value = true;
@@ -63,7 +65,7 @@ async function handleLogin() {
     auth.activePlatform = platform.value;
     await router.replace("/pr");
   } catch (e) {
-    error.value = getErrorMessage(e, "登录失败，请检查 Token 是否正确");
+    error.value = getErrorMessage(e, t("login.error"));
   } finally {
     loading.value = false;
   }
@@ -73,16 +75,16 @@ async function handleLogin() {
 <template>
   <div class="login-page">
     <div class="login-shell">
-      <section class="login-intro" aria-label="产品介绍">
+      <section class="login-intro" :aria-label="t('login.intro')">
         <div class="intro-mark" aria-hidden="true">
           <BrandMark />
         </div>
-        <p class="intro-title">发现关键信号，放心完成每一次合并</p>
-        <p>在一个工作台中管理多平台仓库、代码差异、评审意见与 AI 建议。</p>
+        <p class="intro-title">{{ t("login.introTitle") }}</p>
+        <p>{{ t("login.introBody") }}</p>
         <ul>
-          <li>GitHub、GitLab 与 Gitee 统一工作流</li>
-          <li>聚焦上下文的代码评审体验</li>
-          <li>Token 安全保存，敏感信息不出本机</li>
+          <li>{{ t("login.featurePlatforms") }}</li>
+          <li>{{ t("login.featureReview") }}</li>
+          <li>{{ t("login.featureSecurity") }}</li>
         </ul>
       </section>
 
@@ -93,43 +95,43 @@ async function handleLogin() {
           </span>
           <h1>MergeBeacon</h1>
         </div>
-        <p class="subtitle">连接代码托管平台，开始评审与 Issue 管理</p>
+        <p class="subtitle">{{ t("login.connect") }}</p>
 
         <div class="form-group">
-          <label>平台</label>
+          <label>{{ t("login.platform") }}</label>
           <AppSelect v-model="platform" :options="platforms" />
         </div>
 
         <div v-if="needsCustomUrl" class="form-group">
-          <label for="server-url">服务器地址（可选）</label>
+          <label for="server-url">{{ t("login.serverUrl") }}</label>
           <input
             id="server-url"
             v-model="gitlabUrl"
             class="input"
             type="text"
             :placeholder="
-              platform === 'gitlab'
-                ? 'https://gitlab.com（留空使用官方）'
-                : 'https://gitee.com（留空使用官方）'
+              t('login.serverPlaceholder', {
+                url: platform === 'gitlab' ? 'https://gitlab.com' : 'https://gitee.com',
+              })
             "
           />
-          <p class="hint">私有化部署请填写完整地址，如 https://gitlab.example.com</p>
+          <p class="hint">{{ t("login.serverHint") }}</p>
           <p v-if="usesInsecureHttp" class="http-warning">
-            HTTP 连接不会加密 Token，请仅用于可信内网。
+            {{ t("login.httpWarning") }}
           </p>
         </div>
 
         <div class="form-group">
-          <label for="access-token">Personal Access Token</label>
+          <label for="access-token">{{ t("login.accessToken") }}</label>
           <input
             id="access-token"
             v-model="token"
             class="input"
             type="password"
-            placeholder="输入你的 Token..."
+            :placeholder="t('login.tokenPlaceholder')"
             @keyup.enter="handleLogin"
           />
-          <p class="hint">Token 优先保存到系统凭证库；不可用时保存到本地加密文件。</p>
+          <p class="hint">{{ t("login.tokenHint") }}</p>
         </div>
 
         <div v-if="error" class="error-box" role="alert">
@@ -150,10 +152,10 @@ async function handleLogin() {
 
         <button class="btn btn-primary login-btn" :disabled="loading" @click="handleLogin">
           <div v-if="loading" class="btn-spinner" />
-          {{ loading ? "登录中..." : "登录" }}
+          {{ loading ? t("login.loggingIn") : t("login.login") }}
         </button>
 
-        <div class="help-links" aria-label="Token 获取链接">
+        <div class="help-links" :aria-label="t('login.tokenLinks')">
           <button
             type="button"
             class="token-link"
@@ -178,7 +180,7 @@ async function handleLogin() {
         </div>
 
         <p class="skip">
-          <router-link to="/settings">跳过登录，先去设置 →</router-link>
+          <router-link to="/settings">{{ t("login.skip") }} →</router-link>
         </p>
       </main>
     </div>

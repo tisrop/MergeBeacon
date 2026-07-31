@@ -9,6 +9,7 @@ import {
 } from "@/api";
 import type { UpdateCheckResult, UpdateProgressEvent } from "@/types";
 import { useUpdateStore } from "../useUpdateStore";
+import { setAppLocale } from "@/i18n";
 
 const storage = new Map<string, string>();
 
@@ -47,6 +48,7 @@ const availableUpdate: UpdateCheckResult = {
 
 describe("useUpdateStore", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     vi.restoreAllMocks();
     storage.clear();
     setActivePinia(createPinia());
@@ -56,6 +58,16 @@ describe("useUpdateStore", () => {
     vi.mocked(listenToUpdateProgress).mockReset();
     vi.mocked(listenToUpdateProgress).mockResolvedValue(() => undefined);
     vi.mocked(restartAfterUpdate).mockReset();
+  });
+
+  it("按检查发生时的界面语言生成本地错误回退", async () => {
+    setAppLocale("en-US");
+    vi.mocked(checkForUpdates).mockRejectedValueOnce(null);
+    const store = useUpdateStore();
+
+    await store.checkUpdate();
+
+    expect(store.updateError).toBe("Failed to check for updates. Try again later.");
   });
 
   it("迁移旧品牌的自动更新设置", () => {

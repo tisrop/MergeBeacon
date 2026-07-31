@@ -71,6 +71,11 @@
   color: var(--color-text);
 }
 
+.language-select {
+  width: min(220px, 45%);
+  flex: 0 0 auto;
+}
+
 .toggle {
   position: relative;
   display: inline-block;

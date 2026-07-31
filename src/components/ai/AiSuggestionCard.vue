@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { AiSuggestion, AiSuggestionAction, Severity } from "@/types";
+import { useI18n } from "@/i18n";
 
-defineProps<{
+const props = defineProps<{
   suggestion: AiSuggestion;
   disabled?: boolean;
 }>();
@@ -10,6 +11,13 @@ const emit = defineEmits<{
   action: [action: AiSuggestionAction];
   locate: [];
 }>();
+
+const { t } = useI18n();
+
+function locationLabel(): string {
+  const line = props.suggestion.line_start ? `:${props.suggestion.line_start}` : "";
+  return t("ai.locateSuggestion", { file: props.suggestion.file, line });
+}
 
 const severityLabel: Record<Severity, string> = {
   critical: "Critical",
@@ -31,8 +39,8 @@ const severityLabel: Record<Severity, string> = {
         class="file-loc"
         type="button"
         :disabled="disabled || !suggestion.file.trim()"
-        :title="disabled ? '该建议基于旧版本，无法定位' : '在 Diff 中定位'"
-        :aria-label="`在 Diff 中定位 ${suggestion.file}${suggestion.line_start ? ` 第 ${suggestion.line_start} 行` : ''}`"
+        :title="disabled ? t('ai.locateOutdated') : t('ai.locate')"
+        :aria-label="locationLabel()"
         @click="emit('locate')"
       >
         <svg
@@ -78,7 +86,7 @@ const severityLabel: Record<Severity, string> = {
         >
           <polyline points="20 6 9 17 4 12" />
         </svg>
-        加入草稿
+        {{ t("ai.draftAdded") }}
       </button>
       <button
         class="btn btn-sm btn-edit"
@@ -98,10 +106,10 @@ const severityLabel: Record<Severity, string> = {
           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
           <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
         </svg>
-        编辑
+        {{ t("ai.edit") }}
       </button>
       <button class="btn btn-sm btn-reject" :disabled="disabled" @click="emit('action', 'reject')">
-        忽略
+        {{ t("ai.ignore") }}
       </button>
     </div>
 
@@ -120,7 +128,7 @@ const severityLabel: Record<Severity, string> = {
           <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
           <polyline points="22 4 12 14.01 9 11.01" />
         </svg>
-        已加入草稿
+        {{ t("ai.draftAdded") }}
       </span>
       <span v-else-if="suggestion.action === 'submitted'" class="accepted">
         <svg
@@ -136,7 +144,7 @@ const severityLabel: Record<Severity, string> = {
           <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
           <polyline points="22 4 12 14.01 9 11.01" />
         </svg>
-        已提交
+        {{ t("ai.draftSubmitted") }}
       </span>
       <span v-else-if="suggestion.action === 'reject'" class="rejected">
         <svg
@@ -152,10 +160,10 @@ const severityLabel: Record<Severity, string> = {
           <circle cx="12" cy="12" r="10" />
           <polyline points="4 4 20 20" />
         </svg>
-        已忽略
+        {{ t("ai.draftIgnored") }}
       </span>
       <span v-else-if="typeof suggestion.action === 'object'" class="accepted">
-        已编辑并加入草稿
+        {{ t("ai.draftEdited") }}
       </span>
     </div>
   </div>

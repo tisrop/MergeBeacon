@@ -9,57 +9,59 @@ import { usePrStore } from "@/stores/usePrStore";
 import { useRepoStore } from "@/stores/useRepoStore";
 import { INBOX_BACKGROUND_REFRESH_MS, useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import type { Platform, ReviewInboxItem } from "@/types";
+import { useI18n } from "@/i18n";
 
 const router = useRouter();
 const auth = useAuthStore();
 const repo = useRepoStore();
 const pr = usePrStore();
 const inbox = useReviewInboxStore();
+const { t } = useI18n();
 
 const platformLabels: Record<Platform, string> = {
   github: "GitHub",
   gitlab: "GitLab",
   gitee: "Gitee",
 };
-const categoryOptions = [
-  { value: "review_requested", label: "待我处理" },
-  { value: "authored", label: "我创建的" },
-];
-const relationshipOptions = [
-  { value: "all", label: "全部角色" },
-  { value: "reviewer", label: "评审人" },
-  { value: "assignee", label: "负责人" },
-  { value: "tester", label: "测试人" },
-];
-const readinessOptions = [
-  { value: "all", label: "全部合并状态" },
-  { value: "ready", label: "可合并" },
-  { value: "blocked", label: "被阻塞" },
-  { value: "pending", label: "检查中" },
-  { value: "unknown", label: "状态未知" },
-];
-const readOptions = [
-  { value: "all", label: "全部阅读状态" },
-  { value: "unread", label: "未读" },
-  { value: "read", label: "已读" },
-];
-const blockerOptions = [
-  { value: "all", label: "全部阻塞原因" },
-  { value: "checks_failed", label: "CI 失败" },
-  { value: "checks_pending", label: "CI 进行中" },
-  { value: "changes_requested", label: "请求修改" },
-  { value: "approvals_required", label: "审批不足" },
+const categoryOptions = computed(() => [
+  { value: "review_requested", label: t("inbox.requested") },
+  { value: "authored", label: t("inbox.authored") },
+]);
+const relationshipOptions = computed(() => [
+  { value: "all", label: t("inbox.allRelationships") },
+  { value: "reviewer", label: t("inbox.relationshipReviewer") },
+  { value: "assignee", label: t("inbox.relationshipAssignee") },
+  { value: "tester", label: t("inbox.relationshipTester") },
+]);
+const readinessOptions = computed(() => [
+  { value: "all", label: t("inbox.allReadiness") },
+  { value: "ready", label: t("pr.readinessReady") },
+  { value: "blocked", label: t("pr.readinessBlocked") },
+  { value: "pending", label: t("pr.readinessPending") },
+  { value: "unknown", label: t("pr.readinessUnknown") },
+]);
+const readOptions = computed(() => [
+  { value: "all", label: t("inbox.allReadStates") },
+  { value: "unread", label: t("inbox.unread") },
+  { value: "read", label: t("inbox.readState") },
+]);
+const blockerOptions = computed(() => [
+  { value: "all", label: t("inbox.allBlockers") },
+  { value: "checks_failed", label: t("inbox.blockerChecksFailed") },
+  { value: "checks_pending", label: t("inbox.blockerChecksPending") },
+  { value: "changes_requested", label: t("inbox.blockerChanges") },
+  { value: "approvals_required", label: t("inbox.blockerApprovals") },
   { value: "draft", label: "Draft" },
-  { value: "conflicts", label: "存在冲突" },
-  { value: "branch_behind", label: "分支落后" },
-  { value: "discussions_unresolved", label: "讨论未解决" },
-];
-const sortOptions = [
-  { value: "updated", label: "最近更新" },
-  { value: "blocked", label: "阻塞优先" },
-  { value: "mergeable", label: "可合并优先" },
-  { value: "checks_failed", label: "检查失败优先" },
-];
+  { value: "conflicts", label: t("inbox.blockerConflicts") },
+  { value: "branch_behind", label: t("inbox.blockerBehind") },
+  { value: "discussions_unresolved", label: t("inbox.blockerDiscussions") },
+]);
+const sortOptions = computed(() => [
+  { value: "updated", label: t("inbox.sortUpdated") },
+  { value: "blocked", label: t("inbox.sortBlocked") },
+  { value: "mergeable", label: t("inbox.sortMergeable") },
+  { value: "checks_failed", label: t("inbox.sortChecksFailed") },
+]);
 const loggedInPlatforms = computed<Platform[]>(() =>
   (Object.keys(auth.platforms) as Platform[]).filter(
     (platform) => auth.platforms[platform].isLoggedIn,
@@ -69,7 +71,7 @@ const availablePlatforms = computed<Platform[]>(() =>
   loggedInPlatforms.value.filter((platform) => auth.platformVisibility[platform]),
 );
 const platformOptions = computed(() => [
-  { value: "all", label: "全部已启用平台" },
+  { value: "all", label: t("inbox.allEnabledPlatforms") },
   ...availablePlatforms.value.map((platform) => ({
     value: platform,
     label: platformLabels[platform],
@@ -81,7 +83,7 @@ const visibleErrors = computed(() =>
     .map((platform) => ({
       platform,
       label: platformLabels[platform],
-      message: inbox.errors[platform] ?? "未知错误",
+      message: inbox.errors[platform] ?? t("common.unknownError"),
     })),
 );
 const hasLoadedItems = computed(() =>
@@ -165,27 +167,27 @@ onUnmounted(() => {
     <template #header>
       <div class="header-row page-heading">
         <div>
-          <h2>PR 收件箱</h2>
-          <p class="subtitle">汇总需要你评审、负责或测试的 PR/MR</p>
+          <h2>{{ t("inbox.title") }}</h2>
+          <p class="subtitle">{{ t("inbox.subtitle") }}</p>
         </div>
         <div class="header-actions">
-          <span v-if="inbox.items.length" class="result-count"
-            >{{ inbox.items.length }} 条结果</span
-          >
+          <span v-if="inbox.items.length" class="result-count">{{
+            t("inbox.resultCount", { count: inbox.items.length })
+          }}</span>
           <button
             v-if="inbox.unreadCount > 0"
             type="button"
             class="mark-all-read-button"
             @click="inbox.markAllRead"
           >
-            全部标为已读
+            {{ t("inbox.markAllRead") }}
           </button>
           <button
             type="button"
             class="refresh-button"
             :disabled="inbox.loading || availablePlatforms.length === 0"
-            aria-label="刷新 PR 收件箱"
-            title="刷新 PR 收件箱"
+            :aria-label="t('layout.reviewInbox')"
+            :title="t('layout.reviewInbox')"
             @click="refresh"
           >
             <svg
@@ -206,77 +208,77 @@ onUnmounted(() => {
           </button>
         </div>
       </div>
-      <div class="filter-bar" aria-label="PR 收件箱筛选">
+      <div class="filter-bar" :aria-label="t('inbox.filterAria')">
         <div class="filter-field">
-          <span>范围</span>
+          <span>{{ t("inbox.category") }}</span>
           <AppSelect
             v-model="inbox.filters.category"
             size="sm"
             :options="categoryOptions"
-            aria-label="PR 收件箱分类"
+            :aria-label="t('inbox.categoryAria')"
           />
         </div>
         <div class="filter-field">
-          <span>平台</span>
+          <span>{{ t("inbox.platform") }}</span>
           <AppSelect
             v-model="inbox.filters.platform"
             size="sm"
             :options="platformOptions"
-            aria-label="代码托管平台"
+            :aria-label="t('inbox.platformAria')"
           />
         </div>
         <div class="filter-field">
-          <span>角色</span>
+          <span>{{ t("inbox.relationship") }}</span>
           <AppSelect
             v-model="inbox.filters.relationship"
             size="sm"
             :options="relationshipOptions"
-            aria-label="收件箱角色"
+            :aria-label="t('inbox.relationshipAria')"
           />
         </div>
         <div class="filter-field">
-          <span>合并状态</span>
+          <span>{{ t("inbox.readiness") }}</span>
           <AppSelect
             v-model="inbox.filters.readiness"
             size="sm"
             :options="readinessOptions"
-            aria-label="收件箱合并状态"
+            :aria-label="t('inbox.readinessAria')"
           />
         </div>
         <div class="filter-field">
-          <span>阅读</span>
+          <span>{{ t("inbox.read") }}</span>
           <AppSelect
             v-model="inbox.filters.read"
             size="sm"
             :options="readOptions"
-            aria-label="收件箱阅读状态"
+            :aria-label="t('inbox.readAria')"
           />
         </div>
         <div class="filter-field">
-          <span>阻塞</span>
+          <span>{{ t("inbox.blocker") }}</span>
           <AppSelect
             v-model="inbox.filters.blocker"
             size="sm"
             :options="blockerOptions"
-            aria-label="收件箱阻塞原因"
+            :aria-label="t('inbox.blockerAria')"
           />
         </div>
         <div class="filter-field">
-          <span>排序</span>
+          <span>{{ t("inbox.sort") }}</span>
           <AppSelect
             v-model="inbox.filters.sort"
             size="sm"
             :options="sortOptions"
-            aria-label="收件箱排序方式"
+            :aria-label="t('inbox.sortAria')"
           />
         </div>
         <label class="repository-filter">
-          <span>仓库</span>
+          <span>{{ t("inbox.repository") }}</span>
           <input
             v-model="inbox.filters.repository"
             class="input"
             type="search"
-            placeholder="筛选 owner/repo"
+            :placeholder="t('inbox.repositoryPlaceholder')"
             autocomplete="off"
           />
         </label>
@@ -296,22 +298,28 @@ onUnmounted(() => {
         <path d="M4 4h16v16H4z" />
         <path d="m4 8 8 5 8-5" />
       </svg>
-      <p v-if="loggedInPlatforms.length === 0">请先登录至少一个代码托管平台</p>
-      <p v-else>当前没有已登录且启用的平台</p>
+      <p v-if="loggedInPlatforms.length === 0">{{ t("inbox.noLogin") }}</p>
+      <p v-else>{{ t("inbox.loggedInDisabled") }}</p>
     </div>
 
     <div v-else>
       <div v-if="visibleErrors.length" class="platform-errors" aria-live="polite">
         <div v-for="error in visibleErrors" :key="error.platform" class="platform-error">
           <div>
-            <strong>{{ error.label }} 加载失败</strong>
+            <strong>{{ t("inbox.error", { platform: error.label }) }}</strong>
             <span>{{ error.message }}</span>
           </div>
-          <button type="button" @click="inbox.retry(error.platform)">重试</button>
+          <button type="button" @click="inbox.retry(error.platform)">
+            {{ t("common.retry") }}
+          </button>
         </div>
       </div>
 
-      <div v-if="inbox.loading && !hasLoadedItems" class="loading-skeleton" aria-label="正在加载">
+      <div
+        v-if="inbox.loading && !hasLoadedItems"
+        class="loading-skeleton"
+        :aria-label="t('inbox.loading')"
+      >
         <div v-for="index in 5" :key="index" class="skeleton skeleton-card" />
       </div>
 
@@ -347,10 +355,10 @@ onUnmounted(() => {
             inbox.filters.blocker !== 'all'
           "
         >
-          当前筛选条件下没有结果
+          {{ t("inbox.emptyFiltered") }}
         </p>
-        <p v-else-if="visibleErrors.length">暂未加载到可展示的 Pull Request</p>
-        <p v-else>当前没有需要处理的 Pull Request</p>
+        <p v-else-if="visibleErrors.length">{{ t("inbox.emptyWithErrors") }}</p>
+        <p v-else>{{ t("inbox.empty") }}</p>
       </div>
 
       <button
@@ -360,7 +368,7 @@ onUnmounted(() => {
         :disabled="inbox.loading"
         @click="inbox.loadMore"
       >
-        {{ inbox.loading ? "加载中..." : "加载更多" }}
+        {{ inbox.loading ? t("common.loading") : t("common.loadMore") }}
       </button>
     </div>
   </AppLayout>

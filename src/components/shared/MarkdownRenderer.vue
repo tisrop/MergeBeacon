@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { marked } from "marked";
 import { clipboardWriteText } from "@/api";
+import { useI18n } from "@/i18n";
 import { getErrorMessage } from "@/utils/error";
 
 const props = defineProps<{
@@ -15,6 +16,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   "link-click": [payload: { href: string; text: string; title: string | null }];
 }>();
+
+const { t } = useI18n();
 
 const allowedTags = new Set([
   "A",
@@ -147,8 +150,8 @@ function addCodeBlockControls(sanitizedHtml: string): string {
     button.className = "markdown-code-copy";
     button.type = "button";
     button.dataset.codeCopy = String(index);
-    button.title = "复制代码";
-    button.setAttribute("aria-label", "复制代码");
+    button.title = t("markdown.copyCode");
+    button.setAttribute("aria-label", t("markdown.copyCode"));
     button.innerHTML = copyIcon();
     pre.replaceWith(wrapper);
     wrapper.append(pre, button);
@@ -190,7 +193,7 @@ function addRepositoryReferenceLinks(sanitizedHtml: string): string {
       const anchor = document.createElement("a");
       anchor.href = `/__mergebeacon__/reference/${symbol === "#" ? "hash" : "bang"}/${number}`;
       anchor.textContent = `${symbol}${number}`;
-      anchor.title = `打开仓库引用 ${symbol}${number}`;
+      anchor.title = t("markdown.openReference", { reference: `${symbol}${number}` });
       fragment.append(anchor);
       offset = index + match[0].length;
     }
@@ -225,8 +228,8 @@ function clearCopyFeedback(): void {
   }
   if (activeCopyButton) {
     delete activeCopyButton.dataset.copyState;
-    activeCopyButton.title = "复制代码";
-    activeCopyButton.setAttribute("aria-label", "复制代码");
+    activeCopyButton.title = t("markdown.copyCode");
+    activeCopyButton.setAttribute("aria-label", t("markdown.copyCode"));
     activeCopyButton = null;
   }
   const status = rootRef.value?.querySelector(".markdown-copy-status");
@@ -267,14 +270,20 @@ async function handleRendererClick(event: MouseEvent): Promise<void> {
     const sequence = ++copySequence;
     copyInFlight = true;
     button.disabled = true;
-    setCopyStatus("正在复制代码");
+    setCopyStatus(t("markdown.copyingCode"));
     try {
       await clipboardWriteText(code.textContent ?? "");
       if (sequence !== copySequence) return;
-      showCopyFeedback(button, "copied", "代码已复制");
+      showCopyFeedback(button, "copied", t("markdown.codeCopied"));
     } catch (error) {
       if (sequence !== copySequence) return;
-      showCopyFeedback(button, "error", `复制失败：${getErrorMessage(error, "无法访问剪贴板")}`);
+      showCopyFeedback(
+        button,
+        "error",
+        t("common.copyFailed", {
+          message: getErrorMessage(error, t("markdown.clipboardUnavailable")),
+        }),
+      );
     } finally {
       button.disabled = false;
       copyInFlight = false;

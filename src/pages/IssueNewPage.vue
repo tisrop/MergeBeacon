@@ -9,11 +9,13 @@ import IssueForm from "@/components/issue/IssueForm.vue";
 import { issueCreate, issueTemplates, listRepositoryLabels } from "@/api";
 import type { IssueTemplate, Platform, PrLabel } from "@/types";
 import { getErrorMessage } from "@/utils/error";
+import { useI18n } from "@/i18n";
 
 const router = useRouter();
 const auth = useAuthStore();
 const issueStore = useIssueStore();
 const repo = useRepoStore();
+const { t } = useI18n();
 
 const title = ref("");
 const body = ref("");
@@ -90,7 +92,7 @@ async function loadLabels(context = currentContext()) {
     else labels.value = matchAvailableLabels(labels.value);
   } catch (loadError) {
     if (requestSequence !== labelsRequestSequence) return;
-    labelsError.value = getErrorMessage(loadError, "仓库标签加载失败");
+    labelsError.value = getErrorMessage(loadError, t("issue.labelLoadFailed"));
   } finally {
     if (requestSequence === labelsRequestSequence) labelsLoading.value = false;
   }
@@ -119,7 +121,7 @@ async function loadTemplates(context = currentContext()) {
     }
   } catch (loadError) {
     if (requestSequence !== templatesRequestSequence) return;
-    templatesError.value = getErrorMessage(loadError, "Issue 模板加载失败");
+    templatesError.value = getErrorMessage(loadError, t("issue.templateLoadFailed"));
   } finally {
     if (requestSequence === templatesRequestSequence) templatesLoading.value = false;
   }
@@ -173,7 +175,7 @@ onScopeDispose(() => {
 async function handleSubmit() {
   if (!repo.activeRepo) return;
   if (!title.value.trim()) {
-    error.value = "请输入标题";
+    error.value = t("issue.titleRequired");
     return;
   }
 
@@ -196,7 +198,7 @@ async function handleSubmit() {
     void router.push({ name: "issue-list" });
   } catch (submitError) {
     if (requestSequence !== submitRequestSequence) return;
-    error.value = getErrorMessage(submitError, "创建失败");
+    error.value = getErrorMessage(submitError, t("issue.createFailed"));
   } finally {
     if (requestSequence === submitRequestSequence) submitting.value = false;
   }
@@ -208,11 +210,13 @@ async function handleSubmit() {
     <template #header>
       <div class="issue-new-header page-heading">
         <div>
-          <h2>新建 Issue</h2>
-          <p v-if="repo.activeFullName">将在 {{ repo.activeFullName }} 中创建</p>
-          <p v-else>请先选择目标仓库</p>
+          <h2>{{ t("issue.new") }}</h2>
+          <p v-if="repo.activeFullName">
+            {{ t("issue.createdIn", { repository: repo.activeFullName }) }}
+          </p>
+          <p v-else>{{ t("issue.noRepository") }}</p>
         </div>
-        <router-link to="/issue" class="btn btn-sm">返回 Issue 列表</router-link>
+        <router-link to="/issue" class="btn btn-sm">{{ t("issue.backToList") }}</router-link>
       </div>
     </template>
 
@@ -252,8 +256,8 @@ async function handleSubmit() {
           <path d="M4 4h16v16H4z" />
           <path d="M8 9h8M8 13h5" />
         </svg>
-        <strong>尚未选择目标仓库</strong>
-        <p>请先从左侧仓库列表中选择一个仓库，再创建 Issue。</p>
+        <strong>{{ t("issue.noRepositoryTitle") }}</strong>
+        <p>{{ t("issue.noRepositoryBody") }}</p>
       </div>
     </div>
   </AppLayout>

@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import NotificationSettings from "@/components/notification/NotificationSettings.vue";
+import { setAppLocale } from "@/i18n";
 import {
   notificationPermissionGranted,
   requestNotificationPermission,
@@ -25,6 +26,7 @@ vi.mock("@/services/desktopNotifications", () => ({
 
 describe("NotificationSettings", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     storage.clear();
     setActivePinia(createPinia());
     vi.mocked(notificationPermissionGranted).mockReset();
@@ -33,6 +35,19 @@ describe("NotificationSettings", () => {
     vi.mocked(showDesktopTestNotification).mockResolvedValue(undefined);
     vi.mocked(notificationPermissionGranted).mockResolvedValue(false);
     vi.mocked(requestNotificationPermission).mockResolvedValue(true);
+  });
+
+  it("切换界面语言后立即更新通知设置和状态文案", async () => {
+    const wrapper = mount(NotificationSettings);
+    await flushPromises();
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("Enable desktop notifications");
+    expect(wrapper.text()).toContain("Waiting for first check");
+    expect(wrapper.text()).toContain("No hosting platform API request has been made");
+    expect(wrapper.text()).not.toContain("启用桌面通知");
   });
 
   it("获得系统权限后启用通知，并允许按事件关闭", async () => {
@@ -72,6 +87,32 @@ describe("NotificationSettings", () => {
 
     expect(wrapper.get('[role="alert"]').text()).toContain("permission unavailable");
     expect(useNotificationStore().notificationError).toContain("permission unavailable");
+  });
+
+  it("英文界面不显示后端生成的中文通知权限前缀", async () => {
+    setAppLocale("en-US");
+    vi.mocked(notificationPermissionGranted).mockRejectedValue(
+      new Error("读取 macOS 通知权限失败：UNErrorDomain error 1"),
+    );
+
+    const wrapper = mount(NotificationSettings);
+    await flushPromises();
+
+    expect(wrapper.get('[role="alert"]').text()).toContain(
+      "Failed to check desktop notification permission: UNErrorDomain error 1",
+    );
+    expect(wrapper.get('[role="alert"]').text()).not.toContain("读取 macOS 通知权限失败");
+    expect(useNotificationStore().notificationError).not.toContain("读取 macOS 通知权限失败");
+
+    setAppLocale("zh-CN");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get('[role="alert"]').text()).toContain(
+      "检查桌面通知权限失败：读取 macOS 通知权限失败：UNErrorDomain error 1",
+    );
+    expect(useNotificationStore().notificationError).not.toContain(
+      "Failed to check desktop notification permission",
+    );
   });
 
   it("设置页检测到系统权限被撤销时停止通知轮询并提示重新授权", async () => {

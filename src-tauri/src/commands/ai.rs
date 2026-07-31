@@ -1,4 +1,4 @@
-use crate::ai::client::AiClient;
+use crate::ai::client::{AiClient, AiReviewOptions};
 use crate::error::{AppError, CommandError, CommandResult};
 use crate::error_log::ErrorLogStore;
 use crate::models::{AiConfig, AiPrDraftRequest, AiPrDraftResult, AiReviewRequest, AiReviewResult, AiStreamEvent};
@@ -143,10 +143,13 @@ pub async fn ai_review(state: State<'_, AppState>, request: AiReviewRequest) -> 
         .review(
             &request.diff,
             request.context.as_ref(),
-            request.focus.as_ref(),
-            config.system_prompt.as_deref(),
-            config.temperature.unwrap_or(0.3),
-            config.max_tokens.unwrap_or(8192),
+            AiReviewOptions {
+                focus: request.focus.as_ref(),
+                language: &request.language,
+                custom_prompt: config.system_prompt.as_deref(),
+                temperature: config.temperature.unwrap_or(0.3),
+                max_tokens: config.max_tokens.unwrap_or(8192),
+            },
         )
         .await
         .map_err(CommandError::from)
@@ -185,10 +188,13 @@ pub async fn ai_review_stream(
             .review_stream(
                 &request.diff,
                 request.context.as_ref(),
-                request.focus.as_ref(),
-                system_prompt.as_deref(),
-                temperature,
-                max_tokens,
+                AiReviewOptions {
+                    focus: request.focus.as_ref(),
+                    language: &request.language,
+                    custom_prompt: system_prompt.as_deref(),
+                    temperature,
+                    max_tokens,
+                },
                 move |token| {
                     chunk_handle
                         .emit(

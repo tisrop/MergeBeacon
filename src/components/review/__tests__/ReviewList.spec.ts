@@ -1,6 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReviewList from "@/components/review/ReviewList.vue";
+import { setAppLocale } from "@/i18n";
 import type { PrComment, Review } from "@/types";
 
 const mocks = vi.hoisted(() => ({
@@ -85,6 +86,7 @@ async function mountList(extraProps: Record<string, unknown> = {}) {
 describe("ReviewList", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setAppLocale("zh-CN");
     mocks.reviewList.mockResolvedValue(reviews);
     mocks.reviewCommentsList.mockResolvedValue([
       comment({}),
@@ -129,6 +131,21 @@ describe("ReviewList", () => {
         },
       },
     ]);
+  });
+
+  it("已挂载时切换英文，并保留远端评审正文", async () => {
+    const wrapper = await mountList();
+
+    expect(wrapper.text()).toContain("评审进度");
+    expect(wrapper.text()).toContain("整体需要修改");
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("Review progress");
+    expect(wrapper.text()).toContain("Line comment threads");
+    expect(wrapper.text()).toContain("整体需要修改");
+    expect(wrapper.text()).not.toContain("评审进度");
   });
 
   it("将总体评审和行级评论中的 Markdown 链接渲染为可点击链接", async () => {

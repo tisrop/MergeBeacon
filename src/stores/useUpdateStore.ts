@@ -9,6 +9,7 @@ import {
 } from "@/api";
 import type { UpdateCheckResult } from "@/types";
 import { getErrorMessage } from "@/utils/error";
+import { translate } from "@/i18n";
 
 const AUTO_UPDATE_CHECK_KEY = "mergebeacon:auto-update-check";
 const LAST_UPDATE_CHECK_KEY = "mergebeacon:last-update-check";
@@ -99,7 +100,7 @@ export const useUpdateStore = defineStore("update", () => {
       }
     } catch (error) {
       if (!isBackground) {
-        updateError.value = getErrorMessage(error, "检查更新失败，请稍后重试");
+        updateError.value = getErrorMessage(error, translate("update.checkFailed"));
       }
     } finally {
       isCheckingUpdate.value = false;
@@ -145,7 +146,7 @@ export const useUpdateStore = defineStore("update", () => {
 
     if (result.update_mode === "portable") {
       if (!result.portable_download_url) {
-        updateError.value = "更新元数据缺少 Windows 便携版 ZIP 下载地址";
+        updateError.value = translate("update.portableUrlMissing");
         return;
       }
       isInstallingUpdate.value = true;
@@ -153,7 +154,7 @@ export const useUpdateStore = defineStore("update", () => {
       try {
         await openExternalUrl(result.portable_download_url);
       } catch (error) {
-        updateError.value = getErrorMessage(error, "打开便携版 ZIP 下载页面失败，请稍后重试");
+        updateError.value = getErrorMessage(error, translate("update.portableOpenFailed"));
       } finally {
         isInstallingUpdate.value = false;
       }
@@ -188,7 +189,7 @@ export const useUpdateStore = defineStore("update", () => {
       isUpdateInstalled.value = true;
       updatePhase.value = null;
     } catch (error) {
-      updateError.value = getErrorMessage(error, "下载安装更新失败，请稍后重试");
+      updateError.value = getErrorMessage(error, translate("update.installFailed"));
       updatePhase.value = null;
     } finally {
       if (activeUpdateRequestId === requestId) activeUpdateRequestId = null;
@@ -205,7 +206,7 @@ export const useUpdateStore = defineStore("update", () => {
     try {
       await restartAfterUpdate();
     } catch (error) {
-      updateError.value = getErrorMessage(error, "重启失败，请手动重新打开应用");
+      updateError.value = getErrorMessage(error, translate("update.restartFailed"));
     } finally {
       isRestartingUpdate.value = false;
     }

@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AiSettings from "../AiSettings.vue";
 import { aiListModels } from "@/api";
+import { setAppLocale } from "@/i18n";
 
 vi.mock("@/api", () => ({
   aiGetConfig: vi.fn().mockRejectedValue(new Error("no config")),
@@ -13,7 +14,20 @@ vi.mock("@/api", () => ({
 
 describe("AiSettings", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     vi.mocked(aiListModels).mockResolvedValue([`gpt<img src=x onerror="alert(1)">model`]);
+  });
+
+  it("切换界面语言后立即更新设置文案", async () => {
+    const wrapper = mount(AiSettings);
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("Presets");
+    expect(wrapper.text()).toContain("Local Ollama");
+    expect(wrapper.text()).toContain("Fetch models");
+    expect(wrapper.text()).not.toContain("预设配置");
   });
 
   it("将恶意模型 ID 作为纯文本渲染", async () => {

@@ -31,6 +31,8 @@ import { useDiffCodeSearch } from "./useDiffCodeSearch";
 import { useDiffPopupStyle, useDiffViewportStyles } from "./useDiffLayoutStyles";
 import { useCopyToClipboard } from "@/composables/useCopyToClipboard";
 import { useDocumentStateClass } from "@/composables/useDynamicCssClass";
+import { useI18n } from "@/i18n";
+import type { MessageKey } from "@/i18n/messages";
 
 const props = defineProps<{
   diff: DiffResult | null;
@@ -50,6 +52,7 @@ const props = defineProps<{
   readOnly?: boolean;
 }>();
 
+const { t } = useI18n();
 const uiSettings = useUiSettingsStore();
 const reviewProgress = useReviewProgressStore();
 const { isDiffSyncScrollEnabled } = storeToRefs(uiSettings);
@@ -184,12 +187,12 @@ let locationRequestSequence = 0;
 
 const controlledSides = ["left", "right"] as const;
 
-const statusDescriptions: Record<FileStatus, string> = {
-  added: "新增",
-  modified: "修改",
-  removed: "删除",
-  renamed: "重命名",
-};
+const statusDescriptions = computed<Record<FileStatus, string>>(() => ({
+  added: t("diff.viewer.added"),
+  modified: t("diff.viewer.modified"),
+  removed: t("diff.viewer.removed"),
+  renamed: t("diff.viewer.renamed"),
+}));
 
 function sortTree(nodes: FileTreeNode[]): void {
   nodes.sort((left, right) => {
@@ -305,16 +308,16 @@ function reviewProgressIdentity(context: ReviewProgressContext): string {
 }
 
 const viewedProgressSource = computed(() => {
-  if (!props.canSyncViewedFiles) return "本地";
-  if (viewedFilesLoading.value) return "同步中";
-  if (!viewedFilesLoadedRemotely.value) return "本地缓存";
-  return "远端";
+  if (!props.canSyncViewedFiles) return t("diff.viewer.progressLocal");
+  if (viewedFilesLoading.value) return t("diff.viewer.progressSyncing");
+  if (!viewedFilesLoadedRemotely.value) return t("diff.viewer.progressCached");
+  return t("diff.viewer.progressRemote");
 });
 const viewedProgressDescription = computed(() => {
-  if (!props.canSyncViewedFiles) return "查看进度仅保存在本机";
-  if (viewedFilesLoading.value) return "正在从远端同步查看进度";
-  if (!viewedFilesLoadedRemotely.value) return "远端同步失败，当前展示本地缓存";
-  return "查看进度已同步到远端平台";
+  if (!props.canSyncViewedFiles) return t("diff.viewer.progressLocalDescription");
+  if (viewedFilesLoading.value) return t("diff.viewer.progressSyncingDescription");
+  if (!viewedFilesLoadedRemotely.value) return t("diff.viewer.progressCachedDescription");
+  return t("diff.viewer.progressRemoteDescription");
 });
 const viewedFilePaths = computed(() => {
   const context = reviewProgressContext.value;
@@ -357,7 +360,7 @@ const imagePreviewTargets = computed<ImagePreviewTarget[]>(() => {
   if (patch.old_path && props.baseSha && baseMimeType && baseOwner && baseRepo) {
     targets.push({
       side: "base",
-      label: "变更前",
+      label: t("diff.viewer.before"),
       owner: baseOwner,
       repo: baseRepo,
       path: patch.old_path,
@@ -371,7 +374,7 @@ const imagePreviewTargets = computed<ImagePreviewTarget[]>(() => {
   if (patch.new_path && props.headSha && headMimeType && headOwner && headRepo) {
     targets.push({
       side: "head",
-      label: "变更后",
+      label: t("diff.viewer.imageAfter"),
       owner: headOwner,
       repo: headRepo,
       path: patch.new_path,
@@ -481,14 +484,18 @@ async function loadImagePreview(): Promise<void> {
           target.revision,
         );
         if (file.truncated) {
-          return { ...target, src: null, error: "图片文件过大，无法渲染预览" };
+          return { ...target, src: null, error: t("diff.viewer.imageTooLarge") };
         }
         const src = createImagePreviewSource(file, target.mimeType);
         return src
           ? { ...target, src, error: null }
-          : { ...target, src: null, error: "文件内容不是有效或受支持的图片" };
+          : { ...target, src: null, error: t("diff.viewer.imageInvalid") };
       } catch (error) {
-        return { ...target, src: null, error: getErrorMessage(error, "图片预览加载失败") };
+        return {
+          ...target,
+          src: null,
+          error: getErrorMessage(error, t("diff.viewer.imageLoadFailed")),
+        };
       }
     }),
   );
@@ -512,7 +519,7 @@ function handleImagePreviewError(failedPanel: ImagePreviewPanel): void {
   imagePreviewPanels.value = imagePreviewPanels.value.map((currentPanel) =>
     imagePreviewPanelKey(currentPanel) === imagePreviewPanelKey(failedPanel) &&
     currentPanel.src === failedPanel.src
-      ? { ...currentPanel, src: null, error: "图片解码失败" }
+      ? { ...currentPanel, src: null, error: t("diff.viewer.imageDecodeFailed") }
       : currentPanel,
   );
 }
@@ -594,13 +601,13 @@ async function locateDiffRequest(request: DiffLocationRequest): Promise<void> {
   highlightedLocation.value = null;
   const path = request.path.trim();
   if (!path) {
-    emitLocationFailure(request, "AI 建议未提供文件路径，无法在 Diff 中定位");
+    emitLocationFailure(request, t("diff.viewer.locateMissingPath"));
     return;
   }
 
   const resolved = resolveLocationFile(path);
   if (!resolved) {
-    emitLocationFailure(request, `当前变更中找不到文件 ${path}，该建议可能已过期`);
+    emitLocationFailure(request, t("diff.viewer.locatePathMissing", { path }));
     return;
   }
 
@@ -616,11 +623,11 @@ async function locateDiffRequest(request: DiffLocationRequest): Promise<void> {
     return;
   }
   if (!Number.isInteger(request.line) || request.line <= 0) {
-    emitLocationFailure(request, `AI 建议提供的行号 ${request.line} 无效`);
+    emitLocationFailure(request, t("diff.viewer.locateInvalidLine", { line: request.line }));
     return;
   }
   if (!resolved.patch || resolved.patch.content_kind !== "text") {
-    emitLocationFailure(request, `文件 ${resolved.file.filename} 没有可定位的标准文本 Patch`);
+    emitLocationFailure(request, t("diff.viewer.locateNoPatch", { path: resolved.file.filename }));
     return;
   }
 
@@ -628,7 +635,10 @@ async function locateDiffRequest(request: DiffLocationRequest): Promise<void> {
   if (!target) {
     emitLocationFailure(
       request,
-      `文件 ${resolved.file.filename} 中找不到变更行 ${request.line}，该建议可能已过期或行号不在当前 Patch 中`,
+      t("diff.viewer.locateLineMissing", {
+        path: resolved.file.filename,
+        line: request.line,
+      }),
     );
     return;
   }
@@ -643,13 +653,19 @@ async function locateDiffRequest(request: DiffLocationRequest): Promise<void> {
   const lineElement = findControlledLineElement(target.side, target.line);
   if (!lineElement) {
     highlightedLocation.value = null;
-    emitLocationFailure(request, `文件 ${resolved.file.filename} 的目标行暂时无法显示`);
+    emitLocationFailure(
+      request,
+      t("diff.viewer.locateTargetHidden", { path: resolved.file.filename }),
+    );
     return;
   }
   const diffScroll = diffScrollRef.value;
   if (!diffScroll) {
     highlightedLocation.value = null;
-    emitLocationFailure(request, `文件 ${resolved.file.filename} 的滚动容器暂时不可用`);
+    emitLocationFailure(
+      request,
+      t("diff.viewer.locateScrollMissing", { path: resolved.file.filename }),
+    );
     return;
   }
   scrollElementWithinContainer(lineElement, diffScroll, "center");
@@ -803,9 +819,19 @@ function contextGapActions(gap: ControlledContextGap): ContextGapAction[] {
 
 function contextGapLabel(gap: ControlledContextGap, edge: ContextGapAction["edge"]): string {
   if (gap.direction === "both") {
-    return `向${edge === "start" ? "下" : "上"}展开未变更上下文（20 行）`;
+    return t("diff.viewer.contextExpandBoth", {
+      direction: t(
+        edge === "start" ? "diff.viewer.contextDirectionDown" : "diff.viewer.contextDirectionUp",
+      ),
+      count: CONTEXT_EXPANSION_STEP,
+    });
   }
-  return `展开${edge === "start" ? "下方" : "上方"}未变更上下文（20 行）`;
+  return t("diff.viewer.contextExpandOne", {
+    direction: t(
+      edge === "start" ? "diff.viewer.contextDirectionBelow" : "diff.viewer.contextDirectionAbove",
+    ),
+    count: CONTEXT_EXPANSION_STEP,
+  });
 }
 
 function contextGapRowCount(gap: ControlledContextGap): number {
@@ -872,7 +898,7 @@ async function loadSelectedFileContext(): Promise<boolean> {
   const identity = contextIdentity.value;
   if (loadedFileContext.value?.identity === identity) return true;
   if (!patch || !props.platform || !props.owner || !props.repo || !canLoadContext.value) {
-    contextError.value = "缺少该 PR 的 base/head revision，无法展开上下文";
+    contextError.value = t("diff.viewer.contextMissingRevisions");
     return false;
   }
 
@@ -891,11 +917,11 @@ async function loadSelectedFileContext(): Promise<boolean> {
     if (requestSequence !== contextRequestSequence || identity !== contextIdentity.value)
       return false;
     if (base?.truncated || head?.truncated) {
-      contextError.value = "文件过大，无法展开完整上下文";
+      contextError.value = t("diff.viewer.contextTooLarge");
       return false;
     }
     if (base?.binary || head?.binary) {
-      contextError.value = "二进制文件不支持展开文本上下文";
+      contextError.value = t("diff.viewer.contextBinary");
       return false;
     }
     loadedFileContext.value = {
@@ -1097,17 +1123,43 @@ function isFileViewed(path: string): boolean {
   return viewedFilePaths.value.has(path);
 }
 
+function fileTreeAriaLabel(row: FileTreeRow): string {
+  if (!row.file) return t("diff.viewer.directoryLabel", { name: row.name });
+  const summary = threadSummaryForFile(row.file.filename);
+  const viewed = isFileViewed(row.file.filename)
+    ? t("diff.viewer.fileViewedWithSource", { source: viewedProgressSource.value })
+    : t("diff.viewer.fileUnviewed");
+  const unresolved = summary?.unresolved
+    ? `, ${t("diff.viewer.fileUnresolved", { count: summary.unresolved })}`
+    : "";
+  return `${t("diff.viewer.fileLabel", {
+    status: statusDescriptions.value[row.file.status],
+    path: row.file.filename,
+  })}, ${viewed}${unresolved}`;
+}
+
+function fileTreeTitle(file: PrFile): string {
+  return t("diff.viewer.fileLabel", {
+    status: statusDescriptions.value[file.status],
+    path: file.filename,
+  });
+}
+
+function threadSummaryForFile(path: string) {
+  return props.threadSummary?.by_file[path];
+}
+
 const {
   copying: copyingFilePath,
   copied: filePathCopied,
   errorMessage: filePathCopyError,
   copy: copyText,
   resetCopyState: resetFilePathCopyState,
-} = useCopyToClipboard("无法写入系统剪贴板");
+} = useCopyToClipboard(() => t("common.copyUnavailable"));
 const filePathCopyTitle = computed(() => {
-  if (copyingFilePath.value) return "正在复制文件路径";
-  if (filePathCopied.value) return "文件路径已复制";
-  return "复制文件路径";
+  if (copyingFilePath.value) return t("diff.viewer.copyPathCopying");
+  if (filePathCopied.value) return t("diff.viewer.copyPathCopied");
+  return t("diff.viewer.copyPath");
 });
 
 async function copySelectedFilePath(): Promise<void> {
@@ -1144,7 +1196,7 @@ async function toggleSelectedFileViewed(): Promise<void> {
       reviewProgressContext.value &&
       reviewProgressIdentity(reviewProgressContext.value) === capturedProgressIdentity
     ) {
-      viewedFilesError.value = getErrorMessage(error, "无法同步文件已查看状态");
+      viewedFilesError.value = getErrorMessage(error, t("diff.viewer.reviewSyncFailed"));
     }
   } finally {
     const next = new Set(syncingViewedFiles.value);
@@ -1368,7 +1420,7 @@ watch(
       viewedFilesLoadedRemotely.value = true;
     } catch (error) {
       if (requestSequence === viewedFilesRequestSequence) {
-        viewedFilesError.value = getErrorMessage(error, "无法加载文件已查看状态");
+        viewedFilesError.value = getErrorMessage(error, t("diff.viewer.reviewLoadFailed"));
       }
     } finally {
       if (requestSequence === viewedFilesRequestSequence) viewedFilesLoading.value = false;
@@ -1459,8 +1511,47 @@ const { popupPositionClass, positionPopup } = useDiffPopupStyle({
 });
 const quickBody = ref("");
 const quickSubmitting = ref(false);
-const quickCategory = ref("logic");
-const quickSubCategory = ref("");
+type QuickCategoryId = "logic" | "security" | "performance" | "style" | "log";
+type QuickSubcategoryId =
+  | "boundary"
+  | "null"
+  | "exception"
+  | "concurrency"
+  | "state"
+  | "type"
+  | "injection"
+  | "permission"
+  | "exposure"
+  | "crypto"
+  | "validation"
+  | "csrf"
+  | "complexity"
+  | "memory"
+  | "io"
+  | "recompute"
+  | "cache"
+  | "database"
+  | "naming"
+  | "comments"
+  | "duplication"
+  | "hardcoded"
+  | "longFunction"
+  | "structure"
+  | "logLevel"
+  | "logExposure"
+  | "logMissing"
+  | "logContext"
+  | "logFormat"
+  | "logVolume";
+
+interface QuickSubcategoryDefinition {
+  id: QuickSubcategoryId;
+  labelKey: MessageKey;
+  templateKey: MessageKey;
+}
+
+const quickCategory = ref<QuickCategoryId>("logic");
+const quickSubCategory = ref<QuickSubcategoryId | "">("");
 
 const {
   registerSearchInput,
@@ -1497,53 +1588,178 @@ const {
   scrollElementWithinContainer,
 });
 
-const categories: Record<string, string[]> = {
-  logic: ["边界条件", "空值处理", "异常处理", "并发问题", "状态管理", "类型错误"],
-  security: ["注入攻击", "权限控制", "敏感信息泄露", "加密问题", "输入校验", "CSRF/XSS"],
-  performance: ["算法复杂度", "内存泄漏", "IO阻塞", "重复计算", "缓存优化", "数据库查询"],
-  style: ["命名规范", "注释缺失", "代码冗余", "硬编码", "函数过长", "结构混乱"],
-  log: ["日志级别不当", "敏感信息打印", "日志缺失", "异常信息不全", "日志格式", "日志过多"],
-};
-const categoryLabels: Record<string, string> = {
-  logic: "逻辑类",
-  security: "安全类",
-  performance: "性能类",
-  style: "代码风格类",
-  log: "日志类",
+const quickSubcategoryDefinitions: Record<QuickCategoryId, QuickSubcategoryDefinition[]> = {
+  logic: [
+    {
+      id: "boundary",
+      labelKey: "diff.quick.boundary.label",
+      templateKey: "diff.quick.boundary.template",
+    },
+    { id: "null", labelKey: "diff.quick.null.label", templateKey: "diff.quick.null.template" },
+    {
+      id: "exception",
+      labelKey: "diff.quick.exception.label",
+      templateKey: "diff.quick.exception.template",
+    },
+    {
+      id: "concurrency",
+      labelKey: "diff.quick.concurrency.label",
+      templateKey: "diff.quick.concurrency.template",
+    },
+    { id: "state", labelKey: "diff.quick.state.label", templateKey: "diff.quick.state.template" },
+    { id: "type", labelKey: "diff.quick.type.label", templateKey: "diff.quick.type.template" },
+  ],
+  security: [
+    {
+      id: "injection",
+      labelKey: "diff.quick.injection.label",
+      templateKey: "diff.quick.injection.template",
+    },
+    {
+      id: "permission",
+      labelKey: "diff.quick.permission.label",
+      templateKey: "diff.quick.permission.template",
+    },
+    {
+      id: "exposure",
+      labelKey: "diff.quick.exposure.label",
+      templateKey: "diff.quick.exposure.template",
+    },
+    {
+      id: "crypto",
+      labelKey: "diff.quick.crypto.label",
+      templateKey: "diff.quick.crypto.template",
+    },
+    {
+      id: "validation",
+      labelKey: "diff.quick.validation.label",
+      templateKey: "diff.quick.validation.template",
+    },
+    { id: "csrf", labelKey: "diff.quick.csrf.label", templateKey: "diff.quick.csrf.template" },
+  ],
+  performance: [
+    {
+      id: "complexity",
+      labelKey: "diff.quick.complexity.label",
+      templateKey: "diff.quick.complexity.template",
+    },
+    {
+      id: "memory",
+      labelKey: "diff.quick.memory.label",
+      templateKey: "diff.quick.memory.template",
+    },
+    { id: "io", labelKey: "diff.quick.io.label", templateKey: "diff.quick.io.template" },
+    {
+      id: "recompute",
+      labelKey: "diff.quick.recompute.label",
+      templateKey: "diff.quick.recompute.template",
+    },
+    { id: "cache", labelKey: "diff.quick.cache.label", templateKey: "diff.quick.cache.template" },
+    {
+      id: "database",
+      labelKey: "diff.quick.database.label",
+      templateKey: "diff.quick.database.template",
+    },
+  ],
+  style: [
+    {
+      id: "naming",
+      labelKey: "diff.quick.naming.label",
+      templateKey: "diff.quick.naming.template",
+    },
+    {
+      id: "comments",
+      labelKey: "diff.quick.comments.label",
+      templateKey: "diff.quick.comments.template",
+    },
+    {
+      id: "duplication",
+      labelKey: "diff.quick.duplication.label",
+      templateKey: "diff.quick.duplication.template",
+    },
+    {
+      id: "hardcoded",
+      labelKey: "diff.quick.hardcoded.label",
+      templateKey: "diff.quick.hardcoded.template",
+    },
+    {
+      id: "longFunction",
+      labelKey: "diff.quick.longFunction.label",
+      templateKey: "diff.quick.longFunction.template",
+    },
+    {
+      id: "structure",
+      labelKey: "diff.quick.structure.label",
+      templateKey: "diff.quick.structure.template",
+    },
+  ],
+  log: [
+    {
+      id: "logLevel",
+      labelKey: "diff.quick.logLevel.label",
+      templateKey: "diff.quick.logLevel.template",
+    },
+    {
+      id: "logExposure",
+      labelKey: "diff.quick.logExposure.label",
+      templateKey: "diff.quick.logExposure.template",
+    },
+    {
+      id: "logMissing",
+      labelKey: "diff.quick.logMissing.label",
+      templateKey: "diff.quick.logMissing.template",
+    },
+    {
+      id: "logContext",
+      labelKey: "diff.quick.logContext.label",
+      templateKey: "diff.quick.logContext.template",
+    },
+    {
+      id: "logFormat",
+      labelKey: "diff.quick.logFormat.label",
+      templateKey: "diff.quick.logFormat.template",
+    },
+    {
+      id: "logVolume",
+      labelKey: "diff.quick.logVolume.label",
+      templateKey: "diff.quick.logVolume.template",
+    },
+  ],
 };
 
-const opinionTemplates: Record<string, string> = {
-  边界条件: "请检查此处的边界条件是否处理完整，包括空值、越界、临界值等场景。",
-  空值处理: "此处缺少空值判断，建议增加 null/undefined 保护。",
-  异常处理: "建议完善异常处理逻辑，确保异常路径能被正确捕获和处理。",
-  并发问题: "此处存在并发安全问题，建议考虑加锁或使用原子操作。",
-  状态管理: "状态管理逻辑不够清晰，建议简化或拆分状态管理。",
-  类型错误: "存在类型不匹配问题，建议使用更精确的类型定义。",
-  注入攻击: "存在注入风险，建议使用参数化查询或对输入进行严格过滤。",
-  权限控制: "缺少必要的权限校验，建议在此处增加权限检查。",
-  敏感信息泄露: "可能泄露敏感信息，建议避免在输出中暴露内部细节。",
-  加密问题: "加密方案不够安全，建议使用更安全的加密算法。",
-  输入校验: "缺少输入校验，建议对用户输入进行合法性检查。",
-  "CSRF/XSS": "存在跨站攻击风险，建议增加 CSRF Token 或 XSS 过滤。",
-  算法复杂度: "算法复杂度过高，建议优化以提升性能。",
-  内存泄漏: "可能存在内存泄漏风险，请检查资源释放路径。",
-  IO阻塞: "IO 操作未异步处理，可能阻塞主线程，建议异步化。",
-  重复计算: "存在重复计算，建议提取为变量或缓存结果。",
-  缓存优化: "缓存策略可以进一步优化，减少不必要的缓存更新。",
-  数据库查询: "数据库查询效率较低，建议添加索引或优化查询。",
-  命名规范: "命名不够规范，建议遵循项目命名约定。",
-  注释缺失: "此处逻辑较复杂，建议补充注释说明意图。",
-  代码冗余: "代码存在冗余，建议抽取为公共方法复用。",
-  硬编码: "存在硬编码值，建议抽取为常量或配置项。",
-  函数过长: "函数过长，建议拆分为多个小函数。",
-  结构混乱: "代码结构不够清晰，建议重新组织逻辑。",
-  日志级别不当: "日志级别设置不当，建议根据场景调整。",
-  敏感信息打印: "日志中可能包含敏感信息，建议脱敏处理。",
-  日志缺失: "关键路径缺少日志，建议补充以方便排查。",
-  异常信息不全: "异常信息不够详细，建议补充上下文。",
-  日志格式: "日志格式不规范，建议统一格式。",
-  日志过多: "日志输出过于频繁，可能影响性能。",
-};
+const quickCategoryLabels = computed<Record<QuickCategoryId, string>>(() => ({
+  logic: t("diff.viewer.quickCategoryLogic"),
+  security: t("diff.viewer.quickCategorySecurity"),
+  performance: t("diff.viewer.quickCategoryPerformance"),
+  style: t("diff.viewer.quickCategoryStyle"),
+  log: t("diff.viewer.quickCategoryLog"),
+}));
+const quickCategoryOptions = computed(() =>
+  Object.entries(quickCategoryLabels.value).map(([value, label]) => ({ value, label })),
+);
+const quickSubcategoryOptions = computed(() => [
+  { value: "", label: t("diff.viewer.quickSubcategory") },
+  ...quickSubcategoryDefinitions[quickCategory.value].map((subcategory) => ({
+    value: subcategory.id,
+    label: t(subcategory.labelKey),
+  })),
+]);
+
+function selectedQuickSubcategory(): QuickSubcategoryDefinition | undefined {
+  return quickSubcategoryDefinitions[quickCategory.value].find(
+    (subcategory) => subcategory.id === quickSubCategory.value,
+  );
+}
+
+function quickCommentTag(): string {
+  const subcategory = selectedQuickSubcategory();
+  return t("diff.viewer.quickTag", {
+    category: quickCategoryLabels.value[quickCategory.value],
+    subcategory: subcategory
+      ? t("diff.viewer.quickSubtag", { subcategory: t(subcategory.labelKey) })
+      : "",
+  });
+}
 
 function getFileFromNode(node: Node): HTMLElement | null {
   let element: HTMLElement | null =
@@ -1684,10 +1900,8 @@ function handleDocClick() {
 async function submitQuickComment() {
   if (!quickComment.value || !quickBody.value.trim()) return;
   let finalBody = quickBody.value.trim();
-  if (!finalBody.startsWith("【")) {
-    const main = categoryLabels[quickCategory.value] || quickCategory.value;
-    const sub = quickSubCategory.value ? `-${quickSubCategory.value}` : "";
-    finalBody = `【${main}${sub}】${finalBody}`;
+  if (!finalBody.startsWith("【") && !finalBody.startsWith("[")) {
+    finalBody = `${quickCommentTag()}${finalBody}`;
   }
   emit(
     "addComment",
@@ -1709,11 +1923,8 @@ function onSubCategoryChange() {
     quickBody.value = "";
     return;
   }
-  const tpl = opinionTemplates[quickSubCategory.value];
-  if (tpl) {
-    const main = categoryLabels[quickCategory.value] || quickCategory.value;
-    quickBody.value = `【${main}-${quickSubCategory.value}】${tpl}`;
-  }
+  const subcategory = selectedQuickSubcategory();
+  if (subcategory) quickBody.value = `${quickCommentTag()}${t(subcategory.templateKey)}`;
 }
 
 function handleQuickKeydown(e: KeyboardEvent) {
@@ -1781,28 +1992,38 @@ onUnmounted(() => {
           resizing: resizingNavigator,
         },
       ]"
-      aria-label="代码差异浏览器"
+      :aria-label="t('diff.viewer.browser')"
     >
-      <aside v-if="navigatorVisible" class="file-navigator" aria-label="变更文件">
+      <aside
+        v-if="navigatorVisible"
+        class="file-navigator"
+        :aria-label="t('diff.viewer.filesChanged')"
+      >
         <header class="navigator-header">
           <div>
-            <strong>文件</strong>
+            <strong>{{ t("diff.viewer.files") }}</strong>
             <span>{{ diff?.files.length ?? 0 }}</span>
             <span
               v-if="reviewProgressContext"
               class="local-progress-label"
               :title="viewedProgressDescription"
             >
-              {{ viewedProgressSource }} {{ viewedFileCount }}/{{ diff?.files.length ?? 0 }} 已查看
+              {{
+                t("diff.viewer.progressSummary", {
+                  source: viewedProgressSource,
+                  viewed: viewedFileCount,
+                  total: diff?.files.length ?? 0,
+                })
+              }}
             </span>
           </div>
-          <div class="change-summary" aria-label="变更统计">
+          <div class="change-summary" :aria-label="t('diff.viewer.changeSummary')">
             <span class="additions">+{{ totalAdditions }}</span>
             <span class="deletions">-{{ totalDeletions }}</span>
           </div>
         </header>
 
-        <nav class="file-tree" role="tree" aria-label="变更文件目录树">
+        <nav class="file-tree" role="tree" :aria-label="t('diff.viewer.fileTree')">
           <button
             v-for="row in visibleTreeRows"
             :key="row.key"
@@ -1819,11 +2040,7 @@ onUnmounted(() => {
             :aria-level="row.depth"
             :aria-expanded="row.kind === 'directory' ? expandedDirectories.has(row.key) : undefined"
             :aria-current="row.file?.filename === selectedFilePath ? 'true' : undefined"
-            :aria-label="
-              row.file
-                ? `${statusDescriptions[row.file.status]}文件：${row.file.filename}，${isFileViewed(row.file.filename) ? `已查看，${viewedProgressSource}状态` : '未查看'}${threadSummary?.by_file[row.file.filename]?.unresolved ? `，${threadSummary.by_file[row.file.filename].unresolved} 个未解决线程` : ''}`
-                : `目录：${row.name}`
-            "
+            :aria-label="fileTreeAriaLabel(row)"
             :data-file-path="row.file?.filename"
             @click="activateTreeRow(row)"
           >
@@ -1867,14 +2084,7 @@ onUnmounted(() => {
               <path d="M4 1.75h5l3 3v9.5H4v-12.5Z" stroke="currentColor" stroke-width="1.2" />
               <path d="M9 1.75v3h3" stroke="currentColor" stroke-width="1.2" />
             </svg>
-            <span
-              class="tree-label"
-              :title="
-                row.file
-                  ? `${statusDescriptions[row.file.status]}文件：${row.file.filename}`
-                  : row.name
-              "
-            >
+            <span class="tree-label" :title="row.file ? fileTreeTitle(row.file) : row.name">
               {{ row.name }}
             </span>
             <template v-if="row.file">
@@ -1882,20 +2092,28 @@ onUnmounted(() => {
                 <span
                   v-if="isFileViewed(row.file.filename)"
                   class="viewed-indicator"
-                  :title="`已查看（${viewedProgressSource}状态）`"
+                  :title="t('diff.viewer.fileViewedWithSource', { source: viewedProgressSource })"
                   >✓</span
                 >
                 <span
                   v-if="threadSummary?.by_file[row.file.filename]?.unresolved"
                   class="unresolved-indicator"
-                  :title="`${threadSummary.by_file[row.file.filename].unresolved} 个未解决线程`"
+                  :title="
+                    t('diff.viewer.fileUnresolved', {
+                      count: threadSummary.by_file[row.file.filename].unresolved,
+                    })
+                  "
                 >
                   {{ threadSummary.by_file[row.file.filename].unresolved }}
                 </span>
                 <span
                   v-else-if="threadSummary?.by_file[row.file.filename]?.comments"
                   class="comment-indicator"
-                  :title="`${threadSummary.by_file[row.file.filename].comments} 条人工评论`"
+                  :title="
+                    t('diff.viewer.fileComments', {
+                      count: threadSummary.by_file[row.file.filename].comments,
+                    })
+                  "
                 >
                   {{ threadSummary.by_file[row.file.filename].comments }}
                 </span>
@@ -1910,7 +2128,7 @@ onUnmounted(() => {
         <div
           class="navigator-resizer"
           role="separator"
-          aria-label="调整文件列表宽度"
+          :aria-label="t('diff.viewer.navigatorResize')"
           aria-orientation="vertical"
           :aria-valuemin="MIN_NAVIGATOR_WIDTH"
           :aria-valuemax="MAX_NAVIGATOR_WIDTH"
@@ -1921,13 +2139,13 @@ onUnmounted(() => {
         />
       </aside>
 
-      <section class="diff-context" aria-label="文件差异上下文">
+      <section class="diff-context" :aria-label="t('diff.viewer.context')">
         <header class="diff-toolbar">
           <button
             class="navigator-toggle"
             type="button"
             :aria-pressed="navigatorVisible"
-            :title="navigatorVisible ? '隐藏文件列表' : '显示文件列表'"
+            :title="navigatorVisible ? t('diff.viewer.hideFiles') : t('diff.viewer.showFiles')"
             @click="navigatorVisible = !navigatorVisible"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1937,7 +2155,7 @@ onUnmounted(() => {
           </button>
           <div class="selected-file-heading">
             <span class="selected-file-name" :title="selectedFile?.filename">
-              {{ selectedFile?.filename ?? "全部变更" }}
+              {{ selectedFile?.filename ?? t("diff.viewer.allChanges") }}
             </span>
             <button
               v-if="selectedFile"
@@ -1996,7 +2214,11 @@ onUnmounted(() => {
               {{ filePathCopyError }}
             </span>
           </div>
-          <div v-if="selectedFile" class="selected-file-stats" aria-label="当前文件变更统计">
+          <div
+            v-if="selectedFile"
+            class="selected-file-stats"
+            :aria-label="t('diff.viewer.currentFileStats')"
+          >
             <span class="additions">+{{ selectedFile.additions }}</span>
             <span class="deletions">-{{ selectedFile.deletions }}</span>
           </div>
@@ -2005,8 +2227,8 @@ onUnmounted(() => {
             type="button"
             :aria-pressed="isCodeSearchOpen"
             :disabled="!canSearchCurrentFile"
-            :title="canSearchCurrentFile ? '查找代码' : '当前文件没有可查找的代码'"
-            aria-label="查找代码"
+            :title="canSearchCurrentFile ? t('diff.viewer.find') : t('diff.viewer.findUnavailable')"
+            :aria-label="t('diff.viewer.find')"
             aria-keyshortcuts="Meta+F Control+F"
             @click="toggleCodeSearch"
           >
@@ -2015,38 +2237,44 @@ onUnmounted(() => {
               <path d="m10 10 3.5 3.5" stroke="currentColor" stroke-width="1.4" />
             </svg>
           </button>
-          <div v-if="canPreviewImage" class="image-view-toggle" aria-label="图片显示方式">
+          <div
+            v-if="canPreviewImage"
+            class="image-view-toggle"
+            :aria-label="t('diff.viewer.imageViewMode')"
+          >
             <button
               type="button"
               :aria-pressed="imageViewMode === 'source'"
               @click="setImageViewMode('source')"
             >
-              代码
+              {{ t("diff.viewer.code") }}
             </button>
             <button
               type="button"
               :aria-pressed="imageViewMode === 'preview'"
               @click="setImageViewMode('preview')"
             >
-              预览
+              {{ t("diff.viewer.preview") }}
             </button>
           </div>
           <div v-if="reviewProgressContext && selectedFile" class="review-progress-actions">
-            <span class="unviewed-summary">剩余 {{ unviewedFileCount }} 个未查看</span>
+            <span class="unviewed-summary">
+              {{ t("diff.viewer.progressUnviewed", { count: unviewedFileCount }) }}
+            </span>
             <span
               v-if="viewedFilesError"
               class="review-progress-error"
               role="alert"
               :title="viewedFilesError"
             >
-              远端同步失败：{{ viewedFilesError }}
+              {{ t("diff.viewer.progressSyncFailed", { message: viewedFilesError }) }}
             </span>
             <button
               type="button"
               class="review-progress-button progress-nav-button"
               :disabled="unviewedFileCount === 0"
-              title="上一个未查看文件"
-              aria-label="上一个未查看文件"
+              :title="t('diff.viewer.previousUnviewed')"
+              :aria-label="t('diff.viewer.previousUnviewed')"
               @click="navigateUnviewed(-1)"
             >
               ↑
@@ -2055,8 +2283,8 @@ onUnmounted(() => {
               type="button"
               class="review-progress-button progress-nav-button"
               :disabled="unviewedFileCount === 0"
-              title="下一个未查看文件"
-              aria-label="下一个未查看文件"
+              :title="t('diff.viewer.nextUnviewed')"
+              :aria-label="t('diff.viewer.nextUnviewed')"
               @click="navigateUnviewed(1)"
             >
               ↓
@@ -2072,10 +2300,10 @@ onUnmounted(() => {
             >
               {{
                 viewedFilesLoading || syncingViewedFiles.has(selectedFile.filename)
-                  ? "同步中..."
+                  ? t("diff.viewer.syncing")
                   : isFileViewed(selectedFile.filename)
-                    ? "标记为未查看"
-                    : "标记为已查看"
+                    ? t("diff.viewer.markUnviewed")
+                    : t("diff.viewer.markViewed")
               }}
             </button>
           </div>
@@ -2090,7 +2318,7 @@ onUnmounted(() => {
               :disabled="contextLoading"
               @click="collapseAllContext"
             >
-              收起全部上下文
+              {{ t("diff.viewer.contextCollapseAll") }}
             </button>
             <button
               v-else
@@ -2099,7 +2327,9 @@ onUnmounted(() => {
               :disabled="contextLoading"
               @click="expandAllContext"
             >
-              {{ contextLoading ? "加载上下文中..." : "展开全部上下文" }}
+              {{
+                contextLoading ? t("diff.viewer.contextLoading") : t("diff.viewer.contextExpandAll")
+              }}
             </button>
           </div>
         </header>
@@ -2127,7 +2357,7 @@ onUnmounted(() => {
             ref="topScrollbarRef"
             class="diff-top-scrollbar"
             role="region"
-            aria-label="同步代码差异横向滚动条"
+            :aria-label="t('diff.viewer.scrollBoth')"
             tabindex="0"
             @scroll="handleTopScrollbarScroll"
           >
@@ -2142,7 +2372,7 @@ onUnmounted(() => {
               ref="leftTopScrollbarRef"
               class="diff-top-scrollbar"
               role="region"
-              aria-label="左侧代码差异横向滚动条"
+              :aria-label="t('diff.viewer.scrollLeft')"
               tabindex="0"
               @scroll="handleIndependentTopScrollbarScroll(0)"
             >
@@ -2156,7 +2386,7 @@ onUnmounted(() => {
               ref="rightTopScrollbarRef"
               class="diff-top-scrollbar"
               role="region"
-              aria-label="右侧代码差异横向滚动条"
+              :aria-label="t('diff.viewer.scrollRight')"
               tabindex="0"
               @scroll="handleIndependentTopScrollbarScroll(1)"
             >
@@ -2210,32 +2440,36 @@ onUnmounted(() => {
                   class="image-preview-error image-preview-empty"
                   role="alert"
                 >
-                  <span>图片预览未加载</span>
-                  <button type="button" @click="loadImagePreview">重新加载预览</button>
+                  <span>{{ t("diff.viewer.imageNotLoaded") }}</span>
+                  <button type="button" @click="loadImagePreview">
+                    {{ t("diff.viewer.imageReload") }}
+                  </button>
                 </div>
                 <section
                   v-for="panel in imagePreviewPanels"
                   :key="imagePreviewPanelKey(panel)"
                   class="image-preview-panel"
-                  :aria-label="`${panel.label}图片预览`"
+                  :aria-label="t('diff.viewer.imagePanel', { label: panel.label })"
                 >
                   <header class="image-preview-header">
                     <strong>{{ panel.label }}</strong>
                     <span :title="panel.path">{{ panel.path }}</span>
                   </header>
                   <div class="image-preview-stage">
-                    <span v-if="imagePreviewLoading" class="image-preview-status"
-                      >加载预览中...</span
-                    >
+                    <span v-if="imagePreviewLoading" class="image-preview-status">
+                      {{ t("diff.viewer.imageLoading") }}
+                    </span>
                     <div v-else-if="panel.error" class="image-preview-error" role="alert">
                       <span>{{ panel.error }}</span>
-                      <button type="button" @click="loadImagePreview">重新加载预览</button>
+                      <button type="button" @click="loadImagePreview">
+                        {{ t("diff.viewer.imageReload") }}
+                      </button>
                     </div>
                     <img
                       v-else-if="panel.src"
                       class="image-preview-image"
                       :src="panel.src"
-                      :alt="`${panel.label}图片预览：${panel.path}`"
+                      :alt="t('diff.viewer.imageAlt', { label: panel.label, path: panel.path })"
                       @error="handleImagePreviewError(panel)"
                     />
                   </div>
@@ -2253,7 +2487,9 @@ onUnmounted(() => {
                   :key="side"
                   class="controlled-file-side-diff"
                   :class="`controlled-side-${side}`"
-                  :aria-label="side === 'left' ? '变更前代码' : '变更后代码'"
+                  :aria-label="
+                    side === 'left' ? t('diff.viewer.beforeCode') : t('diff.viewer.afterCode')
+                  "
                   @pointerenter="setHoveredCodeSearchSide(side)"
                   @pointerleave="clearHoveredCodeSearchSide"
                 >
@@ -2461,7 +2697,7 @@ onUnmounted(() => {
               </div>
 
               <div v-else class="controlled-file-message" role="status">
-                {{ selectedStandardPatch.message ?? "该文件没有可展示的文本 Diff" }}
+                {{ selectedStandardPatch.message ?? t("diff.viewer.noTextDiff") }}
               </div>
             </article>
             <div
@@ -2477,7 +2713,7 @@ onUnmounted(() => {
       </section>
     </section>
 
-    <div v-else class="diff-empty">暂无 diff 数据</div>
+    <div v-else class="diff-empty">{{ t("diff.viewer.empty") }}</div>
 
     <Teleport to="body">
       <div
@@ -2495,7 +2731,12 @@ onUnmounted(() => {
               quickComment.endLine !== quickComment.startLine ? "-L" + quickComment.endLine : ""
             }}
           </span>
-          <button class="close-btn" @click="quickComment = null">
+          <button
+            class="close-btn"
+            type="button"
+            :aria-label="t('common.close')"
+            @click="quickComment = null"
+          >
             <svg
               width="16"
               height="16"
@@ -2518,19 +2759,15 @@ onUnmounted(() => {
         <div class="popup-category">
           <AppSelect
             v-model="quickCategory"
-            :options="Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))"
+            :options="quickCategoryOptions"
             @update:model-value="
               quickSubCategory = '';
               quickBody = '';
             "
           />
           <AppSelect
-            v-if="categories[quickCategory]"
             v-model="quickSubCategory"
-            :options="[
-              { value: '', label: '-- 二级分类 --' },
-              ...categories[quickCategory].map((sub: string) => ({ value: sub, label: sub })),
-            ]"
+            :options="quickSubcategoryOptions"
             @update:model-value="onSubCategoryChange"
           />
         </div>
@@ -2538,17 +2775,19 @@ onUnmounted(() => {
         <textarea
           v-model="quickBody"
           class="quick-comment-textarea"
-          placeholder="输入评审意见... (⌘+Enter 提交, Esc 取消)"
+          :placeholder="t('diff.viewer.quickPlaceholder')"
           rows="3"
         />
         <div class="popup-actions">
-          <button class="btn btn-sm" @click="quickComment = null">取消</button>
+          <button class="btn btn-sm" type="button" @click="quickComment = null">
+            {{ t("diff.viewer.quickCancel") }}
+          </button>
           <button
             class="btn btn-sm btn-primary"
             :disabled="!quickBody.trim() || quickSubmitting"
             @click="submitQuickComment"
           >
-            {{ quickSubmitting ? "提交中..." : "提交" }}
+            {{ quickSubmitting ? t("diff.viewer.quickSubmitting") : t("diff.viewer.quickSubmit") }}
           </button>
         </div>
       </div>

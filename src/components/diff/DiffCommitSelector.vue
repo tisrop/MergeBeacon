@@ -9,6 +9,7 @@ import {
   shortCommitSha,
   useDiffCommitRange,
 } from "./useDiffCommitRange";
+import { useI18n } from "@/i18n";
 
 const props = defineProps<{
   commits: PrCommitSummary[];
@@ -24,6 +25,7 @@ const emit = defineEmits<{
   "update:selection": [selection: CommitRangeSelection | null];
   retry: [];
 }>();
+const { t } = useI18n();
 
 /** 菜单项：第一项固定是「所有提交」，其余是提交本身。 */
 type ScopeOption =
@@ -64,7 +66,7 @@ const {
   options: scopeOptions,
   searchText: (option) =>
     option.kind === "all"
-      ? "所有提交 all"
+      ? `${t("diff.allCommits")} all`
       : `${option.commit.sha} ${option.commit.title} ${option.commit.author_name}`,
   isSelected: (option) => (option.kind === "all" ? isAllSelected.value : isInRange(option.index)),
   onSelect: (option) => {
@@ -100,23 +102,27 @@ function onMenuKeydown(event: KeyboardEvent, handler: (event: KeyboardEvent) => 
 }
 
 const triggerLabel = computed(() => {
-  if (props.commitsLoading && props.commits.length === 0) return "读取提交中…";
+  if (props.commitsLoading && props.commits.length === 0) return t("diff.commitsLoading");
   const range = normalizedSelection.value;
-  if (!range) return `所有提交的变更（${props.commits.length}）`;
+  if (!range) return t("diff.allCommitsCount", { count: props.commits.length });
   const from = shortCommitSha(props.commits[range.startIndex].sha);
   if (range.startIndex === range.endIndex) {
-    return `${from} ${props.commits[range.startIndex].title || "无标题提交"}`;
+    return `${from} ${props.commits[range.startIndex].title || t("diff.commitTitleEmpty")}`;
   }
-  return `${selectedCount.value} 个提交 · ${from} → ${shortCommitSha(props.commits[range.endIndex].sha)}`;
+  return t("diff.commitRangeCount", {
+    count: selectedCount.value,
+    from,
+    to: shortCommitSha(props.commits[range.endIndex].sha),
+  });
 });
 
 // 丢弃方向按平台不同：GitHub / Gitee 最早在前，超限丢最新；GitLab 相反。
 const truncationWarning = computed(() => {
   if (props.truncatedEnd === "oldest") {
-    return "提交数量超过读取上限，列表缺少更早的提交：首项不一定是第一个提交。";
+    return t("diff.commitsTruncatedOldest");
   }
   if (props.truncatedEnd === "newest") {
-    return "提交数量超过读取上限，列表缺少更新的提交：最近的变更可能选不到。";
+    return t("diff.commitsTruncatedNewest");
   }
   return "";
 });
@@ -129,7 +135,7 @@ function isOptionSelected(option: ScopeOption): boolean {
 <template>
   <div ref="wrapperRef" class="diff-commit-scope">
     <div class="commit-scope-row">
-      <span class="commit-scope-caption">变更范围</span>
+      <span class="commit-scope-caption">{{ t("diff.changeScope") }}</span>
       <button
         ref="triggerRef"
         class="commit-scope-trigger"
@@ -138,7 +144,7 @@ function isOptionSelected(option: ScopeOption): boolean {
         :disabled="commitsLoading && commits.length === 0"
         :aria-expanded="open"
         aria-haspopup="listbox"
-        aria-label="选择要查看的提交范围"
+        :aria-label="t('diff.commitSelectionLabel')"
         @click="toggleDropdown"
         @keydown="onMenuKeydown($event, onTriggerKeydown)"
       >
@@ -147,14 +153,14 @@ function isOptionSelected(option: ScopeOption): boolean {
       </button>
 
       <button v-if="!isAllSelected" class="commit-scope-reset" type="button" @click="selectAll">
-        查看所有变更
+        {{ t("diff.viewAllChanges") }}
       </button>
 
       <span v-if="rangeLoading" class="commit-scope-status" role="status">
-        正在读取所选提交的变更…
+        {{ t("diff.commitRangeLoading") }}
       </span>
       <span v-else-if="truncationWarning" class="commit-scope-flag" :title="truncationWarning">
-        ⚠ 列表不完整
+        {{ t("diff.commitListIncomplete") }}
       </span>
 
       <!-- listbox 只允许 option 子元素，因此搜索框与提示留在浮层上、列表容器之外。 -->
@@ -165,8 +171,8 @@ function isOptionSelected(option: ScopeOption): boolean {
           v-model="searchQuery"
           class="commit-scope-search"
           type="text"
-          placeholder="搜索提交号、标题或作者"
-          aria-label="搜索提交"
+          :placeholder="t('diff.commitSearch')"
+          :aria-label="t('diff.commitSearchAria')"
           @keydown="onMenuKeydown($event, onSearchKeydown)"
         />
 
@@ -174,7 +180,12 @@ function isOptionSelected(option: ScopeOption): boolean {
           {{ truncationWarning }}
         </p>
 
-        <div ref="listRef" class="commit-scope-list" role="listbox" aria-label="提交范围">
+        <div
+          ref="listRef"
+          class="commit-scope-list"
+          role="listbox"
+          :aria-label="t('diff.changeScope')"
+        >
           <template
             v-for="(option, index) in filteredOptions"
             :key="option.kind === 'all' ? 'all' : option.commit.sha"
@@ -195,19 +206,21 @@ function isOptionSelected(option: ScopeOption): boolean {
                 {{ isOptionSelected(option) ? "✓" : "" }}
               </span>
               <template v-if="option.kind === 'all'">
-                <strong class="commit-scope-title">所有提交的变更</strong>
-                <small class="commit-scope-meta">{{ commits.length }} 个提交</small>
+                <strong class="commit-scope-title">{{ t("diff.allCommits") }}</strong>
+                <small class="commit-scope-meta">{{
+                  t("diff.commitCount", { count: commits.length })
+                }}</small>
               </template>
               <template v-else>
                 <code>{{ shortCommitSha(option.commit.sha) }}</code>
                 <strong class="commit-scope-title" :title="option.commit.title">
-                  {{ option.commit.title || "无标题提交" }}
+                  {{ option.commit.title || t("diff.commitTitleEmpty") }}
                 </strong>
                 <small
                   class="commit-scope-meta"
                   :title="formatCommitTime(option.commit.authored_at)"
                 >
-                  {{ option.commit.author_name || "未知作者" }}
+                  {{ option.commit.author_name || t("common.unknownAuthor") }}
                   <time v-if="option.commit.authored_at" :datetime="option.commit.authored_at">
                     {{ formatCommitDate(option.commit.authored_at) }}
                   </time>
@@ -215,18 +228,22 @@ function isOptionSelected(option: ScopeOption): boolean {
               </template>
             </button>
           </template>
-          <p v-if="filteredOptions.length === 0" class="commit-scope-empty">没有匹配的提交</p>
+          <p v-if="filteredOptions.length === 0" class="commit-scope-empty">
+            {{ t("diff.commitSearchEmpty") }}
+          </p>
         </div>
 
         <p v-if="commits.length > 0" class="commit-scope-hint">
-          单击查看单个提交，Shift + 单击（或 Shift + Enter）扩选出区间。
+          {{ t("diff.commitSelectionHint") }}
         </p>
       </div>
     </div>
 
     <p v-if="commitsError" class="commit-scope-error" role="alert">
       <span>{{ commitsError }}</span>
-      <button class="commit-scope-reset" type="button" @click="emit('retry')">重试</button>
+      <button class="commit-scope-reset" type="button" @click="emit('retry')">
+        {{ t("common.retry") }}
+      </button>
     </p>
     <p v-else-if="rangeError" class="commit-scope-error" role="alert">{{ rangeError }}</p>
   </div>

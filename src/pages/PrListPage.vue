@@ -15,6 +15,7 @@ import {
 } from "@/components/pr/usePrListFilterOptions";
 import PrCard from "@/components/pr/PrCard.vue";
 import AppSelect from "@/components/shared/AppSelect.vue";
+import { useI18n } from "@/i18n";
 
 const router = useRouter();
 const route = useRoute();
@@ -22,8 +23,14 @@ const auth = useAuthStore();
 const repo = useRepoStore();
 const pr = usePrStore();
 const listFilterOptions = usePrListFilterOptions();
+const { locale, t } = useI18n();
 let ignoreNextFilterChange = false;
-const createLabel = computed(() => (auth.activePlatform === "gitlab" ? "创建 MR" : "创建 PR"));
+const listTitle = computed(() =>
+  auth.activePlatform === "gitlab" ? t("layout.mergeRequests") : t("layout.pullRequests"),
+);
+const createLabel = computed(() =>
+  auth.activePlatform === "gitlab" ? t("pr.createMr") : t("pr.createPr"),
+);
 const pageInput = ref("1");
 const pageJumpTarget = computed(() => Number(pageInput.value));
 const canJumpToPage = computed(
@@ -58,16 +65,16 @@ const repositoryLabelOptions = computed(() =>
 const truncatedListNotice = computed(() => {
   if (!pr.listTruncated) return "";
   if (auth.activePlatform === "github") {
-    const total = pr.listTotalCount.toLocaleString("zh-CN");
+    const total = pr.listTotalCount.toLocaleString(locale.value);
     if (pr.hasListQuery) {
-      return `共 ${total} 条符合条件的 Pull Request，仅可浏览前 1,000 条。`;
+      return t("pr.listTruncatedGithub", { total });
     }
-    return `共 ${total} 条已关闭或已合并 Pull Request，仅可浏览前 1,000 条。`;
+    return t("pr.listTruncatedGithubClosed", { total });
   }
   if (auth.activePlatform === "gitlab") {
-    return "GitLab 当前仅返回部分 Merge Request，更多历史记录暂不可分页查看。";
+    return t("pr.listTruncatedGitlab");
   }
-  return "Gitee 当前仅返回部分 Pull Request，更多历史记录暂不可分页查看。";
+  return t("pr.listTruncatedGitee");
 });
 
 function isCurrentRepoContext(platform: Platform, owner: string, repoName: string): boolean {
@@ -210,9 +217,9 @@ function onSelectPr(prNumber: number) {
     <template #header>
       <div class="header-row page-heading">
         <div>
-          <h2>Pull Requests</h2>
+          <h2>{{ listTitle }}</h2>
           <p v-if="repo.activeFullName" class="repo-name">{{ repo.activeFullName }}</p>
-          <p v-else class="repo-name">选择仓库后查看合并请求</p>
+          <p v-else class="repo-name">{{ t("pr.selectRepository") }}</p>
         </div>
         <div class="header-actions">
           <RouterLink
@@ -243,17 +250,22 @@ function onSelectPr(prNumber: number) {
           <circle cx="18" cy="18" r="3" />
         </svg>
         <template v-if="!repo.hasUpstreamInfo">
-          这是一个 Fork 仓库，但未获取到上游仓库信息 （请确认 Token
-          有足够的仓库权限，或检查终端日志中的 parent 数据）
+          {{ t("pr.forkMissingUpstream") }}
         </template>
         <template v-else-if="repo.viewingUpstream">
-          正在查看上游仓库 <strong>{{ repo.forkContext.upstreamFullName }}</strong> 的 PR
-          <button class="fork-switch" @click="switchToFork">查看本仓库 PR</button>
+          {{ t("pr.forkViewUpstream", { repository: repo.forkContext.upstreamFullName ?? "" }) }}
+          <button class="fork-switch" @click="switchToFork">
+            {{ t("pr.forkViewLocalAction") }}
+          </button>
         </template>
         <template v-else>
-          正在查看本仓库 PR
+          {{ t("pr.forkViewLocal") }}
           <button class="fork-switch" @click="switchToFork">
-            查看上游 {{ repo.forkContext.upstreamFullName }}
+            {{
+              t("pr.forkViewUpstreamAction", {
+                repository: repo.forkContext.upstreamFullName ?? "",
+              })
+            }}
           </button>
         </template>
       </div>
@@ -293,7 +305,7 @@ function onSelectPr(prNumber: number) {
           <line x1="15" y1="9" x2="9" y2="15" />
           <line x1="9" y1="9" x2="15" y2="15" />
         </svg>
-        获取 PR 列表失败
+        {{ t("pr.listFailed") }}
       </p>
       <p class="error-msg">{{ pr.error }}</p>
     </div>
@@ -311,7 +323,7 @@ function onSelectPr(prNumber: number) {
       >
         <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M13 12H3" />
       </svg>
-      <p>请先在左侧选择一个仓库</p>
+      <p>{{ t("issue.selectRepository") }}</p>
     </div>
 
     <div v-else-if="pr.list.length === 0" class="empty-state state-panel">
@@ -331,12 +343,12 @@ function onSelectPr(prNumber: number) {
         <path d="M6 9v9" />
         <path d="M13 6h3a2 2 0 0 1 2 2v3" />
       </svg>
-      <p>{{ pr.hasListQuery ? "没有符合筛选条件的 Pull Request" : "暂无 Pull Request" }}</p>
+      <p>{{ pr.hasListQuery ? t("pr.emptyFiltered") : t("pr.empty") }}</p>
       <button v-if="pr.hasListQuery" class="btn btn-sm" type="button" @click="clearListQuery">
-        清除筛选条件
+        {{ t("common.clearFilters") }}
       </button>
       <p v-if="repo.activeFullName" class="empty-repo text-secondary font-mono">
-        当前仓库：{{ repo.activeFullName }}
+        {{ t("pr.currentRepository", { repository: repo.activeFullName }) }}
       </p>
     </div>
 
@@ -370,7 +382,7 @@ function onSelectPr(prNumber: number) {
         >
           <polyline points="15 18 9 12 15 6" />
         </svg>
-        上一页
+        {{ t("pr.previousPage") }}
       </button>
       <span class="page-info">{{ pr.filters.page }} / {{ pr.totalPages }}</span>
       <button
@@ -378,7 +390,7 @@ function onSelectPr(prNumber: number) {
         :disabled="pr.filters.page >= pr.totalPages || pr.loading"
         @click="goToNextPage"
       >
-        下一页
+        {{ t("pr.nextPage") }}
         <svg
           width="14"
           height="14"
@@ -395,7 +407,12 @@ function onSelectPr(prNumber: number) {
       <AppSelect
         size="sm"
         :modelValue="String(pr.perPage)"
-        :options="pr.pageSizes.map((s: number) => ({ value: String(s), label: s + ' 条/页' }))"
+        :options="
+          pr.pageSizes.map((s: number) => ({
+            value: String(s),
+            label: t('pr.pageSize', { count: s }),
+          }))
+        "
         @update:modelValue="changePageSize"
       />
       <div class="page-jump">
@@ -406,11 +423,11 @@ function onSelectPr(prNumber: number) {
           inputmode="numeric"
           pattern="[0-9]*"
           autocomplete="off"
-          aria-label="跳转页码"
+          :aria-label="t('pr.pageJumpAria')"
           @keydown.enter.prevent="jumpToPage"
         />
         <button class="btn btn-sm" type="button" :disabled="!canJumpToPage" @click="jumpToPage">
-          跳转
+          {{ t("common.goTo") }}
         </button>
       </div>
     </div>

@@ -845,6 +845,20 @@ pub struct AiReviewRequest {
     pub context: Option<PrContext>,
     pub file_filter: Option<Vec<String>>,
     pub focus: Option<AiReviewFocus>,
+    #[serde(default = "default_ai_review_language")]
+    pub language: AiReviewLanguage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AiReviewLanguage {
+    #[serde(rename = "zh-CN")]
+    ZhCn,
+    #[serde(rename = "en-US")]
+    EnUs,
+}
+
+fn default_ai_review_language() -> AiReviewLanguage {
+    AiReviewLanguage::ZhCn
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -904,4 +918,30 @@ pub enum Severity {
     Major,
     Minor,
     Info,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AiReviewLanguage, AiReviewRequest};
+
+    #[test]
+    fn ai_review_request_defaults_missing_language_to_simplified_chinese() {
+        let request: AiReviewRequest = serde_json::from_value(serde_json::json!({
+            "diff": "+let reviewed = true;"
+        }))
+        .expect("request without language should remain backward compatible");
+
+        assert_eq!(request.language, AiReviewLanguage::ZhCn);
+    }
+
+    #[test]
+    fn ai_review_request_preserves_explicit_language() {
+        let request: AiReviewRequest = serde_json::from_value(serde_json::json!({
+            "diff": "+const reviewed = true;",
+            "language": "en-US"
+        }))
+        .expect("request with a supported language should deserialize");
+
+        assert_eq!(request.language, AiReviewLanguage::EnUs);
+    }
 }

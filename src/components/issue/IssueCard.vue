@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import type { IssueSummary } from "@/types";
 import { labelTagColorClass } from "@/utils/labelColorClass";
+import { useI18n } from "@/i18n";
 
 defineProps<{
   issue: IssueSummary;
 }>();
+const { locale, t } = useI18n();
 </script>
 
 <template>
@@ -23,8 +25,8 @@ defineProps<{
       <div class="issue-meta">
         <span class="issue-number">#{{ issue.number }}</span>
         <span>{{ issue.author.login }}</span>
-        <span>由 {{ issue.author.login }} 创建</span>
-        <span>{{ new Date(issue.created_at).toLocaleDateString("zh-CN") }}</span>
+        <span>{{ t("common.createdBy", { author: issue.author.login }) }}</span>
+        <span>{{ new Date(issue.created_at).toLocaleDateString(locale) }}</span>
         <span v-if="issue.labels.length" class="issue-labels">
           <span
             v-for="label in issue.labels"

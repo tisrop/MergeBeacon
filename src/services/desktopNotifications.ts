@@ -5,6 +5,7 @@ import {
   requestDesktopNotificationPermission,
   sendDesktopNotification,
 } from "@/api";
+import { translate } from "@/i18n";
 import type { InboxNotificationEvent, NotificationEventType } from "@/stores/useNotificationStore";
 import type { Platform } from "@/types";
 
@@ -15,12 +16,12 @@ export interface NotificationTarget {
   number: number;
 }
 
-const eventTitles: Record<NotificationEventType, string> = {
-  review_request: "新的评审请求",
-  checks_completed: "CI/测试已完成",
-  new_commits: "Pull Request 有新提交",
-  new_comments: "Pull Request 有新评论",
-  mergeable: "Pull Request 已可合并",
+const eventTitleKeys: Record<NotificationEventType, Parameters<typeof translate>[0]> = {
+  review_request: "notification.titleReview",
+  checks_completed: "notification.titleChecks",
+  new_commits: "notification.titleCommits",
+  new_comments: "notification.titleComments",
+  mergeable: "notification.titleMergeable",
 };
 
 const TEST_NOTIFICATION_ID = 1_977_042_301;
@@ -70,10 +71,10 @@ export async function showInboxNotification(
   if (!isDesktopRuntime()) return;
   const body = revealRepositoryDetails
     ? `${event.repository_full_name} #${event.number} · ${event.title}`
-    : "某个私有仓库的 Pull Request 有新动态";
+    : translate("notification.privateBody");
   await sendDesktopNotification({
     id: notificationId(event),
-    title: eventTitles[event.type],
+    title: translate(eventTitleKeys[event.type]),
     body,
     group: `${event.platform}:${event.repository_full_name}:${event.number}`,
     actionable: true,
@@ -90,8 +91,8 @@ export async function showDesktopTestNotification(): Promise<void> {
   if (!isDesktopRuntime()) return;
   await sendDesktopNotification({
     id: TEST_NOTIFICATION_ID,
-    title: "MergeBeacon 测试通知",
-    body: "系统通知已连接。退出 MergeBeacon 后不会继续检查 PR / MR 动态。",
+    title: translate("notification.testTitle"),
+    body: translate("notification.testBody"),
     group: "mergebeacon:test",
     actionable: false,
     extra: {},

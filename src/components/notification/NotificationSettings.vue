@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { currentLocale, useI18n } from "@/i18n";
 import {
   notificationPermissionGranted,
   requestNotificationPermission,
   showDesktopTestNotification,
 } from "@/services/desktopNotifications";
+import { getDesktopNotificationErrorMessage } from "@/services/desktopNotificationErrors";
 import { useNotificationStore, type NotificationEventType } from "@/stores/useNotificationStore";
 import type { Platform } from "@/types";
-import { getErrorMessage } from "@/utils/error";
 
 const notifications = useNotificationStore();
+const { t } = useI18n();
 const permissionGranted = ref(false);
 const requestingPermission = ref(false);
-const permissionError = ref("");
+const permissionError = computed(() => notifications.permissionError);
 const sendingTestNotification = ref(false);
 const testNotificationStatus = ref("");
 const testNotificationFailed = ref(false);
@@ -22,17 +24,39 @@ const platforms: Array<{ value: Platform; label: string }> = [
   { value: "gitlab", label: "GitLab" },
   { value: "gitee", label: "Gitee" },
 ];
-const events: Array<{ value: NotificationEventType; label: string; hint: string }> = [
-  { value: "review_request", label: "评审请求", hint: "有新的 PR/MR 需要你评审时通知" },
-  { value: "checks_completed", label: "CI/测试完成", hint: "检查从进行中变为成功或失败时通知" },
-  { value: "new_commits", label: "新提交", hint: "已跟踪的 PR/MR 推送新提交时通知" },
-  { value: "new_comments", label: "新评论", hint: "已跟踪的 PR/MR 评论数量增加时通知" },
-  { value: "mergeable", label: "可合并", hint: "PR/MR 从阻塞状态变为可合并时通知" },
-];
-const categoryLabels = {
-  review_requested: "评审请求",
-  authored: "我创建的",
-} as const;
+const events = computed<Array<{ value: NotificationEventType; label: string; hint: string }>>(
+  () => [
+    {
+      value: "review_request",
+      label: t("notification.eventReview"),
+      hint: t("notification.eventReviewHint"),
+    },
+    {
+      value: "checks_completed",
+      label: t("notification.eventChecks"),
+      hint: t("notification.eventChecksHint"),
+    },
+    {
+      value: "new_commits",
+      label: t("notification.eventCommits"),
+      hint: t("notification.eventCommitsHint"),
+    },
+    {
+      value: "new_comments",
+      label: t("notification.eventComments"),
+      hint: t("notification.eventCommentsHint"),
+    },
+    {
+      value: "mergeable",
+      label: t("notification.eventMergeable"),
+      hint: t("notification.eventMergeableHint"),
+    },
+  ],
+);
+const categoryLabels = computed(() => ({
+  review_requested: t("notification.categoryReviewRequested"),
+  authored: t("notification.categoryAuthored"),
+}));
 
 function formatCountdown(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
@@ -41,8 +65,8 @@ function formatCountdown(seconds: number): string {
 }
 
 function formatTime(timestamp: number | null): string {
-  if (timestamp == null) return "尚无";
-  return new Date(timestamp).toLocaleTimeString([], {
+  if (timestamp == null) return t("notification.never");
+  return new Date(timestamp).toLocaleTimeString(currentLocale(), {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -52,41 +76,57 @@ function formatTime(timestamp: number | null): string {
 function platformStatus(platform: Platform): string {
   const observation = notifications.pollObservations[platform];
   const retrySeconds = notifications.retryCountdown[platform];
-  if (!notifications.preferences.platforms[platform]) return "已停用";
-  if (retrySeconds > 0) return `限流退避 · ${formatCountdown(retrySeconds)} 后重试`;
-  if (observation.outcome === "success") return "检查正常";
-  if (observation.outcome === "partial") return "部分检查成功";
-  if (observation.outcome === "rate_limited") return "平台限流";
-  if (observation.outcome === "failed") return "检查失败";
-  return "等待首次检查";
+  if (!notifications.preferences.platforms[platform]) return t("notification.platformDisabled");
+  if (retrySeconds > 0) {
+    return t("notification.platformRetry", { countdown: formatCountdown(retrySeconds) });
+  }
+  if (observation.outcome === "success") return t("notification.checkNormal");
+  if (observation.outcome === "partial") return t("notification.checkPartial");
+  if (observation.outcome === "rate_limited") return t("notification.platformLimited");
+  if (observation.outcome === "failed") return t("notification.checkFailed");
+  return t("notification.platformWaiting");
 }
 
 function platformStatusDetail(platform: Platform): string {
   const observation = notifications.pollObservations[platform];
-  if (observation.last_attempt_at == null) return "尚未请求代码平台 API";
-  const detail = [`最近检查 ${formatTime(observation.last_attempt_at)}`];
+  if (observation.last_attempt_at == null) return t("notification.noPlatformRequest");
+  const detail = [t("notification.lastAttempt", { time: formatTime(observation.last_attempt_at) })];
   if (
     observation.last_success_at != null &&
     observation.last_success_at !== observation.last_attempt_at
   ) {
-    detail.push(`最近成功 ${formatTime(observation.last_success_at)}`);
+    detail.push(t("notification.lastSuccess", { time: formatTime(observation.last_success_at) }));
   }
   if (observation.rate_limited_categories.length > 0) {
     detail.push(
-      `${observation.rate_limited_categories.map((category) => categoryLabels[category]).join("、")}限流`,
+      t("notification.rateLimitedCategories", {
+        categories: observation.rate_limited_categories
+          .map((category) => categoryLabels.value[category])
+          .join(currentLocale() === "zh-CN" ? "、" : ", "),
+      }),
     );
   }
   const failedCategories = observation.failed_categories.filter(
     (category) => !observation.rate_limited_categories.includes(category),
   );
   if (failedCategories.length > 0) {
-    detail.push(`${failedCategories.map((category) => categoryLabels[category]).join("、")}失败`);
+    detail.push(
+      t("notification.failedCategories", {
+        categories: failedCategories
+          .map((category) => categoryLabels.value[category])
+          .join(currentLocale() === "zh-CN" ? "、" : ", "),
+      }),
+    );
   }
   if (observation.consecutive_degraded_polls > 1) {
-    detail.push(`连续异常 ${observation.consecutive_degraded_polls} 次`);
+    detail.push(
+      t("notification.consecutiveDegraded", {
+        count: observation.consecutive_degraded_polls,
+      }),
+    );
   }
   if (observation.rate_limited_polls > 0) {
-    detail.push(`本次运行限流 ${observation.rate_limited_polls} 次`);
+    detail.push(t("notification.rateLimitedPolls", { count: observation.rate_limited_polls }));
   }
   return detail.join(" · ");
 }
@@ -106,23 +146,24 @@ onMounted(async () => {
     permissionGranted.value = await notificationPermissionGranted();
     if (!permissionGranted.value && notifications.preferences.enabled) {
       notifications.setEnabled(false);
-      permissionError.value = "桌面通知权限已被撤销，请重新授权后再启用通知。";
-      notifications.setManagerError("permission", permissionError.value);
+      notifications.setManagerError("permission", () => t("notification.permissionRevoked"));
     } else if (!permissionGranted.value && notifications.permissionError) {
-      permissionError.value = notifications.permissionError;
+      return;
     } else {
       notifications.clearManagerError("permission");
     }
   } catch (error) {
-    const message = `检查桌面通知权限失败：${getErrorMessage(error, "系统通知服务暂不可用")}`;
-    permissionError.value = message;
-    notifications.setManagerError("permission", message);
+    notifications.setManagerError("permission", () =>
+      t("notification.checkPermissionFailed", {
+        message: getDesktopNotificationErrorMessage(error, t("notification.systemUnavailable")),
+      }),
+    );
   }
 });
 
 async function setEnabled(event: Event): Promise<void> {
   const enabled = (event.target as HTMLInputElement).checked;
-  permissionError.value = "";
+  notifications.clearManagerError("permission");
   if (!enabled) {
     notifications.setEnabled(false);
     notifications.clearManagerError("permission");
@@ -135,15 +176,14 @@ async function setEnabled(event: Event): Promise<void> {
       notifications.clearManagerError("permission");
       notifications.setEnabled(true);
     } else {
-      permissionError.value = "系统未授予通知权限，请在系统设置中允许 MergeBeacon 发送通知。";
-      notifications.setManagerError("permission", permissionError.value);
+      notifications.setManagerError("permission", () => t("notification.permissionDenied"));
     }
   } catch (error) {
-    permissionError.value = `请求桌面通知权限失败：${getErrorMessage(
-      error,
-      "系统通知服务暂不可用",
-    )}`;
-    notifications.setManagerError("permission", permissionError.value);
+    notifications.setManagerError("permission", () =>
+      t("notification.checkPermissionFailed", {
+        message: getDesktopNotificationErrorMessage(error, t("notification.systemUnavailable")),
+      }),
+    );
   } finally {
     requestingPermission.value = false;
   }
@@ -158,35 +198,37 @@ async function sendTestNotification(): Promise<void> {
     try {
       permissionGranted.value = await notificationPermissionGranted();
     } catch (error) {
-      const message = `检查桌面通知权限失败：${getErrorMessage(error, "系统通知服务暂不可用")}`;
-      permissionError.value = message;
       testNotificationFailed.value = true;
-      testNotificationStatus.value = message;
-      notifications.setManagerError("permission", message);
+      notifications.setManagerError("permission", () =>
+        t("notification.checkPermissionFailed", {
+          message: getDesktopNotificationErrorMessage(error, t("notification.systemUnavailable")),
+        }),
+      );
+      testNotificationStatus.value = notifications.permissionError;
       return;
     }
     if (!permissionGranted.value) {
-      const message = "系统通知权限不可用或已被撤销，请重新授权后再发送测试通知。";
       notifications.setEnabled(false);
-      permissionError.value = message;
       testNotificationFailed.value = true;
-      testNotificationStatus.value = message;
-      notifications.setManagerError("permission", message);
+      notifications.setManagerError("permission", () => t("notification.permissionUnavailable"));
+      testNotificationStatus.value = notifications.permissionError;
       return;
     }
-    permissionError.value = "";
     notifications.clearManagerError("permission");
     try {
       await showDesktopTestNotification();
       notifications.clearManagerError("delivery");
-      testNotificationStatus.value = "测试通知已交给系统通知服务。";
+      testNotificationStatus.value = t("notification.testDelivered");
     } catch (error) {
       testNotificationFailed.value = true;
-      testNotificationStatus.value = `发送测试通知失败：${getErrorMessage(
-        error,
-        "系统通知服务暂不可用",
-      )}`;
-      notifications.setManagerError("delivery", testNotificationStatus.value);
+      testNotificationStatus.value = t("notification.testDeliveryFailed", {
+        message: getDesktopNotificationErrorMessage(error, t("notification.systemUnavailable")),
+      });
+      notifications.setManagerError("delivery", () =>
+        t("notification.testDeliveryFailed", {
+          message: getDesktopNotificationErrorMessage(error, t("notification.systemUnavailable")),
+        }),
+      );
     }
   } finally {
     sendingTestNotification.value = false;
@@ -206,15 +248,13 @@ function setEvent(type: NotificationEventType, event: Event): void {
   <div class="notification-settings">
     <div class="setting-row primary-row">
       <span>
-        <span class="setting-label">启用桌面通知</span>
-        <span class="setting-hint"
-          >应用运行期间每 10 分钟低频检查一次；退出应用后停止检查，不提供系统级后台推送。</span
-        >
+        <span class="setting-label">{{ t("notification.toggle") }}</span>
+        <span class="setting-hint">{{ t("notification.toggleHint") }}</span>
       </span>
       <label class="toggle">
         <input
           type="checkbox"
-          aria-label="启用桌面通知"
+          :aria-label="t('notification.toggle')"
           :checked="notifications.preferences.enabled && permissionGranted"
           :disabled="requestingPermission"
           @change="setEnabled"
@@ -227,8 +267,8 @@ function setEvent(type: NotificationEventType, event: Event): void {
 
     <div class="test-notification-row">
       <span>
-        <span class="setting-label">系统通知测试</span>
-        <span class="setting-hint">直接调用当前系统通知服务，不请求代码平台 API。</span>
+        <span class="setting-label">{{ t("notification.test") }}</span>
+        <span class="setting-hint">{{ t("notification.testHint") }}</span>
       </span>
       <button
         type="button"
@@ -236,7 +276,7 @@ function setEvent(type: NotificationEventType, event: Event): void {
         :disabled="sendingTestNotification || !permissionGranted"
         @click="sendTestNotification"
       >
-        {{ sendingTestNotification ? "正在发送..." : "发送测试通知" }}
+        {{ sendingTestNotification ? t("notification.testSending") : t("notification.testSend") }}
       </button>
     </div>
     <p
@@ -250,7 +290,7 @@ function setEvent(type: NotificationEventType, event: Event): void {
     </p>
 
     <fieldset>
-      <legend>通知平台</legend>
+      <legend>{{ t("notification.platforms") }}</legend>
       <div class="setting-grid">
         <label v-for="platform in platforms" :key="platform.value" class="choice-row">
           <span class="platform-copy">
@@ -270,7 +310,7 @@ function setEvent(type: NotificationEventType, event: Event): void {
     </fieldset>
 
     <fieldset>
-      <legend>事件类型</legend>
+      <legend>{{ t("notification.eventTypes") }}</legend>
       <div class="event-list">
         <label v-for="event in events" :key="event.value" class="choice-row event-row">
           <span>
@@ -293,8 +333,8 @@ function setEvent(type: NotificationEventType, event: Event): void {
         @change="notifications.setHidePrivateContent(($event.target as HTMLInputElement).checked)"
       />
       <span>
-        <strong>隐藏私有仓库通知内容</strong>
-        <small>默认不显示仓库名、PR 标题或代码信息；无法确认可见性的仓库也按私有处理。</small>
+        <strong>{{ t("notification.hidePrivate") }}</strong>
+        <small>{{ t("notification.hidePrivateHint") }}</small>
       </span>
     </label>
   </div>

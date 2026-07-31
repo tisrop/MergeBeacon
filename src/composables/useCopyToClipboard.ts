@@ -1,6 +1,7 @@
 import { getCurrentInstance, onUnmounted, ref } from "vue";
 import { clipboardWriteText } from "@/api";
 import { getErrorMessage } from "@/utils/error";
+import { translate } from "@/i18n";
 
 /** 复制成功提示的停留时长：足够被看到，又不会长期占住图标状态。 */
 const COPIED_STATE_DURATION = 1500;
@@ -11,7 +12,9 @@ const COPIED_STATE_DURATION = 1500;
  * 复制经由 `src/api/index.ts` 交给原生剪贴板插件完成，组件只消费这里的
  * copying / copied / errorMessage 三个状态，并在卸载时清理成功提示计时器。
  */
-export function useCopyToClipboard(fallbackErrorMessage = "复制失败") {
+export function useCopyToClipboard(
+  fallbackErrorMessage: string | (() => string) = () => translate("common.copyUnavailable"),
+) {
   const copying = ref(false);
   const copied = ref(false);
   const errorMessage = ref("");
@@ -38,7 +41,10 @@ export function useCopyToClipboard(fallbackErrorMessage = "复制失败") {
       }, COPIED_STATE_DURATION);
       return true;
     } catch (error) {
-      errorMessage.value = getErrorMessage(error, fallbackErrorMessage);
+      errorMessage.value = getErrorMessage(
+        error,
+        typeof fallbackErrorMessage === "function" ? fallbackErrorMessage() : fallbackErrorMessage,
+      );
       return false;
     } finally {
       copying.value = false;

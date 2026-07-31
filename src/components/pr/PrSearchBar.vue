@@ -4,6 +4,7 @@ import type { Platform, PrListQuery } from "@/types";
 import AppSelect from "@/components/shared/AppSelect.vue";
 import type { SelectOption } from "@/components/shared/selectOptions";
 import { usePrSearchBar } from "./usePrSearchBar";
+import { useI18n } from "@/i18n";
 
 const props = withDefaults(
   defineProps<{
@@ -25,26 +26,56 @@ const props = withDefaults(
   },
 );
 const emit = defineEmits<{ apply: [query: PrListQuery]; clear: []; retryOptions: [] }>();
+const { t } = useI18n();
+const assigneeLabels = computed(() =>
+  props.platform === "gitee"
+    ? {
+        field: t("pr.giteeTesters"),
+        all: t("pr.allGiteeTesters"),
+        aria: t("pr.giteeTesterFilterAria"),
+        search: t("pr.searchGiteeTesters"),
+      }
+    : {
+        field: t("pr.assignee"),
+        all: t("pr.allAssignees"),
+        aria: t("pr.assigneeFilterAria"),
+        search: t("pr.searchAssignee"),
+      },
+);
+const reviewLabels = computed(() =>
+  props.platform === "gitee"
+    ? {
+        field: t("pr.giteeReviewers"),
+        all: t("pr.allGiteeReviewStates"),
+        aria: t("pr.giteeReviewerFilterAria"),
+      }
+    : {
+        field: t("pr.reviews"),
+        all: t("pr.allReviewStates"),
+        aria: t("pr.reviewsFilterAria"),
+      },
+);
 const reviewOptions = computed<SelectOption[]>(() => [
-  { value: "", label: "所有评审状态" },
-  { value: "none", label: "无评审" },
-  { value: "required", label: "需要评审" },
-  { value: "approved", label: "已批准" },
+  { value: "", label: reviewLabels.value.all },
+  { value: "none", label: t("pr.noReview") },
+  { value: "required", label: t("pr.reviewRequired") },
+  { value: "approved", label: t("pr.reviewApproved") },
   {
     value: "changes_requested",
-    label: props.platform === "gitee" ? "要求更改（Gitee 不支持）" : "要求更改",
+    label:
+      props.platform === "gitee" ? t("pr.changesRequestedUnsupported") : t("pr.changesRequested"),
     disabled: props.platform === "gitee",
   },
 ]);
-const sortOptions = [
-  { value: "best_match", label: "最佳匹配" },
-  { value: "updated_desc", label: "最近更新" },
-  { value: "updated_asc", label: "最早更新" },
-  { value: "created_desc", label: "最新创建" },
-  { value: "created_asc", label: "最早创建" },
-  { value: "comments_desc", label: "评论最多" },
-  { value: "comments_asc", label: "评论最少" },
-];
+const sortOptions = computed<SelectOption[]>(() => [
+  { value: "best_match", label: t("pr.bestMatch") },
+  { value: "updated_desc", label: t("pr.updatedDesc") },
+  { value: "updated_asc", label: t("pr.updatedAsc") },
+  { value: "created_desc", label: t("pr.createdDesc") },
+  { value: "created_asc", label: t("pr.createdAsc") },
+  { value: "comments_desc", label: t("pr.commentsDesc") },
+  { value: "comments_asc", label: t("pr.commentsAsc") },
+]);
 const withAllOption = (label: string, options: SelectOption[]) => [
   { value: "", label },
   ...options,
@@ -57,7 +88,7 @@ const { draft, hasFilters, activeFilterCount, apply, clear, setReviews, setSort 
 </script>
 
 <template>
-  <form class="pr-search" role="search" aria-label="筛选 Pull Request" @submit.prevent="apply">
+  <form class="pr-search" role="search" :aria-label="t('pr.filterAria')" @submit.prevent="apply">
     <div class="search-primary">
       <span class="search-icon" aria-hidden="true">
         <svg
@@ -72,82 +103,85 @@ const { draft, hasFilters, activeFilterCount, apply, clear, setReviews, setSort 
           <path d="m20 20-3.5-3.5" />
         </svg>
       </span>
-      <label class="sr-only" for="pr-title-search">按标题搜索</label>
+      <label class="sr-only" for="pr-title-search">{{ t("pr.titleSearch") }}</label>
       <input
         id="pr-title-search"
         v-model="draft.title"
         class="search-title-input"
         type="search"
         autocomplete="off"
-        placeholder="搜索标题"
+        :placeholder="t('pr.searchTitle')"
       />
       <button class="btn btn-sm btn-primary search-submit" type="submit" :disabled="loading">
-        搜索
+        {{ t("common.search") }}
       </button>
     </div>
 
-    <div class="search-filters" aria-label="高级筛选">
+    <div class="search-filters" :aria-label="t('pr.filterAdvanced')">
       <div class="filter-field select-field">
-        <span>作者</span>
+        <span>{{ t("pr.author") }}</span>
         <AppSelect
-          aria-label="作者筛选"
+          :aria-label="t('pr.authorFilterAria')"
           searchable
-          search-placeholder="搜索作者"
+          :search-placeholder="t('pr.searchAuthor')"
           :disabled="optionsLoading"
           :model-value="draft.author"
-          :options="withAllOption('所有作者', authorOptions)"
+          :options="withAllOption(t('pr.allAuthors'), authorOptions)"
           @update:model-value="draft.author = $event"
         />
       </div>
       <div class="filter-field select-field">
-        <span>标签</span>
+        <span>{{ t("pr.label") }}</span>
         <AppSelect
-          aria-label="标签筛选"
+          :aria-label="t('pr.labelFilterAria')"
           searchable
-          search-placeholder="搜索标签"
+          :search-placeholder="t('pr.searchLabel')"
           :disabled="optionsLoading"
           :model-value="draft.label"
-          :options="withAllOption('所有标签', labelOptions)"
+          :options="withAllOption(t('pr.allLabels'), labelOptions)"
           @update:model-value="draft.label = $event"
         />
       </div>
       <div class="filter-field select-field">
-        <span>Assignee</span>
+        <span>{{ assigneeLabels.field }}</span>
         <AppSelect
-          aria-label="Assignee 筛选"
+          :aria-label="assigneeLabels.aria"
           searchable
-          search-placeholder="搜索 Assignee"
+          :search-placeholder="assigneeLabels.search"
           :disabled="optionsLoading"
           :model-value="draft.assignee"
-          :options="withAllOption('所有 Assignee', assigneeOptions)"
+          :options="withAllOption(assigneeLabels.all, assigneeOptions)"
           @update:model-value="draft.assignee = $event"
         />
       </div>
       <div class="filter-field select-field">
-        <span>Reviews</span>
+        <span>{{ reviewLabels.field }}</span>
         <AppSelect
-          aria-label="评审状态筛选"
+          :aria-label="reviewLabels.aria"
           :model-value="draft.reviews ?? ''"
           :options="reviewOptions"
           @update:model-value="setReviews"
         />
       </div>
       <div class="filter-field select-field sort-field">
-        <span>排序</span>
+        <span>{{ t("pr.sort") }}</span>
         <AppSelect
-          aria-label="Pull Request 排序"
+          :aria-label="t('pr.sortAria')"
           :model-value="draft.sort"
           :options="sortOptions"
           @update:model-value="setSort"
         />
       </div>
       <button v-if="hasFilters" class="clear-filters" type="button" @click="clear">
-        清除筛选<span v-if="activeFilterCount">（{{ activeFilterCount }}）</span>
+        {{ t("pr.filterClear")
+        }}<span v-if="activeFilterCount">{{
+          t("pr.filterCount", { count: activeFilterCount })
+        }}</span>
       </button>
     </div>
     <p v-if="optionsError" class="filter-options-error" role="alert">
       {{ optionsError }}
-      <button type="button" @click="emit('retryOptions')">重新加载</button>
+      <button type="button" @click="emit('retryOptions')">{{ t("common.reload") }}</button>
     </p>
   </form>
 </template>

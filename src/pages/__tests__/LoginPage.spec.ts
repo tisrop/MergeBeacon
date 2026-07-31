@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoginPage from "../LoginPage.vue";
 import { authLogin } from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { setAppLocale } from "@/i18n";
 
 const replace = vi.fn().mockResolvedValue(undefined);
 const routeQuery: { platform?: string } = {};
@@ -30,6 +31,7 @@ vi.mock("@/api", () => ({ authLogin: vi.fn() }));
 
 describe("LoginPage", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     storage.clear();
     delete routeQuery.platform;
     replace.mockClear();
@@ -93,5 +95,24 @@ describe("LoginPage", () => {
     expect(wrapper.get("#server-url").attributes("type")).toBe("text");
     expect(wrapper.get('label[for="access-token"]').text()).toContain("Personal Access Token");
     expect(wrapper.get("#access-token").attributes("type")).toBe("password");
+  });
+
+  it("切换语言后本地化服务器地址占位符", async () => {
+    routeQuery.platform = "gitlab";
+    const wrapper = mount(LoginPage, {
+      global: {
+        stubs: {
+          AppSelect: true,
+          RouterLink: true,
+        },
+      },
+    });
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get("#server-url").attributes("placeholder")).toBe(
+      "https://gitlab.com (leave blank to use the official service)",
+    );
   });
 });

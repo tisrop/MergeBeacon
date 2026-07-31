@@ -21,6 +21,7 @@ function entry(index: number): AiReviewHistoryEntry {
     mode: "full",
     model: "gpt-test",
     truncated: false,
+    language: "zh-CN",
     result: { summary: `result-${index}`, suggestions: [] },
   };
 }
@@ -84,5 +85,16 @@ describe("aiReviewPersistence", () => {
     expect(loadAiReviewHistory(reference).map((item) => item.id)).toEqual(["entry-3"]);
     expect(loadAiReviewHistory({ ...reference, platform: "gitlab" })[0].id).toBe("entry-4");
     expect(loadAiReviewHistory({ ...reference, prNumber: 8 })[0].id).toBe("entry-5");
+  });
+
+  it("将没有语言字段的旧历史按中文读取", () => {
+    const legacy = entry(6) as Partial<AiReviewHistoryEntry>;
+    delete legacy.language;
+    localStorage.setItem(
+      "mergebeacon:ai-review-history:v1:github:team:repo:7",
+      JSON.stringify([legacy]),
+    );
+
+    expect(loadAiReviewHistory(reference)[0].language).toBe("zh-CN");
   });
 });

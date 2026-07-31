@@ -19,6 +19,7 @@ import type {
   PrSummary,
   PrMergeReadiness,
 } from "@/types";
+import { setAppLocale } from "@/i18n";
 
 vi.mock("@/api", () => ({
   prList: vi.fn(),
@@ -59,6 +60,7 @@ describe("usePrStore", () => {
   });
 
   beforeEach(() => {
+    setAppLocale("zh-CN");
     setActivePinia(createPinia());
   });
 

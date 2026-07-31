@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { createDynamicCssClass } from "@/composables/useDynamicCssClass";
 import { useSelectDropdown } from "@/composables/useSelectDropdown";
 import { labelColorClass } from "@/utils/labelColorClass";
+import { useI18n } from "@/i18n";
 
 export interface MultiSelectOption {
   value: string;
@@ -25,13 +26,17 @@ const props = withDefaults(
     disabled?: boolean;
   }>(),
   {
-    placeholder: "请选择",
-    searchPlaceholder: "搜索选项",
-    emptyText: "暂无选项",
-    emptySearchText: "没有匹配选项",
     disabled: false,
   },
 );
+
+const { t } = useI18n();
+const resolvedPlaceholder = computed(() => props.placeholder ?? t("common.select"));
+const resolvedSearchPlaceholder = computed(
+  () => props.searchPlaceholder ?? t("common.searchOptions"),
+);
+const resolvedEmptyText = computed(() => props.emptyText ?? t("common.noOptions"));
+const resolvedEmptySearchText = computed(() => props.emptySearchText ?? t("common.noMatch"));
 
 const emit = defineEmits<{
   "update:modelValue": [value: string[]];
@@ -158,7 +163,7 @@ onUnmounted(() => {
       @keydown="onTriggerKeydown"
     >
       <span class="app-multi-select-value" :class="{ placeholder: !selectedText }">
-        {{ selectedText || placeholder }}
+        {{ selectedText || resolvedPlaceholder }}
       </span>
       <span v-if="modelValue.length" class="app-multi-select-count">{{ modelValue.length }}</span>
       <svg
@@ -192,8 +197,8 @@ onUnmounted(() => {
         v-model="searchQuery"
         class="multi-select-search"
         type="search"
-        :placeholder="searchPlaceholder"
-        :aria-label="searchPlaceholder"
+        :placeholder="resolvedSearchPlaceholder"
+        :aria-label="resolvedSearchPlaceholder"
         @keydown="onSearchKeydown"
       />
       <div ref="listRef" class="multi-select-options" role="listbox" aria-multiselectable="true">
@@ -227,7 +232,7 @@ onUnmounted(() => {
           </span>
         </button>
         <div v-if="filteredOptions.length === 0" class="multi-select-empty">
-          {{ searchQuery ? emptySearchText : emptyText }}
+          {{ searchQuery ? resolvedEmptySearchText : resolvedEmptyText }}
         </div>
       </div>
     </div>

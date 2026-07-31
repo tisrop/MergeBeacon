@@ -1,6 +1,7 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import PrCard from "@/components/pr/PrCard.vue";
+import { setAppLocale } from "@/i18n";
 import type { PrSummary, PrStatusSummary } from "@/types";
 
 const readyStatus: PrStatusSummary = {
@@ -27,6 +28,20 @@ function pr(overrides: Partial<PrSummary> = {}): PrSummary {
 }
 
 describe("PrCard", () => {
+  beforeEach(() => {
+    setAppLocale("zh-CN");
+  });
+
+  it.each([
+    ["open", "打开"],
+    ["closed", "已关闭"],
+    ["merged", "已合并"],
+  ] as const)("中文界面将 %s PR 状态显示为 %s", (state, expected) => {
+    const wrapper = mount(PrCard, { props: { pr: pr({ state }) } });
+
+    expect(wrapper.get(".badge").text()).toBe(expected);
+  });
+
   it("Open PR 展示总体、审批和 CI/测试状态", () => {
     const wrapper = mount(PrCard, { props: { pr: pr() } });
 

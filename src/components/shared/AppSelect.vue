@@ -2,6 +2,9 @@
 import { computed } from "vue";
 import { useSelectDropdown } from "@/composables/useSelectDropdown";
 import type { SelectOption } from "./selectOptions";
+import { useI18n } from "@/i18n";
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -19,13 +22,13 @@ const props = withDefaults(
     disabled?: boolean;
   }>(),
   {
-    placeholder: "请选择",
+    placeholder: undefined,
     size: "md",
     searchable: false,
-    searchPlaceholder: "搜索选项",
+    searchPlaceholder: undefined,
     hasMore: false,
     loadingMore: false,
-    loadMoreText: "加载更多",
+    loadMoreText: undefined,
     disabled: false,
   },
 );
@@ -85,7 +88,7 @@ const {
       @keydown="onTriggerKeydown"
     >
       <span class="app-select-value" :class="{ placeholder: !selectedLabel }">
-        {{ selectedLabel || placeholder }}
+        {{ selectedLabel || placeholder || t("common.select") }}
       </span>
       <svg
         class="app-select-chevron"
@@ -110,8 +113,8 @@ const {
         v-model="searchQuery"
         class="dropdown-search"
         type="search"
-        :placeholder="searchPlaceholder"
-        :aria-label="searchPlaceholder"
+        :placeholder="searchPlaceholder || t('common.searchOptions')"
+        :aria-label="searchPlaceholder || t('common.searchOptions')"
         @keydown="onSearchKeydown"
       />
       <div ref="listRef" class="dropdown-options" role="listbox">
@@ -131,7 +134,7 @@ const {
           {{ opt.label }}
         </button>
         <div v-if="filteredOptions.length === 0" class="dropdown-empty">
-          {{ searchQuery ? "没有匹配选项" : "无选项" }}
+          {{ searchQuery ? t("common.noMatch") : t("common.noOptions") }}
         </div>
       </div>
       <button
@@ -141,7 +144,7 @@ const {
         :disabled="loadingMore"
         @click.stop="emit('load-more')"
       >
-        {{ loadingMore ? "加载中…" : loadMoreText }}
+        {{ loadingMore ? t("common.loadingMore") : loadMoreText || t("common.loadMore") }}
       </button>
     </div>
   </div>

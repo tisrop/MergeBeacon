@@ -1,6 +1,7 @@
 import { ref } from "vue";
 import { listRepositoryLabels, prParticipantSuggestions } from "@/api";
 import type { Platform, PrLabel, User } from "@/types";
+import { currentLocale, translate } from "@/i18n";
 
 export type PrListFilterOption = { value: string; label: string };
 
@@ -21,7 +22,7 @@ export function userFilterOptions(users: User[], selected = ""): PrListFilterOpt
     });
   }
   return [...byLogin.values()]
-    .sort((left, right) => left.login.localeCompare(right.login, "zh-CN"))
+    .sort((left, right) => left.login.localeCompare(right.login, currentLocale()))
     .map((user) => ({
       value: user.login,
       label: user.name && user.name !== user.login ? `${user.login} (${user.name})` : user.login,
@@ -38,7 +39,7 @@ export function labelFilterOptions(labels: PrLabel[], selected = ""): PrListFilt
     names.set(selected.toLocaleLowerCase(), selected);
   }
   return [...names.values()]
-    .sort((left, right) => left.localeCompare(right, "zh-CN"))
+    .sort((left, right) => left.localeCompare(right, currentLocale()))
     .map((name) => ({ value: name, label: name }));
 }
 
@@ -83,7 +84,7 @@ export function usePrListFilterOptions() {
     labels.value = labelResult.status === "fulfilled" ? labelResult.value : [];
     loaded = true;
     if (participantResult.status === "rejected" || labelResult.status === "rejected") {
-      error.value = "部分筛选选项加载失败";
+      error.value = translate("pr.filterOptionsPartial");
     }
     loading.value = false;
   }

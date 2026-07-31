@@ -4,7 +4,9 @@ use serde_json::Value;
 
 use crate::ai::prompt;
 use crate::error::AppError;
-use crate::models::{AiPrDraftRequest, AiPrDraftResult, AiReviewFocus, AiReviewResult, PrContext, MAX_PR_TITLE_CHARS};
+use crate::models::{
+    AiPrDraftRequest, AiPrDraftResult, AiReviewFocus, AiReviewLanguage, AiReviewResult, PrContext, MAX_PR_TITLE_CHARS,
+};
 
 /// OpenAI-compatible chat client
 pub struct AiClient {
@@ -12,6 +14,14 @@ pub struct AiClient {
     model: String,
     api_key: String,
     client: reqwest::Client,
+}
+
+pub struct AiReviewOptions<'a> {
+    pub focus: Option<&'a AiReviewFocus>,
+    pub language: &'a AiReviewLanguage,
+    pub custom_prompt: Option<&'a str>,
+    pub temperature: f32,
+    pub max_tokens: u32,
 }
 
 async fn consume_sse_stream<S, F>(stream: S, mut on_token: F) -> Result<String, AppError>
@@ -163,20 +173,17 @@ impl AiClient {
         &self,
         diff: &str,
         context: Option<&PrContext>,
-        focus: Option<&AiReviewFocus>,
-        custom_prompt: Option<&str>,
-        temperature: f32,
-        max_tokens: u32,
+        options: AiReviewOptions<'_>,
     ) -> Result<AiReviewResult, AppError> {
-        let system_prompt = prompt::build_system_prompt(focus, custom_prompt);
-        let user_message = prompt::build_user_message(diff, context);
+        let system_prompt = prompt::build_system_prompt(options.focus, options.language, options.custom_prompt);
+        let user_message = prompt::build_user_message(diff, context, options.language);
 
         let messages = vec![
             serde_json::json!({"role": "system", "content": system_prompt}),
             serde_json::json!({"role": "user", "content": user_message}),
         ];
 
-        let response = self.chat(&messages, temperature, max_tokens).await?;
+        let response = self.chat(&messages, options.temperature, options.max_tokens).await?;
         self.parse_review_response(&response)
     }
 
@@ -196,29 +203,25 @@ impl AiClient {
 
     /// Perform a streaming code review.
     /// Calls `on_token` with each text delta, and returns the final parsed result.
-    #[allow(clippy::too_many_arguments)]
     pub async fn review_stream<F>(
         &self,
         diff: &str,
         context: Option<&PrContext>,
-        focus: Option<&AiReviewFocus>,
-        custom_prompt: Option<&str>,
-        temperature: f32,
-        max_tokens: u32,
+        options: AiReviewOptions<'_>,
         on_token: F,
     ) -> Result<AiReviewResult, AppError>
     where
         F: FnMut(&str) -> Result<(), AppError> + Send,
     {
-        let system_prompt = prompt::build_system_prompt(focus, custom_prompt);
-        let user_message = prompt::build_user_message(diff, context);
+        let system_prompt = prompt::build_system_prompt(options.focus, options.language, options.custom_prompt);
+        let user_message = prompt::build_user_message(diff, context, options.language);
 
         let messages = vec![
             serde_json::json!({"role": "system", "content": system_prompt}),
             serde_json::json!({"role": "user", "content": user_message}),
         ];
 
-        let response = self.chat_stream(&messages, temperature, max_tokens, on_token).await?;
+        let response = self.chat_stream(&messages, options.temperature, options.max_tokens, on_token).await?;
 
         self.parse_review_response(&response)
     }

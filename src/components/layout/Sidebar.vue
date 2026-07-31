@@ -7,6 +7,9 @@ import { usePrStore } from "@/stores/usePrStore";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import type { Platform, RepoSummary } from "@/types";
 import BrandMark from "@/components/shared/BrandMark.vue";
+import { useI18n } from "@/i18n";
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -70,7 +73,7 @@ const repoGroups = computed(() => {
     ? [
         {
           platform,
-          owner: "星标",
+          owner: t("layout.starred"),
           isOrganization: false,
           isStarredGroup: true,
           repos: starredRepos,
@@ -96,6 +99,9 @@ const platforms: { value: Platform; label: string }[] = [
 const visiblePlatforms = computed(() => platforms.filter((p) => auth.platformVisibility[p.value]));
 const activePlatformLabel = computed(
   () => platforms.find((item) => item.value === auth.activePlatform)?.label ?? auth.activePlatform,
+);
+const pullRequestNavigationLabel = computed(() =>
+  auth.activePlatform === "gitlab" ? t("layout.mergeRequests") : t("layout.pullRequests"),
 );
 const activePlatformShortLabel = computed(() => {
   const labels: Record<Platform, string> = { github: "GH", gitlab: "GL", gitee: "GE" };
@@ -217,8 +223,8 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
         <router-link
           to="/"
           class="logo"
-          aria-label="MergeBeacon 首页"
-          :title="isSidebarCollapsed ? 'MergeBeacon 首页' : undefined"
+          :aria-label="t('layout.home')"
+          :title="isSidebarCollapsed ? t('layout.home') : undefined"
         >
           <span class="logo-mark" aria-hidden="true">
             <BrandMark />
@@ -229,8 +235,8 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
           v-if="isDiffFocusMode && !isSidebarCollapsed"
           class="sidebar-toggle"
           type="button"
-          title="折叠侧栏"
-          aria-label="折叠侧栏"
+          :title="t('layout.sidebarCollapse')"
+          :aria-label="t('layout.sidebarCollapse')"
           aria-controls="app-sidebar"
           :aria-expanded="true"
           @click="toggleDiffSidebar"
@@ -256,8 +262,8 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
     <div
       v-if="isSidebarCollapsed"
       class="compact-platform"
-      :title="`当前平台：${activePlatformLabel}`"
-      :aria-label="`当前平台：${activePlatformLabel}`"
+      :title="t('layout.currentPlatform', { platform: activePlatformLabel })"
+      :aria-label="t('layout.currentPlatform', { platform: activePlatformLabel })"
     >
       <span aria-hidden="true">{{ activePlatformShortLabel }}</span>
     </div>
@@ -279,7 +285,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
       <template v-if="auth.isLoggedIn && auth.activeUser">
         <img :src="auth.activeUser.avatar_url" class="avatar" alt="" />
         <span class="user-copy">
-          <span class="user-label">当前账号</span>
+          <span class="user-label">{{ t("layout.currentAccount") }}</span>
           <span class="username">{{ auth.activeUser.login }}</span>
         </span>
       </template>
@@ -288,17 +294,17 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
         :to="{ path: '/login', query: { platform: auth.activePlatform } }"
         class="login-link"
       >
-        登录
+        {{ t("layout.login") }}
       </router-link>
     </div>
 
     <!-- Navigation -->
-    <nav class="nav" aria-label="主导航">
+    <nav class="nav" :aria-label="t('layout.mainNavigation')">
       <router-link
         to="/inbox"
         :class="{ active: isActive('review-inbox') }"
-        aria-label="PR 收件箱"
-        :title="isSidebarCollapsed ? 'PR 收件箱' : undefined"
+        :aria-label="t('layout.reviewInbox')"
+        :title="isSidebarCollapsed ? t('layout.reviewInbox') : undefined"
       >
         <svg
           width="16"
@@ -314,13 +320,13 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
           <path d="M4 4h16v16H4z" />
           <path d="m4 8 8 5 8-5" />
         </svg>
-        <span class="nav-label">PR 收件箱</span>
+        <span class="nav-label">{{ t("layout.reviewInbox") }}</span>
       </router-link>
       <router-link
         to="/pr"
         :class="{ active: route.name === 'pr-list' || route.name === 'pr-detail' }"
-        aria-label="拉取请求（PR）"
-        :title="isSidebarCollapsed ? '拉取请求（PR）' : undefined"
+        :aria-label="pullRequestNavigationLabel"
+        :title="isSidebarCollapsed ? pullRequestNavigationLabel : undefined"
       >
         <svg
           width="16"
@@ -338,13 +344,13 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
           <path d="M6 9v9" />
           <path d="M13 6h3a2 2 0 0 1 2 2v3" />
         </svg>
-        <span class="nav-label">Pull Requests</span>
+        <span class="nav-label">{{ pullRequestNavigationLabel }}</span>
       </router-link>
       <router-link
         to="/issue"
         :class="{ active: isActive('issue') }"
-        aria-label="Issues"
-        :title="isSidebarCollapsed ? 'Issues' : undefined"
+        :aria-label="t('layout.issues')"
+        :title="isSidebarCollapsed ? t('layout.issues') : undefined"
       >
         <svg
           width="16"
@@ -360,7 +366,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
           <line x1="12" y1="8" x2="12" y2="12" />
           <line x1="12" y1="16" x2="12.01" y2="16" />
         </svg>
-        <span class="nav-label">Issues</span>
+        <span class="nav-label">{{ t("layout.issues") }}</span>
       </router-link>
     </nav>
 
@@ -368,8 +374,8 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
       v-if="isSidebarCollapsed && compactRepoName"
       class="compact-repo"
       role="note"
-      :title="`当前仓库：${compactRepoFullName}`"
-      :aria-label="`当前仓库：${compactRepoFullName}`"
+      :title="t('layout.currentRepository', { repository: compactRepoFullName ?? '' })"
+      :aria-label="t('layout.currentRepository', { repository: compactRepoFullName ?? '' })"
     >
       <svg
         width="15"
@@ -391,11 +397,11 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
     <!-- Repo list -->
     <div class="repo-section" v-if="auth.isLoggedIn">
       <div class="repo-header">
-        <h4>仓库</h4>
+        <h4>{{ t("layout.repositories") }}</h4>
         <button
           class="refresh-btn"
-          title="刷新仓库列表"
-          aria-label="刷新仓库列表"
+          :title="t('layout.repositoryRefresh')"
+          :aria-label="t('layout.repositoryRefresh')"
           :disabled="repo.loading"
           @click="repo.refreshRepos(auth.activePlatform)"
         >
@@ -420,17 +426,17 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
         v-model="repoSearch"
         class="repo-search"
         type="search"
-        placeholder="搜索仓库"
-        aria-label="搜索仓库"
+        :placeholder="t('layout.repositorySearch')"
+        :aria-label="t('layout.repositorySearch')"
         autocomplete="off"
         spellcheck="false"
       />
       <div v-if="repo.loading && repo.repos.length === 0" class="repo-list">
-        <div class="loading-hint">加载中...</div>
+        <div class="loading-hint">{{ t("common.loading") }}</div>
       </div>
       <div v-else class="repo-list">
         <div v-if="normalizedRepoSearch && repoGroups.length === 0" class="repo-search-empty">
-          已加载仓库中没有匹配项
+          {{ t("layout.repositoryNoMatch") }}
         </div>
         <template
           v-for="group in repoGroups"
@@ -504,7 +510,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
               :title="
                 r.fork && r.parent_full_name ? 'Fork from ' + r.parent_full_name : r.full_name
               "
-              :aria-label="`打开仓库 ${r.full_name}`"
+              :aria-label="t('layout.repositoryOpen', { repository: r.full_name })"
               @click="
                 r.fork
                   ? selectForkRepo(r, true, group.platform)
@@ -538,11 +544,15 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
               :class="{ active: repo.isRepoStarred(r.full_name, group.platform) }"
               :aria-label="
                 repo.isRepoStarred(r.full_name, group.platform)
-                  ? `取消星标 ${r.full_name}`
-                  : `星标 ${r.full_name}`
+                  ? t('layout.unstar', { repository: r.full_name })
+                  : t('layout.star', { repository: r.full_name })
               "
               :aria-pressed="repo.isRepoStarred(r.full_name, group.platform)"
-              :title="repo.isRepoStarred(r.full_name, group.platform) ? '取消星标' : '添加星标'"
+              :title="
+                repo.isRepoStarred(r.full_name, group.platform)
+                  ? t('layout.unstarAction')
+                  : t('layout.starAdd')
+              "
               @click="repo.toggleRepoStar(r.full_name, group.platform)"
             >
               <svg
@@ -565,8 +575,8 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
         </template>
       </div>
       <div v-if="repo.error" class="repo-load-error">
-        <span>加载失败：{{ repo.error }}</span>
-        <button @click="repo.retry(auth.activePlatform)">重试</button>
+        <span>{{ t("layout.repositoryLoadFailed", { message: repo.error }) }}</span>
+        <button @click="repo.retry(auth.activePlatform)">{{ t("common.retry") }}</button>
       </div>
       <button
         v-else-if="repo.hasMore && !repo.loading"
@@ -574,7 +584,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
         :disabled="repo.loadingMore"
         @click="repo.loadMore(auth.activePlatform)"
       >
-        {{ repo.loadingMore ? "加载中..." : "加载更多" }}
+        {{ repo.loadingMore ? t("common.loading") : t("layout.repositoryLoadMore") }}
       </button>
     </div>
 
@@ -582,8 +592,8 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
       <button
         class="sidebar-toggle"
         type="button"
-        title="展开侧栏"
-        aria-label="展开侧栏"
+        :title="t('layout.sidebarExpand')"
+        :aria-label="t('layout.sidebarExpand')"
         aria-controls="app-sidebar"
         :aria-expanded="false"
         @click="toggleDiffSidebar"

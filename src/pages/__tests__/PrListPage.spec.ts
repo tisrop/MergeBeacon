@@ -3,6 +3,7 @@ import { reactive } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import PrListPage from "@/pages/PrListPage.vue";
 import type { Platform, PrSummary } from "@/types";
+import { setAppLocale } from "@/i18n";
 
 const item: PrSummary = {
   number: 1,
@@ -136,6 +137,7 @@ function mountPage(platform: Platform) {
 
 describe("PrListPage 截断提示", () => {
   afterEach(() => {
+    setAppLocale("zh-CN");
     mocks.authStore.activePlatform = "github";
     mocks.authStore.isLoggedIn = false;
     mocks.repoStore.activeRepo = { owner: "team", repo: "repo" };
@@ -166,6 +168,17 @@ describe("PrListPage 截断提示", () => {
     mocks.prStore.setPerPage.mockReset();
     mocks.listFilterOptions.load.mockReset();
     mocks.listFilterOptions.clear.mockReset();
+  });
+
+  it.each([
+    ["github", "拉取请求（PR）"],
+    ["gitlab", "合并请求（MR）"],
+    ["gitee", "拉取请求（PR）"],
+  ] as const)("中文界面为 %s 显示平台对应的请求标题", (platform, expected) => {
+    setAppLocale("zh-CN");
+    const wrapper = mountPage(platform);
+
+    expect(wrapper.get("h2").text()).toBe(expected);
   });
 
   it.each(["github", "gitlab", "gitee"] as const)("%s 加载平台对应的筛选选项", async (platform) => {

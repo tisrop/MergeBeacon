@@ -25,6 +25,7 @@ import {
 } from "@/utils/diffHunk";
 import { getErrorMessage } from "@/utils/error";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
+import { currentLocale, useI18n } from "@/i18n";
 import MiniDiffView from "./MiniDiffView.vue";
 
 const props = defineProps<{
@@ -43,6 +44,8 @@ const emit = defineEmits<{
   locateComment: [path: string, line: number | null, side: DiffSide | null];
   openLink: [href: string];
 }>();
+
+const { t } = useI18n();
 
 type ThreadFilter = "all" | "unresolved" | "resolved";
 
@@ -274,7 +277,7 @@ async function replyToThread(thread: ReviewThread): Promise<void> {
     await reloadAfterMutation(contextKey);
   } catch (mutationError) {
     if (threadContextKey() === contextKey)
-      setCommentError(operationKey, getErrorMessage(mutationError, "回复线程失败"));
+      setCommentError(operationKey, getErrorMessage(mutationError, t("review.replyFailed")));
   } finally {
     if (threadContextKey() === contextKey) {
       const after = new Set(updatingThreads.value);
@@ -327,7 +330,7 @@ async function saveEdit(thread: ReviewThread, comment: PrComment): Promise<void>
     await reloadAfterMutation(contextKey);
   } catch (mutationError) {
     if (threadContextKey() === contextKey)
-      setCommentError(operationKey, getErrorMessage(mutationError, "编辑评论失败"));
+      setCommentError(operationKey, getErrorMessage(mutationError, t("review.editFailed")));
   } finally {
     if (threadContextKey() === contextKey) {
       const after = new Set(updatingThreads.value);
@@ -362,7 +365,7 @@ async function deleteComment(thread: ReviewThread, comment: PrComment): Promise<
     await reloadAfterMutation(contextKey);
   } catch (mutationError) {
     if (threadContextKey() === contextKey)
-      setCommentError(operationKey, getErrorMessage(mutationError, "删除评论失败"));
+      setCommentError(operationKey, getErrorMessage(mutationError, t("review.deleteFailed")));
   } finally {
     if (threadContextKey() === contextKey) {
       const after = new Set(deletingComments.value);
@@ -417,7 +420,7 @@ async function loadReviews(): Promise<void> {
     emitSummary();
   } catch (loadError) {
     if (sequence !== requestSequence) return;
-    error.value = getErrorMessage(loadError, "加载评审意见失败");
+    error.value = getErrorMessage(loadError, t("review.loadFailed"));
     generalItems.value = [];
     threads.value = [];
     emitSummary();
@@ -475,7 +478,10 @@ async function setThreadResolved(thread: ReviewThread, resolved: boolean): Promi
       return;
     threadErrors.value = {
       ...threadErrors.value,
-      [thread.id]: getErrorMessage(updateError, resolved ? "解决线程失败" : "重新打开线程失败"),
+      [thread.id]: getErrorMessage(
+        updateError,
+        resolved ? t("review.resolveFailed") : t("review.reopenThreadFailed"),
+      ),
     };
   } finally {
     if (activeResolutionOperations.get(operationKey) === operationId) {
@@ -536,14 +542,19 @@ defineExpose({ refresh: loadReviews });
   <section class="review-list" aria-labelledby="review-list-title">
     <header class="review-list-heading">
       <div>
-        <h4 id="review-list-title">评审进度</h4>
+        <h4 id="review-list-title">{{ t("review.progress") }}</h4>
         <p>
-          整体评审 {{ generalItems.length }} · 行级线程 {{ threads.length }} · 评论
-          {{ threads.reduce((total, thread) => total + thread.comments.length, 0) }}
+          {{
+            t("review.progressSummary", {
+              reviews: generalItems.length,
+              threads: threads.length,
+              comments: threads.reduce((total, thread) => total + thread.comments.length, 0),
+            })
+          }}
         </p>
       </div>
       <button class="btn btn-sm" type="button" :disabled="loading" @click="loadReviews">
-        {{ loading ? "刷新中..." : "刷新" }}
+        {{ loading ? t("review.refreshing") : t("review.refresh") }}
       </button>
     </header>
 
@@ -558,22 +569,28 @@ defineExpose({ refresh: loadReviews });
         class="review-section"
         aria-labelledby="general-review-title"
       >
-        <h5 id="general-review-title">普通评论与整体评审</h5>
+        <h5 id="general-review-title">{{ t("review.generalSection") }}</h5>
         <article v-for="item in generalItems" :key="item.id" class="general-review-item">
           <header class="comment-header">
             <img
               :src="item.author.avatar_url"
-              :alt="`${item.author.login} 的头像`"
+              :alt="t('review.avatarAlt', { login: item.author.login })"
               class="avatar"
             />
             <strong>{{ item.author.login }}</strong>
             <span class="kind-badge">
-              {{ item.kind === "overall_review" ? "整体评审" : "普通评论" }}
+              {{
+                item.kind === "overall_review"
+                  ? t("review.overallReview")
+                  : t("review.generalComment")
+              }}
             </span>
             <span v-if="item.kind === 'overall_review' && item.state" class="review-state">{{
               item.state
             }}</span>
-            <time :datetime="item.time">{{ new Date(item.time).toLocaleString() }}</time>
+            <time :datetime="item.time">{{
+              new Date(item.time).toLocaleString(currentLocale())
+            }}</time>
           </header>
           <MarkdownRenderer
             :content="item.body"
@@ -588,64 +605,69 @@ defineExpose({ refresh: loadReviews });
       <section class="review-section" aria-labelledby="thread-list-title">
         <div class="thread-section-heading">
           <div>
-            <h5 id="thread-list-title">行级评论线程</h5>
+            <h5 id="thread-list-title">{{ t("review.lineThreads") }}</h5>
             <span
               v-if="threads.some((thread) => thread.resolved !== null)"
               class="resolution-summary"
             >
-              未解决 {{ unresolvedCount }} · 已解决 {{ resolvedCount }}
+              {{
+                t("review.resolutionSummary", {
+                  unresolved: unresolvedCount,
+                  resolved: resolvedCount,
+                })
+              }}
             </span>
           </div>
-          <div class="thread-filters" aria-label="线程状态筛选">
+          <div class="thread-filters" :aria-label="t('review.threadFilter')">
             <button
               type="button"
               :class="{ active: threadFilter === 'all' }"
               @click="threadFilter = 'all'"
             >
-              全部 {{ threads.length }}
+              {{ t("review.allThreads", { count: threads.length }) }}
             </button>
             <button
               type="button"
               :class="{ active: threadFilter === 'unresolved' }"
               @click="threadFilter = 'unresolved'"
             >
-              未解决 {{ unresolvedCount }}
+              {{ t("review.unresolvedCount", { count: unresolvedCount }) }}
             </button>
             <button
               type="button"
               :class="{ active: threadFilter === 'resolved' }"
               @click="threadFilter = 'resolved'"
             >
-              已解决 {{ resolvedCount }}
+              {{ t("review.resolvedCount", { count: resolvedCount }) }}
             </button>
           </div>
-          <div class="thread-navigation" aria-label="未解决线程导航">
+          <div class="thread-navigation" :aria-label="t('review.unresolvedNavigation')">
             <button
               class="btn btn-sm"
               type="button"
               :disabled="unresolvedCount === 0"
-              title="上一个未解决线程"
+              :title="t('review.previousUnresolvedTitle')"
               @click="navigateUnresolvedThread(-1)"
             >
-              上一个未解决
+              {{ t("review.previousUnresolved") }}
             </button>
             <button
               class="btn btn-sm"
               type="button"
               :disabled="unresolvedCount === 0"
-              title="下一个未解决线程"
+              :title="t('review.nextUnresolvedTitle')"
               @click="navigateUnresolvedThread(1)"
             >
-              下一个未解决
+              {{ t("review.nextUnresolved") }}
             </button>
           </div>
         </div>
 
         <div v-if="threads.length === 0" class="empty-state">
-          <p>暂无行级评论线程</p>
+          <p>{{ t("review.noThreads") }}</p>
         </div>
         <div v-else-if="filteredThreads.length === 0" class="empty-state">
-          <p>当前筛选条件下没有线程</p>
+          <p>{{ t("review.noFilteredThreads") }}</p>
         </div>
         <div v-else class="threads">
           <article
@@ -662,32 +684,36 @@ defineExpose({ refresh: loadReviews });
           >
             <header class="thread-header">
               <div class="thread-location">
-                <span class="kind-badge">行级评论</span>
+                <span class="kind-badge">{{ t("review.lineComment") }}</span>
                 <button
                   type="button"
                   class="path-button"
                   :disabled="!thread.canNavigate"
                   :title="
                     thread.canLocate
-                      ? '跳转到当前 Diff 行'
+                      ? t('review.locateLine')
                       : thread.canNavigate
-                        ? '跳转到当前 Diff 文件'
-                        : '当前 Diff 中找不到此评论对应的文件'
+                        ? t('review.locateFile')
+                        : t('review.fileNotFound')
                   "
                   @click="locateThread(thread)"
                 >
                   {{ thread.displayPath }}<template v-if="thread.line">:{{ thread.line }}</template>
                 </button>
-                <span v-if="threadIsOutdated(thread)" class="outdated-badge">代码已过期</span>
+                <span v-if="threadIsOutdated(thread)" class="outdated-badge">{{
+                  t("review.codeOutdated")
+                }}</span>
               </div>
               <div class="thread-status-actions">
-                <span v-if="thread.resolved === true" class="resolution-badge resolved"
-                  >已解决</span
-                >
-                <span v-else-if="thread.resolved === false" class="resolution-badge unresolved"
-                  >未解决</span
-                >
-                <span v-else class="resolution-badge local-only">平台未提供解决状态</span>
+                <span v-if="thread.resolved === true" class="resolution-badge resolved">{{
+                  t("review.resolved")
+                }}</span>
+                <span v-else-if="thread.resolved === false" class="resolution-badge unresolved">{{
+                  t("review.unresolved")
+                }}</span>
+                <span v-else class="resolution-badge local-only">{{
+                  t("review.resolutionUnavailable")
+                }}</span>
                 <button
                   v-if="canResolveThreads && thread.resolvable"
                   type="button"
@@ -697,10 +723,10 @@ defineExpose({ refresh: loadReviews });
                 >
                   {{
                     updatingThreads.has(thread.id)
-                      ? "处理中..."
+                      ? t("review.processing")
                       : thread.resolved === true
-                        ? "重新打开"
-                        : "解决线程"
+                        ? t("review.reopenThread")
+                        : t("review.resolveThread")
                   }}
                 </button>
               </div>
@@ -717,14 +743,17 @@ defineExpose({ refresh: loadReviews });
                 class="code-hint"
                 @click="toggleCode(thread.id)"
               >
-                <span>{{ codeExpanded.has(thread.id) ? "▾" : "▸" }} 查看评论创建时的代码</span>
-                <span v-if="threadIsOutdated(thread)" class="outdated-hint"
-                  >代码位置可能已变化</span
+                <span
+                  >{{ codeExpanded.has(thread.id) ? "▾" : "▸" }}
+                  {{ t("review.viewOriginalCode") }}</span
                 >
+                <span v-if="threadIsOutdated(thread)" class="outdated-hint">{{
+                  t("review.codeLocationChanged")
+                }}</span>
               </button>
               <div v-else class="code-hint original-code-hint">
-                <span>评论创建时的代码</span>
-                <span class="outdated-hint">当前 Diff 无法定位</span>
+                <span>{{ t("review.originalCode") }}</span>
+                <span class="outdated-hint">{{ t("review.diffCannotLocate") }}</span>
               </div>
               <MiniDiffView
                 v-if="!thread.canLocate || codeExpanded.has(thread.id)"
@@ -735,15 +764,15 @@ defineExpose({ refresh: loadReviews });
               />
             </div>
             <div v-else-if="!thread.canLocate" class="original-context-fallback">
-              <strong>当前 Diff 无法定位此评论</strong>
+              <strong>{{ t("review.commentCannotLocate") }}</strong>
               <span>
-                原始位置：{{ thread.path || "未知文件"
+                {{ t("review.originalLocation") }}{{ thread.path || t("review.unknownFile")
                 }}<template v-if="thread.contextLine"> :{{ thread.contextLine }}</template>
               </span>
               <span v-if="thread.comments[0]?.original_commit_id">
-                原始提交：{{ thread.comments[0].original_commit_id }}
+                {{ t("review.originalCommit") }}{{ thread.comments[0].original_commit_id }}
               </span>
-              <span>评论正文仍保留在下方线程中。</span>
+              <span>{{ t("review.commentPreserved") }}</span>
             </div>
 
             <ol class="thread-comments">
@@ -755,13 +784,15 @@ defineExpose({ refresh: loadReviews });
                 <header class="comment-header">
                   <img
                     :src="comment.author.avatar_url"
-                    :alt="`${comment.author.login} 的头像`"
+                    :alt="t('review.avatarAlt', { login: comment.author.login })"
                     class="avatar"
                   />
                   <strong>{{ comment.author.login }}</strong>
-                  <span v-if="comment.reply_to_id !== null" class="reply-badge">回复</span>
+                  <span v-if="comment.reply_to_id !== null" class="reply-badge">{{
+                    t("review.replyBadge")
+                  }}</span>
                   <time :datetime="comment.created_at">{{
-                    new Date(comment.created_at).toLocaleString()
+                    new Date(comment.created_at).toLocaleString(currentLocale())
                   }}</time>
                   <span v-if="comment.can_edit || comment.can_delete" class="comment-actions">
                     <button
@@ -770,7 +801,7 @@ defineExpose({ refresh: loadReviews });
                       class="text-button"
                       @click="beginEdit(comment)"
                     >
-                      编辑
+                      {{ t("review.edit") }}
                     </button>
                     <button
                       v-if="comment.can_delete"
@@ -780,7 +811,9 @@ defineExpose({ refresh: loadReviews });
                       @click="deleteComment(thread, comment)"
                     >
                       {{
-                        deleteConfirmations.has(commentKey(thread, comment)) ? "确认删除" : "删除"
+                        deleteConfirmations.has(commentKey(thread, comment))
+                          ? t("review.confirmDelete")
+                          : t("review.delete")
                       }}
                     </button>
                   </span>
@@ -790,7 +823,7 @@ defineExpose({ refresh: loadReviews });
                     v-model="editingBodies[String(comment.id)]"
                     class="input comment-editor"
                     rows="4"
-                    aria-label="编辑评论"
+                    :aria-label="t('review.editComment')"
                   />
                   <div class="comment-edit-actions">
                     <button
@@ -799,10 +832,10 @@ defineExpose({ refresh: loadReviews });
                       :disabled="updatingThreads.has(`${thread.id}:${String(comment.id)}:edit`)"
                       @click="saveEdit(thread, comment)"
                     >
-                      保存
+                      {{ t("common.save") }}
                     </button>
                     <button type="button" class="btn btn-sm" @click="cancelEdit(comment)">
-                      取消
+                      {{ t("common.cancel") }}
                     </button>
                   </div>
                 </template>
@@ -826,7 +859,11 @@ defineExpose({ refresh: loadReviews });
                     :aria-expanded="expandedBodies.has(itemId(thread.id, comment))"
                     @click="toggleBody(itemId(thread.id, comment))"
                   >
-                    {{ expandedBodies.has(itemId(thread.id, comment)) ? "收起" : "展开" }}
+                    {{
+                      expandedBodies.has(itemId(thread.id, comment))
+                        ? t("review.collapse")
+                        : t("review.expand")
+                    }}
                   </button>
                 </template>
                 <p
@@ -849,8 +886,8 @@ defineExpose({ refresh: loadReviews });
                 v-model="replyBodies[thread.id]"
                 class="input thread-reply-input"
                 rows="3"
-                placeholder="回复此线程..."
-                aria-label="回复评审线程"
+                :placeholder="t('review.replyPlaceholder')"
+                :aria-label="t('review.replyThread')"
                 :disabled="updatingThreads.has(`${thread.id}:reply`)"
               />
               <div class="thread-reply-actions">
@@ -861,7 +898,11 @@ defineExpose({ refresh: loadReviews });
                     updatingThreads.has(`${thread.id}:reply`) || !replyBodies[thread.id]?.trim()
                   "
                 >
-                  {{ updatingThreads.has(`${thread.id}:reply`) ? "回复中..." : "回复" }}
+                  {{
+                    updatingThreads.has(`${thread.id}:reply`)
+                      ? t("review.replying")
+                      : t("review.reply")
+                  }}
                 </button>
               </div>
             </form>

@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import { reviewInboxList } from "@/api";
 import { commandErrorCode } from "@/api/errors";
 import type { Platform, ReadinessState, ReviewInboxCategory, ReviewInboxItem } from "@/types";
+import { translate } from "@/i18n";
 
 export const NOTIFICATION_POLL_INTERVAL_MS = 10 * 60 * 1000;
 const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000;
@@ -68,7 +69,11 @@ interface NotificationSnapshot {
 }
 
 type CategoryBaselines = Record<Platform, Record<ReviewInboxCategory, boolean>>;
-type NotificationManagerErrors = Record<NotificationManagerErrorSource, string | null>;
+type NotificationManagerError = string | (() => string);
+type NotificationManagerErrors = Record<
+  NotificationManagerErrorSource,
+  NotificationManagerError | null
+>;
 
 const defaultPreferences: NotificationPreferences = {
   enabled: false,
@@ -223,12 +228,15 @@ export const useNotificationStore = defineStore("notifications", () => {
     gitlab: Math.max(0, Math.ceil((rateLimitedUntil.value.gitlab - clock.value) / 1000)),
     gitee: Math.max(0, Math.ceil((rateLimitedUntil.value.gitee - clock.value) / 1000)),
   }));
+  const resolveManagerError = (error: NotificationManagerError | null): string =>
+    typeof error === "function" ? error() : (error ?? "");
   const managerError = computed(() =>
     Object.values(managerErrors.value)
-      .filter((message): message is string => Boolean(message))
-      .join("；"),
+      .map(resolveManagerError)
+      .filter(Boolean)
+      .join(translate("notification.errorSeparator")),
   );
-  const permissionError = computed(() => managerErrors.value.permission ?? "");
+  const permissionError = computed(() => resolveManagerError(managerErrors.value.permission));
   const notificationError = computed(() => {
     const platformLabels: Record<Platform, string> = {
       github: "GitHub",
@@ -237,9 +245,14 @@ export const useNotificationStore = defineStore("notifications", () => {
     };
     const messages = PLATFORMS.filter(
       (platform) => preferences.value.platforms[platform] && errors.value[platform],
-    ).map((platform) => `${platformLabels[platform]}：${errors.value[platform]}`);
+    ).map((platform) =>
+      translate("notification.platformError", {
+        platform: platformLabels[platform],
+        message: errors.value[platform] ?? "",
+      }),
+    );
     if (managerError.value) messages.unshift(managerError.value);
-    return messages.join("；");
+    return messages.join(translate("notification.errorSeparator"));
   });
   const showNotificationError = computed(
     () =>
@@ -267,7 +280,10 @@ export const useNotificationStore = defineStore("notifications", () => {
     preferences.value.hide_private_content = enabled;
   }
 
-  function setManagerError(source: NotificationManagerErrorSource, message: string): void {
+  function setManagerError(
+    source: NotificationManagerErrorSource,
+    message: NotificationManagerError,
+  ): void {
     managerErrors.value[source] = message;
   }
 
@@ -383,7 +399,7 @@ export const useNotificationStore = defineStore("notifications", () => {
       rate_limited_polls: previousObservation.rate_limited_polls + (hasRateLimit ? 1 : 0),
     };
     if (successfulCategories.size === 0) {
-      errors.value[platform] = String(firstError ?? "通知轮询失败");
+      errors.value[platform] = String(firstError ?? translate("notification.pollFailed"));
       if (hasRateLimit) rateLimitedUntil.value[platform] = now + RATE_LIMIT_BACKOFF_MS;
       else rateLimitedUntil.value[platform] = 0;
       return [];

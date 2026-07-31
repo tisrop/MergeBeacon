@@ -3,6 +3,7 @@ import { computed } from "vue";
 import Sidebar from "./Sidebar.vue";
 import { useNotificationStore } from "@/stores/useNotificationStore";
 import type { Platform } from "@/types";
+import { useI18n } from "@/i18n";
 
 withDefaults(
   defineProps<{
@@ -16,6 +17,7 @@ withDefaults(
 );
 
 const notifications = useNotificationStore();
+const { t } = useI18n();
 const platformLabels: Record<Platform, string> = {
   github: "GitHub",
   gitlab: "GitLab",
@@ -36,7 +38,7 @@ function formatCountdown(seconds: number): string {
 
 <template>
   <div class="app-layout">
-    <a class="skip-link" href="#main-content">跳到主要内容</a>
+    <a class="skip-link" href="#main-content">{{ t("layout.skipToContent") }}</a>
     <Sidebar :is-diff-focus-mode="isDiffFocusMode" :compact-sidebar="compactSidebar" />
     <main id="main-content" class="main-content" tabindex="-1">
       <section
@@ -46,14 +48,20 @@ function formatCountdown(seconds: number): string {
         aria-live="assertive"
       >
         <div class="notification-error-copy">
-          <strong>桌面通知异常</strong>
+          <strong>{{ t("layout.notificationError") }}</strong>
           <span>{{ notifications.notificationError }}</span>
           <span v-for="platform in retryPlatforms" :key="platform" class="retry-countdown">
-            {{ platformLabels[platform] }} 将在
-            {{ formatCountdown(notifications.retryCountdown[platform]) }} 后重试
+            {{
+              t("layout.notificationRetry", {
+                platform: platformLabels[platform],
+                countdown: formatCountdown(notifications.retryCountdown[platform]),
+              })
+            }}
           </span>
         </div>
-        <RouterLink class="notification-settings-link" to="/settings">打开通知设置</RouterLink>
+        <RouterLink class="notification-settings-link" to="/settings">
+          {{ t("layout.notificationSettings") }}
+        </RouterLink>
       </section>
       <div class="content-header" v-if="$slots.header">
         <slot name="header" />

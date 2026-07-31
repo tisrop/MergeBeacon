@@ -1,34 +1,39 @@
 <script setup lang="ts">
 import type { PrStatusSummary, ReadinessState } from "@/types";
+import { computed } from "vue";
+import { useI18n } from "@/i18n";
 
 const props = defineProps<{
   status: PrStatusSummary;
 }>();
+const { t } = useI18n();
 
-const overallLabels: Record<ReadinessState, string> = {
-  ready: "可合并",
-  blocked: "被阻塞",
-  pending: "检查中",
-  unknown: "状态未知",
-};
+const overallLabels = computed<Record<ReadinessState, string>>(() => ({
+  ready: t("pr.readinessReady"),
+  blocked: t("pr.readinessBlocked"),
+  pending: t("pr.readinessPending"),
+  unknown: t("pr.readinessUnknown"),
+}));
 
-const approvalLabels: Record<ReadinessState, string> = {
-  ready: "审批已满足",
-  blocked: "审批未完成",
-  pending: "审批进行中",
-  unknown: "审批未知",
-};
+const approvalLabels = computed<Record<ReadinessState, string>>(() => ({
+  ready: t("review.approvalReady"),
+  blocked: t("review.approvalBlocked"),
+  pending: t("review.approvalPending"),
+  unknown: t("review.approvalUnknown"),
+}));
 
-const checksLabels: Record<ReadinessState, string> = {
-  ready: "CI/测试通过",
-  blocked: "CI/测试失败",
-  pending: "CI/测试中",
-  unknown: "CI/测试未知",
-};
+const checksLabels = computed<Record<ReadinessState, string>>(() => ({
+  ready: t("review.checksReady"),
+  blocked: t("review.checksBlocked"),
+  pending: t("review.checksPending"),
+  unknown: t("review.checksUnknown"),
+}));
 
 function blockingReasonText(): string {
   const reasons = props.status.blocking_reasons.map((reason) => reason.message);
-  return reasons.length > 0 ? reasons.join("；") : overallLabels[props.status.status];
+  return reasons.length > 0
+    ? reasons.join(t("common.messageSeparator"))
+    : overallLabels.value[props.status.status];
 }
 </script>
 
@@ -36,7 +41,7 @@ function blockingReasonText(): string {
   <span
     class="status-summary"
     :title="blockingReasonText()"
-    :aria-label="`合并状态：${blockingReasonText()}`"
+    :aria-label="`${t('inbox.readiness')}: ${blockingReasonText()}`"
   >
     <span class="status-chip overall-status" :class="`status-${props.status.status}`">
       {{ overallLabels[props.status.status] }}
@@ -48,7 +53,9 @@ function blockingReasonText(): string {
       {{ checksLabels[props.status.checks_status] }}
     </span>
     <span v-if="props.status.draft" class="status-chip status-draft">Draft</span>
-    <span v-if="props.status.has_conflicts" class="status-chip status-blocked">存在冲突</span>
+    <span v-if="props.status.has_conflicts" class="status-chip status-blocked">{{
+      t("pr.stateConflict")
+    }}</span>
   </span>
 </template>
 

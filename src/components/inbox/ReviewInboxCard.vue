@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import PrStatusSummary from "@/components/pr/PrStatusSummary.vue";
 import type { ReviewInboxItem, ReviewInboxRelationship } from "@/types";
+import { useI18n } from "@/i18n";
 
 const props = defineProps<{
   item: ReviewInboxItem;
@@ -11,6 +12,7 @@ defineEmits<{
   click: [];
   toggleRead: [];
 }>();
+const { locale, t } = useI18n();
 
 const localState = computed(
   () =>
@@ -28,16 +30,18 @@ const platformLabels = {
   gitee: "Gitee",
 } as const;
 
-const relationshipLabels: Record<ReviewInboxRelationship, string> = {
-  reviewer: "评审人",
-  assignee: "负责人",
-  tester: "测试人",
-  author: "我创建的",
-};
+const relationshipLabels = computed<Record<ReviewInboxRelationship, string>>(() => ({
+  reviewer: t("inbox.relationshipReviewer"),
+  assignee: t("inbox.relationshipAssignee"),
+  tester: t("inbox.relationshipTester"),
+  author: t("inbox.relationshipAuthor"),
+}));
 
 function formatUpdatedAt(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "更新时间未知" : date.toLocaleDateString("zh-CN");
+  return Number.isNaN(date.getTime())
+    ? t("inbox.updatedUnknown")
+    : date.toLocaleDateString(locale.value);
 }
 </script>
 
@@ -54,7 +58,12 @@ function formatUpdatedAt(value: string): string {
       </span>
       <span class="card-content">
         <span class="card-context">
-          <span v-if="localState.unread" class="unread-dot" title="未读" aria-label="未读" />
+          <span
+            v-if="localState.unread"
+            class="unread-dot"
+            :title="t('inbox.unread')"
+            :aria-label="t('inbox.unread')"
+          />
           <span class="platform-badge" :class="`platform-${props.item.platform}`">
             {{ platformLabels[props.item.platform] }}
           </span>
@@ -63,8 +72,10 @@ function formatUpdatedAt(value: string): string {
         <span class="card-title">{{ props.item.summary.title }}</span>
         <span class="card-meta">
           <span class="pr-number">#{{ props.item.summary.number }}</span>
-          <span>{{ props.item.summary.author.login }} 创建</span>
-          <span>{{ formatUpdatedAt(props.item.summary.updated_at) }} 更新</span>
+          <span>{{ t("inbox.itemCreated", { author: props.item.summary.author.login }) }}</span>
+          <span>{{
+            t("inbox.itemUpdated", { date: formatUpdatedAt(props.item.summary.updated_at) })
+          }}</span>
           <span
             v-for="relationship in props.item.relationships"
             :key="relationship"
@@ -72,11 +83,15 @@ function formatUpdatedAt(value: string): string {
           >
             {{ relationshipLabels[relationship] }}
           </span>
-          <span v-if="localState.new_commits" class="activity-badge">新提交</span>
-          <span v-if="localState.new_comments" class="activity-badge">新评论</span>
-          <span v-if="localState.status_changed" class="activity-badge status-change"
-            >状态变化</span
-          >
+          <span v-if="localState.new_commits" class="activity-badge">{{
+            t("inbox.activityCommits")
+          }}</span>
+          <span v-if="localState.new_comments" class="activity-badge">{{
+            t("inbox.activityComments")
+          }}</span>
+          <span v-if="localState.status_changed" class="activity-badge status-change">{{
+            t("inbox.activityStatus")
+          }}</span>
         </span>
         <PrStatusSummary :status="props.item.status" />
       </span>
@@ -95,11 +110,11 @@ function formatUpdatedAt(value: string): string {
     <button
       type="button"
       class="read-toggle"
-      :title="localState.unread ? '标记为已读' : '标记为未读'"
-      :aria-label="localState.unread ? '标记为已读' : '标记为未读'"
+      :title="localState.unread ? t('inbox.markRead') : t('inbox.markUnread')"
+      :aria-label="localState.unread ? t('inbox.markRead') : t('inbox.markUnread')"
       @click="$emit('toggleRead')"
     >
-      {{ localState.unread ? "已读" : "未读" }}
+      {{ localState.unread ? t("inbox.readState") : t("inbox.unread") }}
     </button>
   </article>
 </template>

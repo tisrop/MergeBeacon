@@ -2,6 +2,7 @@ import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from "@vue/t
 import { reactive } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
+import { setAppLocale } from "@/i18n";
 import type {
   DiffResult,
   PrCommitSummary,
@@ -206,6 +207,7 @@ async function selectTab(wrapper: VueWrapper, label: string): Promise<void> {
 describe("PrDetailPage 关闭权限", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setAppLocale("zh-CN");
     mocks.router.replace.mockResolvedValue(undefined);
     mocks.route.query = {};
     window.sessionStorage.clear();
@@ -251,6 +253,27 @@ describe("PrDetailPage 关闭权限", () => {
     await button.trigger("click");
 
     expect(mocks.router.push).toHaveBeenCalledWith({ name: "pr-list" });
+  });
+
+  it("中文界面将 Open PR 状态显示为打开", () => {
+    const wrapper = mountPage();
+
+    expect(wrapper.get(".pr-state-badge").text()).toBe("打开");
+  });
+
+  it("已挂载时切换英文，并保留远端 PR 标题", async () => {
+    const wrapper = mountPage();
+
+    expect(wrapper.text()).toContain("评审意见");
+    expect(wrapper.text()).toContain("权限测试");
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("Review feedback");
+    expect(wrapper.text()).toContain("Pull requests");
+    expect(wrapper.text()).toContain("权限测试");
+    expect(wrapper.text()).not.toContain("评审意见");
   });
 
   it("有 web_url 时点击标题在浏览器中打开 PR 页面", async () => {

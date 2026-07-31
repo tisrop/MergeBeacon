@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "@/i18n";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   diffHunk: string;
@@ -95,7 +98,7 @@ const displayLines = computed((): DisplayLine[] => {
 
 <template>
   <div class="mini-diff-view">
-    <div v-if="outdated" class="diff-header">⛔ 当时代码（已变更）</div>
+    <div v-if="outdated" class="diff-header">{{ t("review.originalCodeChanged") }}</div>
     <div v-if="displayLines.length > 0" class="diff-lines">
       <div
         v-for="(line, i) in displayLines"
@@ -114,7 +117,7 @@ const displayLines = computed((): DisplayLine[] => {
         </span>
       </div>
     </div>
-    <div v-else class="no-code">（无代码上下文）</div>
+    <div v-else class="no-code">{{ t("review.noCodeContext") }}</div>
   </div>
 </template>
 

@@ -2,9 +2,12 @@ import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiSuggestion } from "@/types";
+import { setAppLocale } from "@/i18n";
+import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import AiReviewPanel from "../AiReviewPanel.vue";
 import AiSuggestionCard from "../AiSuggestionCard.vue";
 import {
+  aiReview,
   aiReviewCancel,
   aiGetConfig,
   aiReviewStream,
@@ -125,6 +128,7 @@ describe("AiReviewPanel", () => {
       clear: vi.fn(() => storedReviews.clear()),
     });
     setActivePinia(createPinia());
+    setAppLocale("zh-CN");
     vi.mocked(aiReviewStream).mockResolvedValue(undefined);
     vi.mocked(prFileContent).mockRejectedValue(new Error("规则文件不存在"));
     vi.mocked(aiReviewCancel).mockResolvedValue(undefined);
@@ -189,6 +193,10 @@ describe("AiReviewPanel", () => {
     expect(localStorage.getItem("mergebeacon:ai-review-head:github:octocat:hello-world:42")).toBe(
       "head-sha-1",
     );
+    expect(aiReviewStream).toHaveBeenCalledWith(
+      "request-1",
+      expect.objectContaining({ language: "zh-CN" }),
+    );
     expect(wrapper.text()).toContain("评审版本：head-sha-1");
     expect(wrapper.text()).toContain("模型：gpt-test");
     expect(wrapper.text()).toContain("输入状态：完整 Diff");
@@ -218,8 +226,135 @@ describe("AiReviewPanel", () => {
     const history = JSON.parse(
       localStorage.getItem("mergebeacon:ai-review-history:v1:github:octocat:hello-world:42") ??
         "[]",
-    ) as Array<{ head_sha: string; model: string }>;
-    expect(history[0]).toMatchObject({ head_sha: "head-sha-1", model: "gpt-test" });
+    ) as Array<{ head_sha: string; model: string; language: string }>;
+    expect(history[0]).toMatchObject({
+      head_sha: "head-sha-1",
+      model: "gpt-test",
+      language: "zh-CN",
+    });
+  });
+
+  it("意见语言跟随英文界面并记录到历史", async () => {
+    setAppLocale("en-US");
+    const wrapper = mountPanel();
+
+    expect(wrapper.get(".review-language-control").classes()).toContain("focus-control");
+    expect(wrapper.get("#ai-review-language .app-select-value").text()).toBe("Follow interface");
+
+    await wrapper.get(".ai-toolbar button.btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(aiReviewStream).toHaveBeenCalledWith(
+      "request-1",
+      expect.objectContaining({ language: "en-US" }),
+    );
+    finishReview([]);
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("Review language: English");
+    const history = JSON.parse(
+      localStorage.getItem("mergebeacon:ai-review-history:v1:github:octocat:hello-world:42") ??
+        "[]",
+    ) as Array<{ language: string }>;
+    expect(history[0]?.language).toBe("en-US");
+  });
+
+  it("英文界面下可手动指定中文意见", async () => {
+    setAppLocale("en-US");
+    useUiSettingsStore().setAiReviewLanguagePreference("zh-CN");
+    const wrapper = mountPanel();
+
+    await wrapper.get(".ai-toolbar button.btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(aiReviewStream).toHaveBeenCalledWith(
+      "request-1",
+      expect.objectContaining({ language: "zh-CN" }),
+    );
+  });
+
+  it("已有结果时切换意见语言提示下次评审生效且不改变当前结果语言", async () => {
+    const wrapper = mountPanel();
+
+    await wrapper.get(".ai-toolbar button.btn-primary").trigger("click");
+    await flushPromises();
+    finishReview([]);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("意见语言：简体中文");
+
+    await wrapper.get("#ai-review-language").trigger("click");
+    await wrapper.get('[data-value="en-US"]').trigger("click");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get(".review-language-status").text()).toBe(
+      "意见语言已切换；下次开始评审时生效。",
+    );
+    expect(wrapper.text()).toContain("意见语言：简体中文");
+    expect(useUiSettingsStore().aiReviewLanguagePreference).toBe("en-US");
+
+    await wrapper.get(".ai-toolbar button.btn-primary").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".review-language-status").exists()).toBe(false);
+    expect(aiReviewStream).toHaveBeenLastCalledWith(
+      "request-2",
+      expect.objectContaining({ language: "en-US" }),
+    );
+  });
+
+  it("评审启动后切换界面语言不会改变当前请求的语言快照", async () => {
+    let resolveConfig!: (value: Awaited<ReturnType<typeof aiGetConfig>>) => void;
+    vi.mocked(aiGetConfig).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveConfig = resolve;
+        }),
+    );
+    const wrapper = mountPanel();
+
+    await wrapper.get(".ai-toolbar button.btn-primary").trigger("click");
+    await wrapper.vm.$nextTick();
+    setAppLocale("en-US");
+    resolveConfig({
+      endpoint: "https://api.example.com/v1",
+      model: "gpt-test",
+      api_key_configured: true,
+      system_prompt: null,
+      temperature: 0.3,
+      max_tokens: 8192,
+    });
+    await flushPromises();
+
+    expect(aiReviewStream).toHaveBeenCalledWith(
+      "request-1",
+      expect.objectContaining({ language: "zh-CN" }),
+    );
+  });
+
+  it("非流式评审完成后按启动时的语言写入结果与历史", async () => {
+    let resolveReview!: (value: Awaited<ReturnType<typeof aiReview>>) => void;
+    vi.mocked(aiReview).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReview = resolve;
+        }),
+    );
+    const wrapper = mountPanel();
+    await wrapper.get(".stream-toggle input").setValue(false);
+
+    await wrapper.get(".ai-toolbar button.btn-primary").trigger("click");
+    await flushPromises();
+    useUiSettingsStore().setAiReviewLanguagePreference("en-US");
+    resolveReview({ summary: "完成", suggestions: [] });
+    await flushPromises();
+
+    expect(aiReview).toHaveBeenCalledWith(expect.objectContaining({ language: "zh-CN" }));
+    expect(wrapper.text()).toContain("意见语言：简体中文");
+    const history = JSON.parse(
+      localStorage.getItem("mergebeacon:ai-review-history:v1:github:octocat:hello-world:42") ??
+        "[]",
+    ) as Array<{ language: string }>;
+    expect(history[0]?.language).toBe("zh-CN");
   });
 
   it("自动发现当前提交的仓库规则文件并随评审请求发送", async () => {

@@ -1,15 +1,18 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { usePrStore } from "@/stores/usePrStore";
 import type { PrState } from "@/types";
+import { useI18n } from "@/i18n";
 
 const pr = usePrStore();
+const { t } = useI18n();
 
-const states: { value: PrState; label: string }[] = [
-  { value: "open", label: "开放" },
-  { value: "closed", label: "已关闭" },
-  { value: "merged", label: "已合并" },
-  { value: "all", label: "全部" },
-];
+const states = computed<{ value: PrState; label: string }[]>(() => [
+  { value: "open", label: t("pr.open") },
+  { value: "closed", label: t("pr.closed") },
+  { value: "merged", label: t("pr.merged") },
+  { value: "all", label: t("pr.all") },
+]);
 </script>
 
 <template>

@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import { aiGetConfig, aiSaveConfig, aiSaveApiKey, aiTestConnection, aiListModels } from "@/api";
+import { useI18n } from "@/i18n";
 import type { AiConfig } from "@/types";
 import { getErrorMessage } from "@/utils/error";
+
+const { t } = useI18n();
 
 const config = ref<AiConfig>({
   endpoint: "https://api.openai.com/v1",
@@ -91,17 +94,17 @@ function highlight(text: string, query: string): HighlightSegment[] {
   return segments.length > 0 ? segments : [{ text, matched: false }];
 }
 
-const presets = [
+const presets = computed(() => [
   { name: "OpenAI", endpoint: "https://api.openai.com/v1", model: "gpt-4o" },
   { name: "DeepSeek", endpoint: "https://api.deepseek.com/v1", model: "deepseek-chat" },
   {
-    name: "通义千问",
+    name: t("aiSettings.presetQwen"),
     endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     model: "qwen-plus",
   },
   { name: "Moonshot", endpoint: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
-  { name: "Ollama 本地", endpoint: "http://localhost:11434/v1", model: "llama3" },
-];
+  { name: t("aiSettings.presetOllama"), endpoint: "http://localhost:11434/v1", model: "llama3" },
+]);
 
 onMounted(async () => {
   try {
@@ -111,7 +114,7 @@ onMounted(async () => {
   }
 });
 
-function applyPreset(p: (typeof presets)[number]) {
+function applyPreset(p: (typeof presets.value)[number]) {
   config.value.endpoint = p.endpoint;
   config.value.model = p.model;
   models.value = [];
@@ -119,7 +122,7 @@ function applyPreset(p: (typeof presets)[number]) {
 
 async function handleFetchModels() {
   if (!config.value.endpoint) {
-    modelError.value = "请先填写 API 端点";
+    modelError.value = t("aiSettings.apiEndpointRequired");
     return;
   }
 
@@ -137,11 +140,11 @@ async function handleFetchModels() {
     const result = await aiListModels(config.value.endpoint);
     models.value = result;
     if (result.length === 0) {
-      modelError.value = "未获取到模型，请检查端点地址和 API Key";
+      modelError.value = t("aiSettings.loadModelsEmpty");
     }
     showModelDropdown.value = true;
   } catch (e) {
-    modelError.value = getErrorMessage(e, "获取模型列表失败");
+    modelError.value = getErrorMessage(e, t("aiSettings.loadModelsFailed"));
   } finally {
     fetchingModels.value = false;
   }
@@ -158,13 +161,15 @@ async function handleSave() {
       newApiKey.value = "";
       config.value.api_key_configured = true;
     }
-    saveMsg.value = "✓ 设置已保存";
+    saveMsg.value = t("aiSettings.saved");
 
     if (hasNewKey && config.value.endpoint) {
       await handleFetchModels();
     }
   } catch (e) {
-    saveMsg.value = `保存失败: ${getErrorMessage(e, "未知错误")}`;
+    saveMsg.value = t("aiSettings.saveFailed", {
+      message: getErrorMessage(e, t("common.unknownError")),
+    });
   } finally {
     saving.value = false;
   }
@@ -186,7 +191,7 @@ async function handleTest() {
 <template>
   <div class="ai-settings">
     <div class="presets">
-      <label>预设配置</label>
+      <label>{{ t("aiSettings.preset") }}</label>
       <div class="preset-btns">
         <button v-for="p in presets" :key="p.name" class="btn btn-sm" @click="applyPreset(p)">
           {{ p.name }}
@@ -195,7 +200,7 @@ async function handleTest() {
     </div>
 
     <div class="field">
-      <label>API 端点</label>
+      <label>{{ t("aiSettings.apiEndpoint") }}</label>
       <input
         v-model="config.endpoint"
         class="input"
@@ -205,20 +210,22 @@ async function handleTest() {
     </div>
 
     <div class="field">
-      <label>API Key</label>
+      <label>{{ t("aiSettings.apiKey") }}</label>
       <input
         v-model="newApiKey"
         class="input"
         type="password"
         :placeholder="
-          config.api_key_configured ? '•••••• (已设置，输入新 Key 替换)' : '输入 API Key'
+          config.api_key_configured
+            ? t('aiSettings.apiKeyReplace')
+            : t('aiSettings.apiKeyPlaceholder')
         "
       />
-      <p class="hint">API Key 经 AES-256-GCM 加密后写入配置文件，不会明文存储。</p>
+      <p class="hint">{{ t("aiSettings.apiKeyEncrypted") }}</p>
     </div>
 
     <div class="field">
-      <label>模型</label>
+      <label>{{ t("aiSettings.model") }}</label>
       <div class="model-row">
         <div class="model-input-wrap">
           <input
@@ -236,7 +243,12 @@ async function handleTest() {
           />
           <div v-if="showModelDropdown && models.length > 0" class="model-dropdown">
             <div v-if="modelSearch" class="model-search-hint">
-              搜索“{{ modelSearch }}”，{{ filteredModels.length }} 个结果
+              {{
+                t("aiSettings.modelSearchResults", {
+                  query: modelSearch,
+                  count: filteredModels.length,
+                })
+              }}
             </div>
             <div
               v-for="m in filteredModels"
@@ -253,7 +265,9 @@ async function handleTest() {
               </span>
               <span v-else>{{ m }}</span>
             </div>
-            <div v-if="filteredModels.length === 0" class="model-empty">无匹配结果</div>
+            <div v-if="filteredModels.length === 0" class="model-empty">
+              {{ t("aiSettings.modelNoMatch") }}
+            </div>
           </div>
         </div>
         <button
@@ -261,16 +275,18 @@ async function handleTest() {
           :disabled="fetchingModels"
           @click="handleFetchModels"
         >
-          {{ fetchingModels ? "获取中..." : "获取模型" }}
+          {{ fetchingModels ? t("aiSettings.fetchingModels") : t("aiSettings.fetchModels") }}
         </button>
       </div>
       <p v-if="modelError" class="model-error">{{ modelError }}</p>
-      <p v-else-if="models.length > 0" class="model-count">共 {{ models.length }} 个可用模型</p>
-      <p v-else class="hint">填写端点并保存 API Key 后，点击"获取模型"自动列出可用模型</p>
+      <p v-else-if="models.length > 0" class="model-count">
+        {{ t("aiSettings.modelCount", { count: models.length }) }}
+      </p>
+      <p v-else class="hint">{{ t("aiSettings.loadModelsHint") }}</p>
     </div>
 
     <div class="field">
-      <label>Temperature: {{ config.temperature }}</label>
+      <label>{{ t("aiSettings.temperature", { value: config.temperature ?? 0.3 }) }}</label>
       <input
         v-model.number="config.temperature"
         type="range"
@@ -282,17 +298,17 @@ async function handleTest() {
     </div>
 
     <div class="field">
-      <label>Max Tokens</label>
+      <label>{{ t("aiSettings.maxTokens") }}</label>
       <input v-model.number="config.max_tokens" class="input" type="number" min="256" max="32768" />
-      <p class="hint">评审结果需要完整 JSON；若提示输出不完整，可适当提高此值。</p>
+      <p class="hint">{{ t("aiSettings.maxTokensHint") }}</p>
     </div>
 
     <div class="actions">
       <button class="btn" :disabled="testing" @click="handleTest">
-        {{ testing ? "测试中..." : "测试连接" }}
+        {{ testing ? t("aiSettings.testing") : t("aiSettings.testConnection") }}
       </button>
       <button class="btn btn-primary" :disabled="saving" @click="handleSave">
-        {{ saving ? "保存中..." : "保存设置" }}
+        {{ saving ? t("aiSettings.saving") : t("aiSettings.saveSettings") }}
       </button>
     </div>
 
@@ -301,7 +317,7 @@ async function handleTest() {
       class="test-result"
       :class="{ success: testResult, fail: !testResult }"
     >
-      {{ testResult ? "✓ 连接成功" : "✗ 连接失败" }}
+      {{ testResult ? t("aiSettings.connectionSuccess") : t("aiSettings.connectionFailed") }}
     </div>
 
     <div v-if="saveMsg" class="save-msg">{{ saveMsg }}</div>

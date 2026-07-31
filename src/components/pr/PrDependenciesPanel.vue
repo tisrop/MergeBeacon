@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { prDependencies } from "@/api";
+import { useI18n } from "@/i18n";
 import { getErrorMessage } from "@/utils/error";
 import type { Platform, PrDependencyGraph, PrDependencyNode, PrState } from "@/types";
 
@@ -12,6 +13,7 @@ const props = defineProps<{
   prNumber: number;
   revision: string;
 }>();
+const { t } = useI18n();
 
 const graph = ref<PrDependencyGraph | null>(null);
 const loading = ref(false);
@@ -31,12 +33,12 @@ const orderedNodes = computed(() =>
 );
 const blockingParents = computed(() => new Set(graph.value?.blocking_parent_numbers ?? []));
 
-const stateLabels: Record<PrState, string> = {
-  open: "Open",
-  closed: "Closed",
-  merged: "Merged",
-  all: "All",
-};
+const stateLabels = computed<Record<PrState, string>>(() => ({
+  open: t("dependency.stateOpen"),
+  closed: t("dependency.stateClosed"),
+  merged: t("dependency.stateMerged"),
+  all: t("dependency.stateAll"),
+}));
 
 function parentNumbers(number: number): number[] {
   return (graph.value?.edges ?? [])
@@ -54,7 +56,7 @@ async function loadDependencies(): Promise<void> {
   } catch (cause) {
     if (sequence !== requestSequence) return;
     graph.value = null;
-    error.value = getErrorMessage(cause, "无法读取 PR / MR 依赖关系");
+    error.value = getErrorMessage(cause, t("dependency.loadFailed"));
   } finally {
     if (sequence === requestSequence) loading.value = false;
   }
@@ -75,19 +77,19 @@ onUnmounted(() => {
   <section class="dependency-panel" aria-labelledby="dependency-title" :aria-busy="loading">
     <header class="dependency-header">
       <div class="dependency-heading">
-        <h3 id="dependency-title">依赖关系</h3>
-        <span class="inferred-badge" title="根据同仓库 PR / MR 的源分支与目标分支关系推导">
-          分支推导
+        <h3 id="dependency-title">{{ t("dependency.title") }}</h3>
+        <span class="inferred-badge" :title="t('dependency.inferredTitle')">
+          {{ t("dependency.inferred") }}
         </span>
         <span v-if="loading && graph" class="refresh-status" role="status" aria-live="polite">
-          刷新中
+          {{ t("dependency.refreshing") }}
         </span>
       </div>
       <button
         :class="['refresh-button', { loading }]"
         type="button"
-        title="刷新依赖关系"
-        aria-label="刷新依赖关系"
+        :title="t('dependency.refresh')"
+        :aria-label="t('dependency.refresh')"
         :disabled="loading"
         @click="loadDependencies"
       >
@@ -116,7 +118,9 @@ onUnmounted(() => {
 
     <div v-else-if="error" class="dependency-error" role="alert">
       <span>{{ error }}</span>
-      <button class="btn btn-sm" type="button" @click="loadDependencies">重新加载</button>
+      <button class="btn btn-sm" type="button" @click="loadDependencies">
+        {{ t("common.reload") }}
+      </button>
     </div>
 
     <template v-else-if="graph">
@@ -125,34 +129,35 @@ onUnmounted(() => {
         class="dependency-warning"
         role="status"
       >
-        依赖候选数量较多，当前仅展示已发现的关系，结果可能不完整。
+        {{ t("dependency.truncated") }}
       </div>
       <div v-if="graph.has_cycle" class="dependency-warning" role="alert">
-        检测到循环分支依赖，无法给出可靠的合并顺序。
+        {{ t("dependency.cycle") }}
       </div>
       <div v-if="!currentIsOpen" class="dependency-history" role="status">
-        当前 {{ itemName }} 已结束，仅展示历史依赖关系。
+        {{ t("dependency.history", { item: itemName }) }}
       </div>
       <div
         v-else-if="!graph.has_cycle && blockingParents.size > 0"
         class="dependency-blocked"
         role="status"
       >
-        当前 {{ itemName }} 仍依赖 {{ blockingParents.size }} 个尚未合并的父项。
+        {{ t("dependency.blocked", { item: itemName, count: blockingParents.size }) }}
       </div>
 
       <div v-if="orderedNodes.length <= 1" class="dependency-empty">
         <template v-if="graph.truncated">
-          依赖候选扫描已达到上限；当前扫描范围内未发现与当前 {{ itemName }}
-          相连的分支依赖，结果可能不完整。
+          {{ t("dependency.emptyTruncated", { item: itemName }) }}
         </template>
-        <template v-else>未发现与当前 {{ itemName }} 相连的分支依赖。</template>
+        <template v-else>{{ t("dependency.empty", { item: itemName }) }}</template>
       </div>
 
       <div v-else class="merge-order">
         <div class="order-heading">
-          <h4>{{ currentIsOpen ? "建议合并顺序" : "历史依赖关系" }}</h4>
-          <span>{{ orderedNodes.length }} 项</span>
+          <h4>
+            {{ currentIsOpen ? t("dependency.suggestedOrder") : t("dependency.historyTitle") }}
+          </h4>
+          <span>{{ t("dependency.count", { count: orderedNodes.length }) }}</span>
         </div>
         <ol class="dependency-flow">
           <li
@@ -183,13 +188,19 @@ onUnmounted(() => {
                   {{ node.title }}
                 </RouterLink>
                 <div class="node-badges">
-                  <span v-if="node.number === graph.current_number" class="current-badge"
-                    >当前</span
-                  >
-                  <span v-if="blockingParents.has(node.number)" class="blocker-badge">
-                    {{ node.state === "closed" ? "已关闭，依赖未合并" : "阻塞当前项" }}
+                  <span v-if="node.number === graph.current_number" class="current-badge">
+                    {{ t("dependency.current") }}
                   </span>
-                  <span :class="['state-badge', node.state]">{{ stateLabels[node.state] }}</span>
+                  <span v-if="blockingParents.has(node.number)" class="blocker-badge">
+                    {{
+                      node.state === "closed"
+                        ? t("dependency.closedBlocker")
+                        : t("dependency.blocker")
+                    }}
+                  </span>
+                  <span :class="['state-badge', node.state]">
+                    {{ stateLabels[node.state] }}
+                  </span>
                 </div>
               </div>
               <div class="branch-chain">
@@ -198,7 +209,7 @@ onUnmounted(() => {
                 <code>{{ node.target_branch }}</code>
               </div>
               <div v-if="parentNumbers(node.number).length > 0" class="parent-links">
-                依赖
+                {{ t("dependency.dependsOn") }}
                 <span v-for="parent in parentNumbers(node.number)" :key="parent"
                   >#{{ parent }}</span
                 >

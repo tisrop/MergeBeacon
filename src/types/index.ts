@@ -653,6 +653,8 @@ export interface RepoSummary {
 // ── AI ──
 export type Severity = "critical" | "major" | "minor" | "info";
 export type AiReviewFocus = "all" | "security" | "performance" | "logic" | "code_style";
+export type AiReviewLanguage = "zh-CN" | "en-US";
+export type AiReviewLanguagePreference = "auto" | AiReviewLanguage;
 
 export interface AiConfig {
   endpoint: string;
@@ -669,6 +671,7 @@ export interface AiReviewRequest {
   context: PrContext | null;
   file_filter: string[] | null;
   focus: AiReviewFocus | null;
+  language: AiReviewLanguage;
 }
 
 export interface AiPrDraftRequest {
@@ -724,6 +727,7 @@ export interface AiReviewHistoryEntry {
   mode: AiReviewMode;
   model: string;
   truncated: boolean;
+  language: AiReviewLanguage;
   result: AiReviewResult;
 }
 

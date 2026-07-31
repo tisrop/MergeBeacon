@@ -7,10 +7,12 @@ import AppLayout from "@/components/layout/AppLayout.vue";
 import IssueCard from "@/components/issue/IssueCard.vue";
 import type { IssueSummary } from "@/types";
 import { issueList } from "@/api";
+import { useI18n } from "@/i18n";
 
 const auth = useAuthStore();
 const issueStore = useIssueStore();
 const repo = useRepoStore();
+const { t } = useI18n();
 
 const issues = ref<IssueSummary[]>([]);
 const loading = ref(false);
@@ -64,9 +66,9 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
     <template #header>
       <div class="issue-header page-heading">
         <div>
-          <h2>Issues</h2>
+          <h2>{{ t("layout.issues") }}</h2>
           <p v-if="repo.activeFullName">{{ repo.activeFullName }}</p>
-          <p v-else>选择仓库后查看与管理 Issue</p>
+          <p v-else>{{ t("issue.listDescription") }}</p>
         </div>
         <router-link v-if="repo.activeRepo" to="/issue/new" class="btn btn-success btn-sm">
           <svg
@@ -83,9 +85,15 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
-          新建 Issue
+          {{ t("issue.new") }}
         </router-link>
-        <button v-else type="button" class="btn btn-success btn-sm" disabled title="请先选择仓库">
+        <button
+          v-else
+          type="button"
+          class="btn btn-success btn-sm"
+          disabled
+          :title="t('issue.noRepository')"
+        >
           <svg
             width="14"
             height="14"
@@ -100,7 +108,7 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
-          新建 Issue
+          {{ t("issue.new") }}
         </button>
       </div>
     </template>
@@ -122,7 +130,7 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
       >
         <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M13 12H3" />
       </svg>
-      <p>请先在左侧选择一个仓库</p>
+      <p>{{ t("issue.selectRepository") }}</p>
     </div>
 
     <div v-else-if="issues.length === 0" class="empty-state state-panel">
@@ -140,7 +148,7 @@ watch(() => [auth.activePlatform, repo.activeRepo] as const, fetchIssues);
         <line x1="12" y1="8" x2="12" y2="12" />
         <line x1="12" y1="16" x2="12.01" y2="16" />
       </svg>
-      <p>暂无 Issue</p>
+      <p>{{ t("issue.empty") }}</p>
     </div>
 
     <div v-else class="issue-list">

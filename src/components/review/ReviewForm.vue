@@ -5,6 +5,7 @@ import { reviewSubmit } from "@/api";
 import { getErrorMessage } from "@/utils/error";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { useReviewDraftStore } from "@/stores/useReviewDraftStore";
+import { useI18n } from "@/i18n";
 
 const props = defineProps<{
   platform: Platform;
@@ -17,6 +18,7 @@ const props = defineProps<{
 
 const capabilities = useCapabilityStore();
 const reviewDrafts = useReviewDraftStore();
+const { t } = useI18n();
 const body = ref("");
 const event = ref<ReviewEvent>("comment");
 const submitting = ref(false);
@@ -63,11 +65,11 @@ watch([body, event], () => {
   });
 });
 
-const allEvents: { value: ReviewEvent; label: string }[] = [
-  { value: "comment", label: "评论" },
-  { value: "approve", label: "批准" },
-  { value: "request_changes", label: "请求修改" },
-];
+const allEvents = computed<{ value: ReviewEvent; label: string }[]>(() => [
+  { value: "comment", label: t("review.comment") },
+  { value: "approve", label: t("review.approve") },
+  { value: "request_changes", label: t("review.requestChanges") },
+]);
 const platformCapabilities = computed(() => capabilities.values[props.platform]);
 const isSupported = (candidate: ReviewEvent) =>
   platformCapabilities.value?.review_events.includes(candidate) ?? false;
@@ -110,7 +112,7 @@ async function handleSubmit() {
     body.value = "";
     confirmingPendingWork.value = false;
   } catch (e) {
-    error.value = getErrorMessage(e, "提交失败");
+    error.value = getErrorMessage(e, t("review.submitFailed"));
   } finally {
     submitting.value = false;
   }
@@ -128,9 +130,9 @@ onUnmounted(() => reviewDrafts.flushPersistence());
 
 <template>
   <div class="review-form">
-    <h4>提交评审意见</h4>
+    <h4>{{ t("review.submitTitle") }}</h4>
     <p v-if="unifiedDraftCount" class="draft-summary">
-      本 PR 共有 {{ unifiedDraftCount }} 条本地草稿，人工意见与 AI 建议统一保存在本机。
+      {{ t("review.draftSummary", { count: unifiedDraftCount }) }}
     </p>
 
     <div class="event-select">
@@ -139,7 +141,7 @@ onUnmounted(() => reviewDrafts.flushPersistence());
         :key="ev.value"
         :class="{ active: event === ev.value }"
         :disabled="!isSupported(ev.value)"
-        :title="isSupported(ev.value) ? undefined : '当前平台不支持此评审操作'"
+        :title="isSupported(ev.value) ? undefined : t('review.unsupported')"
         @click="event = ev.value"
       >
         {{ ev.label }}
@@ -150,7 +152,7 @@ onUnmounted(() => reviewDrafts.flushPersistence());
       ref="textareaRef"
       v-model="body"
       class="input"
-      placeholder="输入你的评审意见..."
+      :placeholder="t('review.placeholder')"
       rows="5"
     />
 
@@ -160,20 +162,28 @@ onUnmounted(() => reviewDrafts.flushPersistence());
         :disabled="submitting || !body.trim() || !isSupported(event)"
         @click="handleSubmit"
       >
-        {{ submitting ? "提交中..." : confirmingPendingWork ? "仍然提交" : "提交评审" }}
+        {{
+          submitting
+            ? t("common.submitting")
+            : confirmingPendingWork
+              ? t("review.submitAnyway")
+              : t("review.submit")
+        }}
       </button>
-      <span v-if="success" class="success-msg">✓ 评审已提交</span>
+      <span v-if="success" class="success-msg">✓ {{ t("review.submitted") }}</span>
       <span v-if="error || capabilities.errors[platform]" class="error-msg">{{
         error || capabilities.errors[platform]
       }}</span>
     </div>
     <p v-if="confirmingPendingWork" class="pending-review-warning" role="alert">
-      <template v-if="unviewedFileCount">还有 {{ unviewedFileCount }} 个文件未查看。</template>
+      <template v-if="unviewedFileCount">{{
+        t("review.unviewedFiles", { count: unviewedFileCount })
+      }}</template>
       <template v-if="unviewedFileCount && unresolvedThreadCount"> </template>
-      <template v-if="unresolvedThreadCount"
-        >还有 {{ unresolvedThreadCount }} 个未解决线程。</template
-      >
-      再次点击“仍然提交”继续。
+      <template v-if="unresolvedThreadCount">{{
+        t("review.unresolvedThreads", { count: unresolvedThreadCount })
+      }}</template>
+      {{ t("review.confirmPending") }}
     </p>
   </div>
 </template>

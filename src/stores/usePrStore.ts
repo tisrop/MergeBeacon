@@ -31,6 +31,7 @@ import {
   type CommitRangeRevisions,
   type CommitRangeSelection,
 } from "@/utils/commitRange";
+import { translate } from "@/i18n";
 
 const PAGE_SIZES = [10, 20, 50, 100] as const;
 export const DEFAULT_LIST_QUERY: Readonly<Required<PrListQuery>> = {
@@ -233,7 +234,7 @@ export const usePrStore = defineStore("pr", () => {
       currentPr.value = null;
       const message = typeof requestError === "string" ? requestError : String(requestError);
       error.value = /\b404\b|not found/i.test(message)
-        ? `找不到 ${owner}/${repo} #${number}，该 PR / MR 可能不存在，或当前 Token 无权访问。`
+        ? translate("pr.detailNotFound", { repository: `${owner}/${repo}`, number })
         : message;
       return false;
     } finally {
@@ -324,7 +325,7 @@ export const usePrStore = defineStore("pr", () => {
       rangeDiff.value = null;
       rangeRevisions.value = null;
       rangeDiffLoading.value = false;
-      rangeDiffError.value = "无法确定所选提交的对比基准，请改用整体 Diff。";
+      rangeDiffError.value = translate("pr.commitRangeBaseUnavailable");
       return;
     }
     rangeDiff.value = null;

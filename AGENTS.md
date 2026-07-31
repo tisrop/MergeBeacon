@@ -142,7 +142,8 @@ src-tauri/
 - oxlint 使用 `.oxlintrc.json`；禁止内联 `oxlint-disable`。oxfmt：双引号、分号、尾逗号、
   100 列宽。
 - `src/main.ts` 有 `/settings` HMR 保护；菜单“设置...”通过 `window.__goToSettings()` 跳转。
-- 界面和 AI Prompt 使用中文。
+- 用户界面文案必须通过 `src/i18n/` 提供简体中文和英文资源，默认使用简体中文；AI 评审 Prompt
+  必须按评审开始时捕获的意见语言生成。后端或远端返回的错误正文尚未本地化时仍按不可信文本展示。
 
 ## 测试
 

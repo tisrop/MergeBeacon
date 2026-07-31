@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, normalizeApiError, prDetail } from "@/api";
+import { setAppLocale } from "@/i18n";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
@@ -16,6 +17,7 @@ vi.mock("@tauri-apps/plugin-shell", () => ({
 
 describe("IPC errors", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     invokeMock.mockReset();
   });
 
@@ -128,5 +130,11 @@ describe("IPC errors", () => {
 
     expect(error.code).toBe("unknown");
     expect(error.message).toBe("操作失败");
+  });
+
+  it("uses the current interface language for an empty local fallback", () => {
+    setAppLocale("en-US");
+
+    expect(normalizeApiError(null).message).toBe("Operation failed");
   });
 });

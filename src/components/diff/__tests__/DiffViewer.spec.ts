@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DiffViewer from "@/components/diff/DiffViewer.vue";
+import { setAppLocale } from "@/i18n";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import type { DiffLocationRequest, DiffResult, Platform, PrFileContent } from "@/types";
 
@@ -31,6 +32,10 @@ vi.stubGlobal("localStorage", {
   setItem: (key: string, value: string) => storage.set(key, value),
   removeItem: (key: string) => storage.delete(key),
   clear: () => storage.clear(),
+});
+
+beforeEach(() => {
+  setAppLocale("zh-CN");
 });
 
 const diff: DiffResult = {
@@ -299,6 +304,74 @@ describe("DiffViewer 受控标准 patch", () => {
     expect(wrapper.find(".controlled-side-left script").exists()).toBe(false);
   });
 
+  it("切换界面语言时立即更新本地文案并保留远端文件名和代码", async () => {
+    const remoteChineseDiff: DiffResult = {
+      diff: "",
+      files: [
+        {
+          filename: "src/中文模块.ts",
+          status: "modified",
+          patch: "",
+          additions: 1,
+          deletions: 1,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: "src/中文模块.ts",
+          old_path: "src/中文模块.ts",
+          new_path: "src/中文模块.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          content_kind: "text",
+          patch: "",
+          message: null,
+          hunks: [
+            {
+              header: "@@ -1 +1 @@",
+              old_start: 1,
+              old_count: 1,
+              new_start: 1,
+              new_count: 1,
+              section_header: null,
+              lines: [
+                {
+                  kind: "deletion",
+                  content: 'export const 标题 = "旧标题";',
+                  old_line: 1,
+                  new_line: null,
+                },
+                {
+                  kind: "addition",
+                  content: 'export const 标题 = "新标题";',
+                  old_line: null,
+                  new_line: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const wrapper = await mountViewer(remoteChineseDiff);
+
+    expect(wrapper.get(".navigator-header strong").text()).toBe("文件");
+    expect(wrapper.get(".selected-file-status").text()).toBe("修改");
+    expect(wrapper.text()).toContain("src/中文模块.ts");
+    expect(wrapper.text()).toContain('export const 标题 = "新标题";');
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get(".navigator-header strong").text()).toBe("Files");
+    expect(wrapper.get(".selected-file-status").text()).toBe("Modified");
+    wrapper.get('[aria-label="Find in code"]');
+    expect(wrapper.text()).toContain("src/中文模块.ts");
+    expect(wrapper.text()).toContain('export const 标题 = "新标题";');
+  });
+
   it("切换文件时只渲染对应的标准 patch", async () => {
     const wrapper = await mountViewer(standardizedDiff);
 
@@ -512,9 +585,9 @@ describe("DiffViewer 受控标准 patch", () => {
     await wrapper.get('[aria-label="查找代码"]').trigger("click");
     const pane = wrapper.get('.code-search-pane[data-side="right"]');
     const search = pane.get<HTMLInputElement>('input[type="search"]');
-    const caseSensitive = pane.get('[aria-label="右侧区分大小写"]');
-    const wholeWord = pane.get('[aria-label="右侧全词匹配"]');
-    const regex = pane.get('[aria-label="右侧使用正则表达式"]');
+    const caseSensitive = pane.get('[aria-label="右侧 区分大小写"]');
+    const wholeWord = pane.get('[aria-label="右侧 全词匹配"]');
+    const regex = pane.get('[aria-label="右侧 使用正则表达式"]');
 
     await setCodeSearchQuery(search, "<NEW>");
     expect(pane.get(".code-search-result").text()).toBe("1/1");
@@ -573,6 +646,12 @@ describe("DiffViewer 受控标准 patch", () => {
     expect(pane.get(".code-search-result").text()).toBe("正则表达式无效");
     expect(wrapper.find("mark.diff-search-match").exists()).toBe(false);
     expect(pane.get('[aria-label="右侧下一个匹配项"]').attributes()).toHaveProperty("disabled");
+
+    setAppLocale("en-US");
+    await setCodeSearchQuery(search, "(a+)+$");
+    expect(pane.get(".code-search-result").text()).toBe(
+      "The regular expression contains a repeated pattern that may freeze search",
+    );
   });
 
   it("正则模式拒绝搜索超长代码行", async () => {
@@ -618,7 +697,7 @@ describe("DiffViewer 受控标准 patch", () => {
 
     await wrapper.get('[aria-label="查找代码"]').trigger("click");
     const pane = wrapper.get('.code-search-pane[data-side="right"]');
-    await pane.get('[aria-label="右侧使用正则表达式"]').trigger("click");
+    await pane.get('[aria-label="右侧 使用正则表达式"]').trigger("click");
     const search = pane.get<HTMLInputElement>('input[type="search"]');
     await setCodeSearchQuery(search, "a+$");
 

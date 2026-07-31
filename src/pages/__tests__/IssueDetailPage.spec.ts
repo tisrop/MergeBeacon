@@ -4,6 +4,7 @@ import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import IssueDetailPage from "@/pages/IssueDetailPage.vue";
 import IssueListPage from "@/pages/IssueListPage.vue";
+import { setAppLocale } from "@/i18n";
 import {
   issueCommentAdd,
   issueCommentsList,
@@ -102,6 +103,7 @@ function mountWithRouter(component: typeof IssueDetailPage | typeof IssueListPag
 
 describe("IssueDetailPage", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     vi.clearAllMocks();
     vi.mocked(issueCommentsList).mockResolvedValue([]);
     vi.mocked(listRepositoryLabels).mockResolvedValue([]);
@@ -128,6 +130,21 @@ describe("IssueDetailPage", () => {
     ).toBe(true);
     expect(wrapper.text()).toContain("## 复现步骤");
     expect(wrapper.get(".markdown-stub").attributes("data-variant")).toBe("document");
+  });
+
+  it("切换界面语言后更新详情操作但保留远端内容", async () => {
+    vi.mocked(issueDetail).mockResolvedValue(issue);
+    const router = await createRouterAt("/issue/github/team/repo/12");
+    const wrapper = mountWithRouter(IssueDetailPage, router);
+    await flushPromises();
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("Issue details");
+    expect(wrapper.text()).toContain("Close issue");
+    expect(wrapper.text()).toContain("详情页支持 Markdown");
+    expect(wrapper.text()).not.toContain("返回 Issue 列表");
   });
 
   it("路由快速切换时忽略旧请求结果", async () => {
