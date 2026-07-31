@@ -240,6 +240,23 @@ describe("usePrStore", () => {
     expect(store.hasListQuery).toBe(false);
   });
 
+  it("后台加载 Diff 时不占用详情或列表的加载状态", async () => {
+    const pendingDiff = deferred<DiffResult>();
+    vi.mocked(prDiff).mockReturnValueOnce(pendingDiff.promise);
+    const store = usePrStore();
+
+    const request = store.fetchPrDiff("github", "owner", "repo", 42);
+
+    expect(store.diffLoading).toBe(true);
+    expect(store.detailLoading).toBe(false);
+    expect(store.loading).toBe(false);
+
+    pendingDiff.resolve({ diff: "", files: [], patch_schema_version: 1, patches: [] });
+    await request;
+
+    expect(store.diffLoading).toBe(false);
+  });
+
   it("详情上下文变化且请求返回 404 时清除旧详情并显示明确提示", async () => {
     const oldDetail: PrDetail = {
       summary: {

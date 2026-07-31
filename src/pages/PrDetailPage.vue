@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, watch, nextTick } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
@@ -18,14 +18,10 @@ import {
 } from "@/utils/prCreateWarnings";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import DiffCommitSelector from "@/components/diff/DiffCommitSelector.vue";
-import DiffViewer from "@/components/diff/DiffViewer.vue";
 import ReviewForm from "@/components/review/ReviewForm.vue";
 import ReviewList from "@/components/review/ReviewList.vue";
-import AiReviewPanel from "@/components/ai/AiReviewPanel.vue";
 import MergeReadinessPanel from "@/components/pr/MergeReadinessPanel.vue";
 import PrMetadataPanel from "@/components/pr/PrMetadataPanel.vue";
-import PrDependenciesPanel from "@/components/pr/PrDependenciesPanel.vue";
-import PrMergeQueuePanel from "@/components/pr/PrMergeQueuePanel.vue";
 import CloseConfirmDialog from "@/components/shared/CloseConfirmDialog.vue";
 import { APP_COMMAND_EVENT, type AppCommandDetail } from "@/types/commands";
 import type {
@@ -39,6 +35,19 @@ import type {
   ReviewThreadSummary,
 } from "@/types";
 import type { CommitRangeSelection } from "@/utils/commitRange";
+
+const DiffViewer = defineAsyncComponent(() => import("@/components/diff/DiffViewer.vue"));
+const AiReviewPanel = defineAsyncComponent(() => import("@/components/ai/AiReviewPanel.vue"));
+const PrDependenciesPanel = defineAsyncComponent(
+  () => import("@/components/pr/PrDependenciesPanel.vue"),
+);
+const PrMergeQueuePanel = defineAsyncComponent(
+  () => import("@/components/pr/PrMergeQueuePanel.vue"),
+);
+
+interface AiReviewPanelHandle {
+  startReview: () => Promise<void> | void;
+}
 
 const route = useRoute();
 const router = useRouter();
@@ -87,6 +96,20 @@ const locatingAiSuggestion = ref(false);
 const tabsRef = ref<HTMLElement | null>(null);
 const isMergeContextVisible = computed(() => uiSettings.isPrDependenciesVisible);
 let aiReviewScrollTop: number | null = null;
+let commitsRequested = false;
+
+function ensurePrCommits(): void {
+  if (
+    commitsRequested ||
+    pr.commitsLoading ||
+    pr.commits.length > 0 ||
+    pr.currentPr?.summary.number !== number
+  ) {
+    return;
+  }
+  commitsRequested = true;
+  void pr.fetchPrCommits(platform, owner, repo, number);
+}
 
 function contentScrollContainer(): HTMLElement | null {
   return tabsRef.value?.closest<HTMLElement>(".content-body") ?? null;
@@ -105,6 +128,7 @@ function selectTab(tab: PrDetailTab) {
   if (tab === "dependencies" && !isMergeContextVisible.value) return;
   const returningToAiSuggestion = tab === "ai" && locatingAiSuggestion.value;
   activeTab.value = tab;
+  if (tab === "diff") ensurePrCommits();
   if (tab === "dependencies") dependencyPanelMounted.value = true;
   if (tab === "ai") {
     aiPanelMounted.value = true;
@@ -153,6 +177,7 @@ function handleCommitRangeChange(selection: CommitRangeSelection | null): void {
 }
 
 function reloadPrCommits(): void {
+  commitsRequested = true;
   void pr.fetchPrCommits(platform, owner, repo, number);
 }
 
@@ -193,7 +218,8 @@ function handleReviewCommentLocate(path: string, line: number | null, side: Diff
 
 const reviewListRef = ref<InstanceType<typeof ReviewList> | null>(null);
 const reviewFormRef = ref<InstanceType<typeof ReviewForm> | null>(null);
-const aiPanelRef = ref<InstanceType<typeof AiReviewPanel> | null>(null);
+const aiPanelRef = ref<AiReviewPanelHandle | null>(null);
+let pendingAiReviewStart = false;
 const reviewThreadSummary = ref<ReviewThreadSummary | null>(null);
 const unviewedFileCount = ref(0);
 const commentError = ref("");
@@ -211,6 +237,20 @@ const metadataSaving = ref(false);
 const metadataStatus = ref("");
 const metadataError = ref("");
 const titleLinkError = ref("");
+
+function flushPendingAiReviewStart(): void {
+  if (
+    !pendingAiReviewStart ||
+    !aiPanelRef.value ||
+    typeof aiPanelRef.value.startReview !== "function"
+  ) {
+    return;
+  }
+  pendingAiReviewStart = false;
+  void aiPanelRef.value.startReview();
+}
+
+watch(aiPanelRef, flushPendingAiReviewStart);
 
 const defaultCommitMessage = computed(
   () => `Merge pull request #${number} from ${pr.currentPr?.source_branch ?? ""}`,
@@ -524,10 +564,9 @@ function handleAppCommand(event: Event): void {
     selectTab("diff");
     void nextTick(scrollTabBarIntoView);
   } else if (detail.type === "start_ai_review") {
+    pendingAiReviewStart = true;
     selectTab("ai");
-    void nextTick(() => {
-      if (typeof aiPanelRef.value?.startReview === "function") void aiPanelRef.value.startReview();
-    });
+    flushPendingAiReviewStart();
   } else if (detail.type === "prepare_review") {
     selectTab("diff");
     void nextTick(() => {
@@ -556,16 +595,18 @@ onMounted(async () => {
   const capabilityRequest = capabilityStore.load(platform).catch(() => null);
   await pr.fetchPrDetail(platform, owner, repo, number);
   if (pr.currentPr?.summary.number === number) {
-    await Promise.all([
+    await nextTick();
+    void Promise.allSettled([
       pr.fetchPrDiff(platform, owner, repo, number),
-      pr.fetchPrCommits(platform, owner, repo, number),
       pr.fetchMergeReadiness(platform, owner, repo, number),
     ]);
+    if (activeTab.value === "diff") ensurePrCommits();
   }
-  await capabilityRequest;
-  if (!platformCapabilities.value?.merge_strategies.includes(selectedStrategy.value)) {
-    selectedStrategy.value = platformCapabilities.value?.merge_strategies[0] ?? "merge";
-  }
+  void capabilityRequest.then(() => {
+    if (!platformCapabilities.value?.merge_strategies.includes(selectedStrategy.value)) {
+      selectedStrategy.value = platformCapabilities.value?.merge_strategies[0] ?? "merge";
+    }
+  });
 });
 onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand));
 </script>
@@ -785,7 +826,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
       </div>
     </template>
 
-    <div v-if="pr.loading" class="loading-state">
+    <div v-if="pr.detailLoading" class="loading-state">
       <div class="skeleton skeleton-tabs" />
       <div class="skeleton skeleton-content" />
     </div>
@@ -872,59 +913,71 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
           <p v-if="diffLocationError" class="error-msg diff-location-error" role="alert">
             {{ diffLocationError }}
           </p>
-          <DiffViewer
-            :diff="displayedDiff"
-            :platform="platform"
-            :owner="owner"
-            :repo="repo"
-            :pr-number="number"
-            :base-sha="displayedBaseSha"
-            :head-sha="displayedHeadSha"
-            :base-owner="displayedBaseRepository.owner"
-            :base-repo="displayedBaseRepository.repo"
-            :head-owner="headRepository?.owner"
-            :head-repo="headRepository?.repo"
-            :location-request="diffLocationRequest"
-            :thread-summary="isCommitRangeView ? null : reviewThreadSummary"
-            :can-sync-viewed-files="
-              !isCommitRangeView &&
-              (platformCapabilities?.supports_remote_file_viewed_state ?? false)
-            "
-            :read-only="isCommitRangeView"
-            @add-comment="handleAddComment"
-            @location-result="handleDiffLocationResult"
-            @review-progress="unviewedFileCount = $event"
+          <div
+            v-if="pr.diffLoading && !displayedDiff"
+            class="loading-state"
+            role="status"
+            aria-live="polite"
+            data-testid="diff-loading-state"
           >
-            <template #scope>
-              <DiffCommitSelector
-                :commits="pr.commits"
-                :truncated-end="pr.commitsTruncatedEnd"
-                :commits-loading="pr.commitsLoading"
-                :commits-error="pr.commitsError"
-                :selection="pr.commitRange"
-                :range-loading="pr.rangeDiffLoading"
-                :range-error="pr.rangeDiffError"
-                @update:selection="handleCommitRangeChange"
-                @retry="reloadPrCommits"
-              />
-              <p v-if="isCommitRangeView" class="commit-range-note" role="note">
-                {{ t("prDetail.commitRangeNote") }}
-              </p>
-            </template>
-          </DiffViewer>
-          <p v-if="commentError" class="error-msg">{{ commentError }}</p>
-          <p v-if="commentSuccess" class="success-msg">
-            {{ t("prDetail.inlineCommentSubmitted") }}
-          </p>
-          <ReviewForm
-            ref="reviewFormRef"
-            :platform="platform"
-            :owner="owner"
-            :repo="repo"
-            :pr-number="number"
-            :unviewed-file-count="unviewedFileCount"
-            :unresolved-thread-count="reviewThreadSummary?.unresolved ?? 0"
-          />
+            <p class="text-secondary">{{ t("prDetail.loadingDiff") }}</p>
+            <div class="skeleton skeleton-content" />
+          </div>
+          <template v-else>
+            <DiffViewer
+              :diff="displayedDiff"
+              :platform="platform"
+              :owner="owner"
+              :repo="repo"
+              :pr-number="number"
+              :base-sha="displayedBaseSha"
+              :head-sha="displayedHeadSha"
+              :base-owner="displayedBaseRepository.owner"
+              :base-repo="displayedBaseRepository.repo"
+              :head-owner="headRepository?.owner"
+              :head-repo="headRepository?.repo"
+              :location-request="diffLocationRequest"
+              :thread-summary="isCommitRangeView ? null : reviewThreadSummary"
+              :can-sync-viewed-files="
+                !isCommitRangeView &&
+                (platformCapabilities?.supports_remote_file_viewed_state ?? false)
+              "
+              :read-only="isCommitRangeView"
+              @add-comment="handleAddComment"
+              @location-result="handleDiffLocationResult"
+              @review-progress="unviewedFileCount = $event"
+            >
+              <template #scope>
+                <DiffCommitSelector
+                  :commits="pr.commits"
+                  :truncated-end="pr.commitsTruncatedEnd"
+                  :commits-loading="pr.commitsLoading"
+                  :commits-error="pr.commitsError"
+                  :selection="pr.commitRange"
+                  :range-loading="pr.rangeDiffLoading"
+                  :range-error="pr.rangeDiffError"
+                  @update:selection="handleCommitRangeChange"
+                  @retry="reloadPrCommits"
+                />
+                <p v-if="isCommitRangeView" class="commit-range-note" role="note">
+                  {{ t("prDetail.commitRangeNote") }}
+                </p>
+              </template>
+            </DiffViewer>
+            <p v-if="commentError" class="error-msg">{{ commentError }}</p>
+            <p v-if="commentSuccess" class="success-msg">
+              {{ t("prDetail.inlineCommentSubmitted") }}
+            </p>
+            <ReviewForm
+              ref="reviewFormRef"
+              :platform="platform"
+              :owner="owner"
+              :repo="repo"
+              :pr-number="number"
+              :unviewed-file-count="unviewedFileCount"
+              :unresolved-thread-count="reviewThreadSummary?.unresolved ?? 0"
+            />
+          </template>
         </div>
         <div
           v-if="isMergeContextVisible && dependencyPanelMounted"

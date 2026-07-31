@@ -1001,6 +1001,7 @@ export const zhCN = {
   "prDetail.dependencies": "依赖关系",
   "prDetail.inlineCommentFailed": "提交行内评论失败",
   "prDetail.inlineCommentSubmitted": "行内评论已提交",
+  "prDetail.loadingDiff": "正在加载 Diff…",
   "prDetail.merge": "合并",
   "prDetail.mergeIssueCloseFailed": "PR 已合并，但以下关联 Issue 关闭失败：{issues}",
   "prDetail.merging": "正在合并 PR...",
@@ -2255,6 +2256,7 @@ export const enUS: Record<MessageKey, string> = {
   "prDetail.dependencies": "Dependencies",
   "prDetail.inlineCommentFailed": "Failed to submit inline comment",
   "prDetail.inlineCommentSubmitted": "Inline comment submitted",
+  "prDetail.loadingDiff": "Loading Diff…",
   "prDetail.merge": "Merge",
   "prDetail.mergeIssueCloseFailed":
     "The PR was merged, but these linked issues could not be closed: {issues}",

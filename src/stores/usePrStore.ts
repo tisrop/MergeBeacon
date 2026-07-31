@@ -68,6 +68,8 @@ export const usePrStore = defineStore("pr", () => {
   const mergeReadiness = ref<PrMergeReadiness | null>(null);
   const readinessLoading = ref(false);
   const readinessError = ref<string | null>(null);
+  const detailLoading = ref(false);
+  const diffLoading = ref(false);
   const loading = ref(false);
   const error = ref<string | null>(null);
   const totalPages = ref(1);
@@ -125,6 +127,8 @@ export const usePrStore = defineStore("pr", () => {
     mergeReadiness.value = null;
     readinessError.value = null;
     error.value = null;
+    detailLoading.value = false;
+    diffLoading.value = false;
     commitsLoading.value = false;
     totalPages.value = 1;
     listTotalCount.value = 0;
@@ -222,7 +226,7 @@ export const usePrStore = defineStore("pr", () => {
       readinessError.value = null;
     }
     detailContextKey = contextKey;
-    loading.value = true;
+    detailLoading.value = true;
     error.value = null;
     try {
       const result = await prDetail(platform, owner, repo, number);
@@ -238,18 +242,18 @@ export const usePrStore = defineStore("pr", () => {
         : message;
       return false;
     } finally {
-      if (sequence === detailRequestSequence) loading.value = false;
+      if (sequence === detailRequestSequence) detailLoading.value = false;
     }
   }
 
   async function fetchPrDiff(platform: Platform, owner: string, repo: string, number: number) {
     const sequence = ++diffRequestSequence;
-    loading.value = true;
+    diffLoading.value = true;
     try {
       const result = await prDiff(platform, owner, repo, number);
       if (sequence === diffRequestSequence) diff.value = result;
     } finally {
-      if (sequence === diffRequestSequence) loading.value = false;
+      if (sequence === diffRequestSequence) diffLoading.value = false;
     }
   }
 
@@ -508,6 +512,8 @@ export const usePrStore = defineStore("pr", () => {
     mergeReadiness,
     readinessLoading,
     readinessError,
+    detailLoading,
+    diffLoading,
     loading,
     error,
     totalPages,
