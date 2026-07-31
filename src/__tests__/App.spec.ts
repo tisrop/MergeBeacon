@@ -2,8 +2,9 @@ import { createPinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { checkForUpdates } from "@/api";
+import { checkForUpdates, isDesktopRuntime, setNativeMenuLabels } from "@/api";
 import UpdateAvailableDialog from "@/components/update/UpdateAvailableDialog.vue";
+import { setAppLocale } from "@/i18n";
 import { useUpdateStore } from "@/stores/useUpdateStore";
 import App from "../App.vue";
 
@@ -40,14 +41,21 @@ vi.stubGlobal("localStorage", {
 
 vi.mock("@/api", () => ({
   checkForUpdates: vi.fn(),
+  isDesktopRuntime: vi.fn(),
+  setNativeMenuLabels: vi.fn(),
 }));
 
 describe("App", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     storage.clear();
+    setAppLocale("zh-CN");
     scrollIntoView.mockReset();
     vi.mocked(checkForUpdates).mockReset();
+    vi.mocked(isDesktopRuntime).mockReset();
+    vi.mocked(isDesktopRuntime).mockReturnValue(false);
+    vi.mocked(setNativeMenuLabels).mockReset();
+    vi.mocked(setNativeMenuLabels).mockResolvedValue();
   });
 
   it("未进入设置页也会在应用挂载时执行后台更新检查", async () => {
@@ -75,9 +83,11 @@ describe("App", () => {
     expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(true);
     expect(window.__goToSettings).toBeTypeOf("function");
     expect(window.__openCommandPalette).toBeTypeOf("function");
+    expect(window.__handleNativeMenuAction).toBeTypeOf("function");
     wrapper.unmount();
     expect(window.__goToSettings).toBeUndefined();
     expect(window.__openCommandPalette).toBeUndefined();
+    expect(window.__handleNativeMenuAction).toBeUndefined();
   });
 
   it("已持久化忽略的版本在后续后台检查中不再打开更新弹窗", async () => {
@@ -102,6 +112,78 @@ describe("App", () => {
     expect(updates.updateResult).toEqual(availableUpdate);
     expect(updates.updatePromptVersion).toBeNull();
     expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("在桌面端启动和切换语言时同步对应的原生菜单文案", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue(noUpdate);
+    vi.mocked(isDesktopRuntime).mockReturnValue(true);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/pr", component: { template: "<div>PR 列表</div>" } }],
+    });
+    await router.push("/pr");
+    await router.isReady();
+    const wrapper = mount(App, {
+      global: {
+        plugins: [createPinia(), router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
+    await flushPromises();
+
+    expect(setNativeMenuLabels).toHaveBeenCalledOnce();
+    expect(setNativeMenuLabels).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        about: "关于 MergeBeacon",
+        file: "文件",
+        undo: "撤销",
+        enter_fullscreen: "进入全屏",
+        github_homepage: "GitHub 主页",
+        quit: "退出 MergeBeacon",
+      }),
+    );
+
+    setAppLocale("en-US");
+    await flushPromises();
+
+    expect(setNativeMenuLabels).toHaveBeenCalledTimes(2);
+    expect(setNativeMenuLabels).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        about: "About MergeBeacon",
+        file: "File",
+        undo: "Undo",
+        enter_fullscreen: "Enter Full Screen",
+        github_homepage: "GitHub Homepage",
+        quit: "Quit MergeBeacon",
+      }),
+    );
+
+    wrapper.unmount();
+  });
+
+  it("原生菜单文案同步失败时记录错误而不是静默忽略", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue(noUpdate);
+    vi.mocked(isDesktopRuntime).mockReturnValue(true);
+    const syncError = new Error("menu IPC unavailable");
+    vi.mocked(setNativeMenuLabels).mockRejectedValue(syncError);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/pr", component: { template: "<div>PR 列表</div>" } }],
+    });
+    await router.push("/pr");
+    await router.isReady();
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [createPinia(), router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
+    await flushPromises();
+
+    expect(consoleError).toHaveBeenCalledWith("同步原生菜单文案失败", syncError);
     wrapper.unmount();
   });
 
@@ -299,6 +381,60 @@ describe("App", () => {
     expect(router.currentRoute.value.fullPath).toBe("/settings");
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
     expect((scrollIntoView.mock.instances[0] as HTMLElement).id).toBe("settings-page-start");
+    wrapper.unmount();
+  });
+
+  it("响应原生菜单的新建、检查更新和诊断操作", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValue(noUpdate);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/pr", component: { template: "<div>PR 列表</div>" } },
+        {
+          path: "/pr/new",
+          name: "pr-new",
+          component: { template: "<div>新建 PR</div>" },
+        },
+        {
+          path: "/issue/new",
+          name: "issue-new",
+          component: { template: "<div>新建 Issue</div>" },
+        },
+        {
+          path: "/settings",
+          component: {
+            template:
+              '<div id="settings-page-start"><section id="app-update">更新</section><section id="diagnostics">诊断</section></div>',
+          },
+        },
+      ],
+    });
+    await router.push("/pr");
+    await router.isReady();
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: {
+        plugins: [createPinia(), router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
+    await flushPromises();
+
+    await window.__handleNativeMenuAction?.("new-pull-request");
+    expect(router.currentRoute.value.fullPath).toBe("/pr/new");
+
+    await window.__handleNativeMenuAction?.("new-issue");
+    expect(router.currentRoute.value.fullPath).toBe("/issue/new");
+
+    await window.__handleNativeMenuAction?.("check-updates");
+    expect(router.currentRoute.value.fullPath).toBe("/settings#app-update");
+    expect(checkForUpdates).toHaveBeenCalledTimes(2);
+    expect((scrollIntoView.mock.instances.at(-1) as HTMLElement).id).toBe("app-update");
+
+    await window.__handleNativeMenuAction?.("open-diagnostics");
+    expect(router.currentRoute.value.fullPath).toBe("/settings#diagnostics");
+    expect((scrollIntoView.mock.instances.at(-1) as HTMLElement).id).toBe("diagnostics");
+
     wrapper.unmount();
   });
 

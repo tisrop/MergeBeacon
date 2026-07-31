@@ -478,7 +478,7 @@ async function copyRecentErrorLogs() {
         <p v-else class="privacy-note">{{ t("settings.officialUpdates") }}</p>
       </section>
 
-      <section class="card section">
+      <section id="diagnostics" class="card section">
         <div class="section-heading support-heading">
           <span class="section-icon support" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">

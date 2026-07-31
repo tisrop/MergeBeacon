@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import { useRouter, useRoute } from "vue-router";
 import { RouterView } from "vue-router";
 import { useUpdateStore } from "@/stores/useUpdateStore";
+import { useI18n } from "@/i18n";
+import { syncNativeMenuLabels } from "@/services/nativeMenu";
 import CommandPalette from "@/components/command/CommandPalette.vue";
 import NotificationManager from "@/components/notification/NotificationManager.vue";
 import UpdateAvailableDialog from "@/components/update/UpdateAvailableDialog.vue";
@@ -11,15 +13,28 @@ import UpdateAvailableDialog from "@/components/update/UpdateAvailableDialog.vue
 const router = useRouter();
 const route = useRoute();
 const updates = useUpdateStore();
+const { locale } = useI18n();
 const { updateResult, updatePromptVersion } = storeToRefs(updates);
 const SETTINGS_PAGE_START_ID = "settings-page-start";
 const APP_UPDATE_SECTION_ID = "app-update";
 const APP_UPDATE_HASH = `#${APP_UPDATE_SECTION_ID}`;
+const DIAGNOSTICS_SECTION_ID = "diagnostics";
+const DIAGNOSTICS_HASH = `#${DIAGNOSTICS_SECTION_ID}`;
 
 const commandPaletteRef = ref<InstanceType<typeof CommandPalette> | null>(null);
 const isCommandPaletteOpen = ref(false);
 const isEditingControlFocused = ref(false);
 let commandPaletteStateSequence = 0;
+
+watch(
+  locale,
+  (value) => {
+    void syncNativeMenuLabels(value).catch((error: unknown) => {
+      console.error("同步原生菜单文案失败", error);
+    });
+  },
+  { immediate: true },
+);
 
 const hasMatchingUpdatePrompt = computed(() =>
   Boolean(
@@ -62,6 +77,23 @@ async function openUpdateSettings() {
   });
 }
 
+async function handleNativeMenuAction(action: NativeMenuAction) {
+  if (action === "new-pull-request") {
+    await router.push("/pr/new");
+  } else if (action === "new-issue") {
+    await router.push({ name: "issue-new" });
+  } else if (action === "check-updates") {
+    await openUpdateSettings();
+    await updates.checkUpdate();
+  } else if (action === "open-diagnostics") {
+    await navigateToSettings(DIAGNOSTICS_HASH);
+    document.getElementById(DIAGNOSTICS_SECTION_ID)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
+}
+
 function openCommandPalette() {
   commandPaletteRef.value?.open();
 }
@@ -100,6 +132,7 @@ function handleDocumentFocusChange() {
 onMounted(() => {
   window.__goToSettings = openSettings;
   window.__openCommandPalette = openCommandPalette;
+  window.__handleNativeMenuAction = handleNativeMenuAction;
   document.addEventListener("focusin", handleDocumentFocusChange);
   document.addEventListener("focusout", handleDocumentFocusChange);
   syncEditingControlFocus();
@@ -109,6 +142,7 @@ onMounted(() => {
 onUnmounted(() => {
   delete window.__goToSettings;
   delete window.__openCommandPalette;
+  delete window.__handleNativeMenuAction;
   document.removeEventListener("focusin", handleDocumentFocusChange);
   document.removeEventListener("focusout", handleDocumentFocusChange);
 });

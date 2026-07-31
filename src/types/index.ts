@@ -96,6 +96,36 @@ export interface SupportInfo {
   formatted: string;
 }
 
+export interface NativeMenuLabels {
+  about: string;
+  check_updates: string;
+  settings: string;
+  quit: string;
+  file: string;
+  new_pull_request: string;
+  new_issue: string;
+  close_window: string;
+  edit: string;
+  undo: string;
+  redo: string;
+  cut: string;
+  copy: string;
+  paste: string;
+  select_all: string;
+  view: string;
+  command_palette: string;
+  reload: string;
+  enter_fullscreen: string;
+  window: string;
+  minimize: string;
+  maximize: string;
+  help: string;
+  github_homepage: string;
+  report_issue: string;
+  release_notes: string;
+  diagnostics: string;
+}
+
 // ── PR ──
 export type PrState = "open" | "closed" | "merged" | "all";
 export type PrReviewFilter = "none" | "required" | "approved" | "changes_requested";

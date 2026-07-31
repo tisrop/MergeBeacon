@@ -49,6 +49,7 @@ import type {
   AiReviewRequest,
   AiReviewResult,
   SupportInfo,
+  NativeMenuLabels,
   UpdateCheckResult,
   UpdateProgressEvent,
 } from "@/types";
@@ -154,6 +155,10 @@ export async function getPlatformCapabilities(platform: Platform): Promise<Platf
 // ── Support ──
 export async function getAppVersion(): Promise<string> {
   return invoke("app_version");
+}
+
+export async function setNativeMenuLabels(labels: NativeMenuLabels): Promise<void> {
+  return invoke("native_menu_set_labels", { labels });
 }
 
 export async function checkForUpdates(): Promise<UpdateCheckResult> {

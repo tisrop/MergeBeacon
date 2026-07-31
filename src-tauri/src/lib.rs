@@ -8,6 +8,7 @@ pub mod http_client;
 pub mod issue_template;
 pub mod local_store;
 pub mod models;
+mod native_menu;
 pub mod patch;
 pub mod platform;
 pub mod pr_template;
@@ -21,8 +22,8 @@ pub mod vault;
 mod window_state;
 
 use commands::{
-    ai as ai_cmds, auth, capabilities, error_log as error_log_cmds, inbox, issue, notification, pr, review, support,
-    update,
+    ai as ai_cmds, auth, capabilities, error_log as error_log_cmds, inbox, issue, native_menu as native_menu_cmds,
+    notification, pr, review, support, update,
 };
 use error_log::ErrorLogStore;
 use local_store::CommentSnapshotStore;
@@ -30,9 +31,24 @@ use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_window_state::{StateFlags, WindowExt};
+
+fn eval_main_window(handle: &tauri::AppHandle, script: &str) {
+    let Some(window) = handle.get_webview_window("main") else {
+        return;
+    };
+    if let Err(error) = window.eval(script) {
+        eprintln!("执行菜单操作失败：{error}");
+    }
+}
+
+fn open_external_url(handle: &tauri::AppHandle, url: &str, label: &str) {
+    if let Err(error) = handle.opener().open_url(url, None::<&str>) {
+        eprintln!("打开“{label}”失败：{error}");
+    }
+}
 
 pub fn run() {
     let activation = Arc::new(single_instance::ActivationCoordinator::default());
@@ -49,6 +65,11 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_shell::init())
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -60,6 +81,10 @@ pub fn run() {
         )
         .manage(AppState::new())
         .setup(move |app| {
+            // Keep every native entry point available while the webview initializes or if IPC fails.
+            native_menu::install(app.handle(), native_menu::NativeMenuLabels::simplified_chinese())
+                .map_err(std::io::Error::other)?;
+
             let app_dir = app.path().app_data_dir().unwrap_or_default();
             let comment_store = CommentSnapshotStore::new(&app_dir.join("comment_cache.db"));
             app.manage(comment_store);
@@ -95,37 +120,6 @@ pub fn run() {
             #[cfg(feature = "restart-timing-test")]
             restart_timing_test::arm(app.handle().clone());
 
-            let command_palette =
-                MenuItem::with_id(app, "open-command-palette", "命令面板...", true, Some("CmdOrCtrl+K"))?;
-            let settings = MenuItem::with_id(app, "open-settings", "设置...", true, Some("Cmd+,"))?;
-            let app_menu = Submenu::with_items(
-                app,
-                "MergeBeacon",
-                true,
-                &[
-                    &command_palette,
-                    &settings,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::quit(app, None)?,
-                ],
-            )?;
-            let edit_menu = Submenu::with_items(
-                app,
-                "编辑",
-                true,
-                &[
-                    &PredefinedMenuItem::undo(app, Some("撤销"))?,
-                    &PredefinedMenuItem::redo(app, Some("重做"))?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::cut(app, Some("剪切"))?,
-                    &PredefinedMenuItem::copy(app, Some("复制"))?,
-                    &PredefinedMenuItem::paste(app, Some("粘贴"))?,
-                    &PredefinedMenuItem::select_all(app, Some("全选"))?,
-                ],
-            )?;
-            let menu = Menu::with_items(app, &[&app_menu, &edit_menu])?;
-            app.set_menu(menu)?;
-
             let menu_ready = Arc::new(AtomicBool::new(false));
             let menu_ready_clone = menu_ready.clone();
 
@@ -138,15 +132,48 @@ pub fn run() {
                 if !menu_ready.load(Ordering::SeqCst) {
                     return;
                 }
-                if event.id() == "open-settings" {
+                if event.id() == native_menu::OPEN_SETTINGS_ID {
+                    eval_main_window(
+                        handle,
+                        "if(typeof window.__goToSettings==='function'){window.__goToSettings()}",
+                    );
+                } else if event.id() == native_menu::OPEN_COMMAND_PALETTE_ID {
+                    eval_main_window(
+                        handle,
+                        "if(typeof window.__openCommandPalette==='function'){window.__openCommandPalette()}",
+                    );
+                } else if event.id() == native_menu::NEW_PULL_REQUEST_ID {
+                    eval_main_window(
+                        handle,
+                        "if(typeof window.__handleNativeMenuAction==='function'){window.__handleNativeMenuAction('new-pull-request')}",
+                    );
+                } else if event.id() == native_menu::NEW_ISSUE_ID {
+                    eval_main_window(
+                        handle,
+                        "if(typeof window.__handleNativeMenuAction==='function'){window.__handleNativeMenuAction('new-issue')}",
+                    );
+                } else if event.id() == native_menu::CHECK_UPDATES_ID {
+                    eval_main_window(
+                        handle,
+                        "if(typeof window.__handleNativeMenuAction==='function'){window.__handleNativeMenuAction('check-updates')}",
+                    );
+                } else if event.id() == native_menu::OPEN_DIAGNOSTICS_ID {
+                    eval_main_window(
+                        handle,
+                        "if(typeof window.__handleNativeMenuAction==='function'){window.__handleNativeMenuAction('open-diagnostics')}",
+                    );
+                } else if event.id() == native_menu::RELOAD_WINDOW_ID {
                     if let Some(window) = handle.get_webview_window("main") {
-                        let _ = window.eval("if(typeof window.__goToSettings==='function'){window.__goToSettings()}");
+                        if let Err(error) = window.reload() {
+                            eprintln!("重新加载窗口失败：{error}");
+                        }
                     }
-                } else if event.id() == "open-command-palette" {
-                    if let Some(window) = handle.get_webview_window("main") {
-                        let _ = window
-                            .eval("if(typeof window.__openCommandPalette==='function'){window.__openCommandPalette()}");
-                    }
+                } else if event.id() == native_menu::OPEN_GITHUB_HOMEPAGE_ID {
+                    open_external_url(handle, native_menu::GITHUB_HOMEPAGE_URL, "GitHub homepage");
+                } else if event.id() == native_menu::REPORT_ISSUE_ID {
+                    open_external_url(handle, native_menu::GITHUB_ISSUES_URL, "issue report page");
+                } else if event.id() == native_menu::OPEN_RELEASE_NOTES_ID {
+                    open_external_url(handle, native_menu::GITHUB_RELEASES_URL, "release notes");
                 }
             });
 
@@ -170,6 +197,7 @@ pub fn run() {
             update::update_download_and_install,
             update::update_restart,
             capabilities::platform_capabilities,
+            native_menu_cmds::native_menu_set_labels,
             // Desktop notification
             notification::desktop_notification_permission_granted,
             notification::desktop_notification_request_permission,

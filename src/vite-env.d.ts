@@ -7,9 +7,12 @@ declare module "*.vue" {
 }
 
 declare global {
+  type NativeMenuAction = "new-pull-request" | "new-issue" | "check-updates" | "open-diagnostics";
+
   interface Window {
     __goToSettings?: () => void;
     __openCommandPalette?: () => void;
+    __handleNativeMenuAction?: (action: NativeMenuAction) => void;
   }
 }
 
