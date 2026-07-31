@@ -18,6 +18,38 @@ describe("AiSettings", () => {
     vi.mocked(aiListModels).mockResolvedValue([`gpt<img src=x onerror="alert(1)">model`]);
   });
 
+  it("uses the current OpenAI endpoint and default model", () => {
+    const wrapper = mount(AiSettings);
+
+    expect(
+      (
+        wrapper.get('.field input[placeholder="https://api.openai.com/v1"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("https://api.openai.com/v1");
+    expect((wrapper.get(".model-input-wrap input").element as HTMLInputElement).value).toBe(
+      "gpt-5.6",
+    );
+  });
+
+  it("applies the DeepSeek v4 Flash preset", async () => {
+    const wrapper = mount(AiSettings);
+    const preset = wrapper.findAll("button").find((button) => button.text() === "DeepSeek");
+
+    expect(preset).toBeDefined();
+    await preset!.trigger("click");
+
+    expect(
+      (
+        wrapper.get('.field input[placeholder="https://api.openai.com/v1"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("https://api.deepseek.com/v1");
+    expect((wrapper.get(".model-input-wrap input").element as HTMLInputElement).value).toBe(
+      "deepseek-v4-flash",
+    );
+  });
+
   it("切换界面语言后立即更新设置文案", async () => {
     const wrapper = mount(AiSettings);
 

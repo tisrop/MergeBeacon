@@ -341,8 +341,8 @@ Common endpoint examples:
 
 | Service | API endpoint | Example default model |
 |---|---|---|
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o` |
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-5.6` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-v4-flash` |
 | Qwen | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
 | Moonshot | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
 | Ollama | `http://localhost:11434/v1` | `llama3` |

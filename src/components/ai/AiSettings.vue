@@ -9,7 +9,7 @@ const { t } = useI18n();
 
 const config = ref<AiConfig>({
   endpoint: "https://api.openai.com/v1",
-  model: "gpt-4o",
+  model: "gpt-5.6",
   api_key_configured: false,
   system_prompt: null,
   temperature: 0.3,
@@ -95,8 +95,8 @@ function highlight(text: string, query: string): HighlightSegment[] {
 }
 
 const presets = computed(() => [
-  { name: "OpenAI", endpoint: "https://api.openai.com/v1", model: "gpt-4o" },
-  { name: "DeepSeek", endpoint: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { name: "OpenAI", endpoint: "https://api.openai.com/v1", model: "gpt-5.6" },
+  { name: "DeepSeek", endpoint: "https://api.deepseek.com/v1", model: "deepseek-v4-flash" },
   {
     name: t("aiSettings.presetQwen"),
     endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -232,7 +232,7 @@ async function handleTest() {
             :value="showModelDropdown ? modelSearch : config.model"
             class="input"
             type="text"
-            :placeholder="config.model || 'gpt-4o'"
+            :placeholder="config.model || 'gpt-5.6'"
             @focus="onFocusModel"
             @input="
               modelSearch = ($event.target as HTMLInputElement).value;

@@ -78,8 +78,17 @@ fn chat_request_body(
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
     });
+    let uses_gpt_5_6_parameters = model == "gpt-5.6" || model.starts_with("gpt-5.6-");
+    if uses_gpt_5_6_parameters {
+        body["max_completion_tokens"] = Value::from(max_tokens);
+        body["reasoning_effort"] = Value::String("none".to_string());
+    } else {
+        body["max_tokens"] = Value::from(max_tokens);
+    }
+    if model.starts_with("deepseek-v4-") {
+        body["thinking"] = serde_json::json!({ "type": "disabled" });
+    }
     if stream {
         body["stream"] = Value::Bool(true);
     }
@@ -640,6 +649,35 @@ mod tests {
         assert_eq!(review["stream"], true);
         assert!(plain.get("response_format").is_none());
         assert!(plain.get("stream").is_none());
+    }
+
+    #[test]
+    fn gpt_5_6_requests_preserve_the_previous_non_reasoning_behavior() {
+        let messages = vec![serde_json::json!({ "role": "user", "content": "Review this" })];
+
+        let gpt_5_6 = chat_request_body("gpt-5.6", &messages, 0.3, 2048, true, true);
+        let compatible_provider = chat_request_body("qwen-plus", &messages, 0.3, 2048, true, true);
+
+        assert_eq!(gpt_5_6["reasoning_effort"], "none");
+        assert_eq!(gpt_5_6["max_completion_tokens"], 2048);
+        assert!(gpt_5_6.get("max_tokens").is_none());
+        assert!(compatible_provider.get("reasoning_effort").is_none());
+        assert_eq!(compatible_provider["max_tokens"], 2048);
+        assert!(compatible_provider.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn deepseek_v4_requests_preserve_the_previous_non_thinking_behavior() {
+        let messages = vec![serde_json::json!({ "role": "user", "content": "Review this" })];
+
+        for model in ["deepseek-v4-flash", "deepseek-v4-pro"] {
+            let body = chat_request_body(model, &messages, 0.3, 2048, true, true);
+
+            assert_eq!(body["thinking"]["type"], "disabled");
+            assert_eq!(body["max_tokens"], 2048);
+            assert!(body.get("max_completion_tokens").is_none());
+            assert!(body.get("reasoning_effort").is_none());
+        }
     }
 
     #[test]

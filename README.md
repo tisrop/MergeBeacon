@@ -276,8 +276,8 @@ Token 至少需要读取仓库、PR / MR 和 Issue 的权限；提交评审、�
 
 | 服务 | API 端点 | 默认模型示例 |
 |---|---|---|
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o` |
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-5.6` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-v4-flash` |
 | 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
 | Moonshot | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
 | Ollama | `http://localhost:11434/v1` | `llama3` |
