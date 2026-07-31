@@ -15,6 +15,12 @@ import { useAuthStore } from "@/stores/useAuthStore";
 import SettingsPage from "../SettingsPage.vue";
 
 const storage = new Map<string, string>();
+const routerMocks = vi.hoisted(() => ({
+  replace: vi.fn(),
+}));
+const settingsNavigationMocks = vi.hoisted(() => ({
+  takeSettingsReturnLocation: vi.fn<() => string | null>(),
+}));
 
 vi.stubGlobal("localStorage", {
   getItem: (key: string) => storage.get(key) ?? null,
@@ -33,6 +39,18 @@ vi.mock("@/api", () => ({
   listenToUpdateProgress: vi.fn(),
   restartAfterUpdate: vi.fn(),
 }));
+
+vi.mock("vue-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("vue-router")>();
+  return {
+    ...actual,
+    useRouter: () => ({
+      replace: routerMocks.replace,
+    }),
+  };
+});
+
+vi.mock("@/services/settingsReturnNavigation", () => settingsNavigationMocks);
 
 function mountPage() {
   return mount(SettingsPage, {
@@ -61,6 +79,42 @@ describe("SettingsPage 诊断信息", () => {
     vi.mocked(listenToUpdateProgress).mockReset();
     vi.mocked(listenToUpdateProgress).mockResolvedValue(() => undefined);
     vi.mocked(restartAfterUpdate).mockReset();
+    routerMocks.replace.mockReset();
+    settingsNavigationMocks.takeSettingsReturnLocation.mockReset();
+    settingsNavigationMocks.takeSettingsReturnLocation.mockReturnValue("/pr");
+  });
+
+  it("关闭设置时返回进入前的页面", async () => {
+    const wrapper = mountPage();
+    const button = wrapper.get('[data-testid="close-settings"]');
+
+    expect(button.attributes("title")).toBe("关闭设置");
+    expect(button.attributes("aria-label")).toBe("关闭设置");
+    await button.trigger("click");
+
+    expect(routerMocks.replace).toHaveBeenCalledWith("/pr");
+  });
+
+  it("首载或深链没有来源记录且未登录时回到当前平台的登录页", async () => {
+    settingsNavigationMocks.takeSettingsReturnLocation.mockReturnValue(null);
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="close-settings"]').trigger("click");
+
+    expect(routerMocks.replace).toHaveBeenCalledWith({
+      path: "/login",
+      query: { platform: "github" },
+    });
+  });
+
+  it("没有来源记录且已登录时回到 PR 列表", async () => {
+    settingsNavigationMocks.takeSettingsReturnLocation.mockReturnValue(null);
+    useAuthStore().platforms.github.isLoggedIn = true;
+    const wrapper = mountPage();
+
+    await wrapper.get('[data-testid="close-settings"]').trigger("click");
+
+    expect(routerMocks.replace).toHaveBeenCalledWith({ name: "pr-list" });
   });
 
   it("为应用更新区块提供稳定的路由锚点", () => {

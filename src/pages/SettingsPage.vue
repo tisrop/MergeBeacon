@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
+import { useRouter } from "vue-router";
 import {
   copyRecentErrorLogs as copyRecentErrorLogsToClipboard,
   copySupportInfo as copySupportInfoToClipboard,
@@ -10,6 +11,7 @@ import { getErrorMessage } from "@/utils/error";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useUpdateStore } from "@/stores/useUpdateStore";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
+import { takeSettingsReturnLocation } from "@/services/settingsReturnNavigation";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import AiSettings from "@/components/ai/AiSettings.vue";
 import NotificationSettings from "@/components/notification/NotificationSettings.vue";
@@ -21,6 +23,7 @@ import { useI18n, type AppLocale } from "@/i18n";
 const auth = useAuthStore();
 const updates = useUpdateStore();
 const uiSettings = useUiSettingsStore();
+const router = useRouter();
 const { t } = useI18n();
 const {
   isAutoUpdateCheckEnabled,
@@ -60,6 +63,16 @@ const isErrorLogError = ref(false);
 const appVersion = ref("");
 const versionError = ref("");
 const isConfirmingInstall = ref(false);
+
+function closeSettings() {
+  const returnLocation = takeSettingsReturnLocation();
+  void router.replace(
+    returnLocation ??
+      (auth.isLoggedIn
+        ? { name: "pr-list" }
+        : { path: "/login", query: { platform: auth.activePlatform } }),
+  );
+}
 
 const updateProgressPercent = computed(() => {
   if (!updateTotal.value || updateTotal.value <= 0) return null;
@@ -178,6 +191,29 @@ async function copyRecentErrorLogs() {
           <h2>{{ t("settings.title") }}</h2>
           <p>{{ t("settings.description") }}</p>
         </div>
+        <button
+          class="settings-close-button"
+          type="button"
+          :title="t('settings.close')"
+          :aria-label="t('settings.close')"
+          data-testid="close-settings"
+          @click="closeSettings"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
       </div>
     </template>
 

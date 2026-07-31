@@ -8,6 +8,7 @@ import IssueListPage from "@/pages/IssueListPage.vue";
 import IssueDetailPage from "@/pages/IssueDetailPage.vue";
 import IssueNewPage from "@/pages/IssueNewPage.vue";
 import SettingsPage from "@/pages/SettingsPage.vue";
+import { recordSettingsEntry } from "@/services/settingsReturnNavigation";
 import { useAuthStore } from "@/stores/useAuthStore";
 import type { Platform } from "@/types";
 
@@ -121,6 +122,10 @@ router.beforeEach(async (to, _from, next) => {
   } else {
     next();
   }
+});
+
+router.afterEach((to, from, failure) => {
+  if (!failure) recordSettingsEntry(to.name, from.name, from.fullPath);
 });
 
 export default router;
