@@ -9,6 +9,7 @@ import type {
   PrComment,
   PrState,
   PrListQuery,
+  PrListStatus,
   PrSummary,
   ReviewInboxCategory,
   ReviewInboxItem,
@@ -230,6 +231,20 @@ export async function prList(
   query?: PrListQuery,
 ): Promise<Paginated<PrSummary>> {
   return invoke("pr_list", { platform, owner, repo, stateFilter: state, page, perPage, query });
+}
+
+export async function prListStatuses(
+  requestId: string,
+  platform: Platform,
+  owner: string,
+  repo: string,
+  numbers: number[],
+): Promise<PrListStatus[]> {
+  return invoke("pr_list_statuses", { requestId, platform, owner, repo, numbers });
+}
+
+export async function prListStatusesCancel(requestId: string): Promise<void> {
+  return invoke("pr_list_statuses_cancel", { requestId });
 }
 
 export async function prDetail(

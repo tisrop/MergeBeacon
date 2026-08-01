@@ -571,6 +571,15 @@ pub trait GitPlatform: Send + Sync {
         }
     }
 
+    async fn list_pr_statuses(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _pr_numbers: &[u64],
+    ) -> Result<Vec<PrListStatus>, AppError> {
+        Ok(Vec::new())
+    }
+
     async fn list_review_inbox(
         &self,
         category: &ReviewInboxCategory,

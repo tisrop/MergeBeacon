@@ -635,11 +635,7 @@ impl GitHubAdapter {
         let searchable_count = reported_total_count.min(u64::from(SEARCH_RESULT_LIMIT)) as u32;
         let total_count = reported_total_count.min(u64::from(u32::MAX)) as u32;
         let raw_items = json["items"].as_array().ok_or_else(|| AppError::Api("GitHub PR 搜索响应缺少 items".into()))?;
-        let node_ids = raw_items
-            .iter()
-            .filter_map(|pr| Some((pr["number"].as_u64()?, pr["node_id"].as_str()?.to_string())))
-            .collect::<std::collections::HashMap<_, _>>();
-        let mut items = raw_items
+        let items = raw_items
             .iter()
             .map(|pr| {
                 let merged = matches!(state, PrState::Merged) || pr["pull_request"]["merged_at"].as_str().is_some();
@@ -668,20 +664,6 @@ impl GitHubAdapter {
                 }
             })
             .collect::<Vec<_>>();
-        let requested_ids = items
-            .iter()
-            .filter(|pr| matches!(pr.state, PrState::Open))
-            .filter_map(|pr| node_ids.get(&pr.number).cloned())
-            .collect::<Vec<_>>();
-        if !requested_ids.is_empty() {
-            if let Ok(statuses) = self.inbox_statuses(&requested_ids).await {
-                for pr in &mut items {
-                    if let Some(status) = node_ids.get(&pr.number).and_then(|id| statuses.get(id)) {
-                        pr.status = Some(status.status.clone());
-                    }
-                }
-            }
-        }
         let total_pages = searchable_count.div_ceil(per_page).max(1);
 
         Ok(Paginated {
@@ -1290,10 +1272,6 @@ impl GitPlatform for GitHubAdapter {
         }
 
         let items: Vec<Value> = resp.json().await?;
-        let node_ids = items
-            .iter()
-            .filter_map(|pr| Some((pr["number"].as_u64()?, pr["node_id"].as_str()?.to_string())))
-            .collect::<std::collections::HashMap<_, _>>();
 
         let all_prs: Vec<PrSummary> = items
             .iter()
@@ -1316,20 +1294,7 @@ impl GitPlatform for GitHubAdapter {
             })
             .collect();
 
-        let mut prs = all_prs;
-
-        let requested_ids = prs
-            .iter()
-            .filter(|pr| matches!(pr.state, PrState::Open))
-            .filter_map(|pr| node_ids.get(&pr.number).cloned())
-            .collect::<Vec<_>>();
-        if let Ok(statuses) = self.inbox_statuses(&requested_ids).await {
-            for pr in &mut prs {
-                if let Some(supplement) = node_ids.get(&pr.number).and_then(|node_id| statuses.get(node_id)) {
-                    pr.status = Some(supplement.status.clone());
-                }
-            }
-        }
+        let prs = all_prs;
 
         let total_count = if prs.is_empty() {
             0
@@ -1356,6 +1321,58 @@ impl GitPlatform for GitHubAdapter {
         } else {
             self.search_pull_requests_with_query(owner, repo, state, query, page, per_page).await
         }
+    }
+
+    async fn list_pr_statuses(
+        &self,
+        owner: &str,
+        repo: &str,
+        pr_numbers: &[u64],
+    ) -> Result<Vec<PrListStatus>, AppError> {
+        if pr_numbers.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut fields = String::new();
+        for (index, number) in pr_numbers.iter().enumerate() {
+            let number =
+                i32::try_from(*number).map_err(|_| AppError::Api("GitHub PR 编号超出 GraphQL Int 范围".into()))?;
+            fields.push_str(&format!(
+                r#"pr{index}: pullRequest(number: {number}) {{
+                    isDraft
+                    mergeable
+                    mergeStateStatus
+                    reviewDecision
+                    commits(last: 1) {{
+                        nodes {{
+                            commit {{
+                                statusCheckRollup {{ state }}
+                            }}
+                        }}
+                    }}
+                }}"#,
+            ));
+        }
+        let query = format!(
+            r#"query PullRequestListStatuses($owner: String!, $repo: String!) {{
+                repository(owner: $owner, name: $repo) {{
+                    {fields}
+                }}
+            }}"#,
+        );
+        let data = self.graphql("PR 列表状态查询", &query, serde_json::json!({ "owner": owner, "repo": repo })).await?;
+        let repository = data["repository"]
+            .as_object()
+            .ok_or_else(|| AppError::Api("GitHub GraphQL PR 列表状态响应缺少 repository".into()))?;
+
+        Ok(pr_numbers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, number)| {
+                let node = repository.get(&format!("pr{index}"))?;
+                (!node.is_null()).then(|| PrListStatus { number: *number, status: Self::inbox_status(node) })
+            })
+            .collect())
     }
 
     async fn list_review_inbox(

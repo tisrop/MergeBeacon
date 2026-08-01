@@ -572,17 +572,18 @@ async fn test_github_list_prs() {
         .await;
     Mock::given(method("POST"))
         .and(path("/graphql"))
-        .and(body_string_contains("query ReviewInboxStatuses"))
+        .and(body_string_contains("query PullRequestListStatuses"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "data": {
-                "nodes": [{
-                    "id": "PR_node_42",
+                "repository": {
+                  "pr0": {
                     "isDraft": false,
                     "mergeable": "MERGEABLE",
                     "mergeStateStatus": "CLEAN",
                     "reviewDecision": "APPROVED",
                     "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "SUCCESS" } } }] }
-                }]
+                  }
+                }
             }
         })))
         .expect(1)
@@ -604,18 +605,30 @@ async fn test_github_list_prs() {
     assert_eq!(result.items[0].label_colors.get("priority").map(String::as_str), Some("fbca04"));
     assert!(matches!(result.items[0].state, mergebeacon_lib::models::PrState::Open));
     let status = result.items[0].status.as_ref().expect("open PR should expose status summary");
-    assert_eq!(status.status, ReadinessState::Ready);
-    assert_eq!(status.approvals_status, ReadinessState::Ready);
-    assert_eq!(status.checks_status, ReadinessState::Ready);
+    assert_eq!(status.status, ReadinessState::Unknown);
+    assert_eq!(status.approvals_status, ReadinessState::Unknown);
+    assert_eq!(status.checks_status, ReadinessState::Unknown);
     assert_eq!(result.items[1].number, 43);
     // PR #43 has merged_at set, should be Merged
     assert!(matches!(result.items[1].state, mergebeacon_lib::models::PrState::Merged));
     assert!(result.items[1].status.is_none());
 
+    let statuses = adapter
+        .list_pr_statuses("octocat", "hello-world", &[42])
+        .await
+        .expect("should supplement the visible PR statuses");
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].number, 42);
+    assert_eq!(statuses[0].status.status, ReadinessState::Ready);
+    assert_eq!(statuses[0].status.approvals_status, ReadinessState::Ready);
+    assert_eq!(statuses[0].status.checks_status, ReadinessState::Ready);
+
     let requests = mock_server.received_requests().await.expect("requests");
     let graphql = requests.iter().find(|request| request.url.path() == "/graphql").expect("GraphQL request");
     let body: serde_json::Value = serde_json::from_slice(&graphql.body).expect("GraphQL JSON body");
-    assert_eq!(body["variables"]["ids"], serde_json::json!(["PR_node_42"]));
+    assert_eq!(body["variables"]["owner"], "octocat");
+    assert_eq!(body["variables"]["repo"], "hello-world");
+    assert!(body["query"].as_str().is_some_and(|query| query.contains("pr0: pullRequest(number: 42)")));
 }
 
 #[tokio::test]
@@ -973,13 +986,17 @@ async fn test_github_list_prs_keeps_open_items_when_status_batch_fails() {
     let result = adapter
         .list_pull_requests("octocat", "hello-world", &mergebeacon_lib::models::PrState::Open, 1, 20)
         .await
-        .expect("status failure must not fail PR listing");
+        .expect("the base PR listing must not wait for status supplementation");
 
     assert_eq!(result.items.len(), 1);
     let status = result.items[0].status.as_ref().expect("open PR should fall back to unknown status");
     assert_eq!(status.status, ReadinessState::Unknown);
     assert_eq!(status.approvals_status, ReadinessState::Unknown);
     assert_eq!(status.checks_status, ReadinessState::Unknown);
+    adapter
+        .list_pr_statuses("octocat", "hello-world", &[42])
+        .await
+        .expect_err("status supplementation should report its own failure");
 }
 
 #[tokio::test]

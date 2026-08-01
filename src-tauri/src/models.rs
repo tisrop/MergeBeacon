@@ -116,6 +116,12 @@ pub struct PrSummary {
     pub status: Option<PrStatusSummary>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrListStatus {
+    pub number: u64,
+    pub status: PrStatusSummary,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewInboxCategory {

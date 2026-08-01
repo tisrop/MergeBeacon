@@ -1,4 +1,4 @@
-import { computed, reactive, watch, type Ref } from "vue";
+import { computed, reactive, ref, watch, type Ref } from "vue";
 import type { PrListQuery, PrListSort, PrReviewFilter } from "@/types";
 
 export function usePrSearchBar(
@@ -7,6 +7,7 @@ export function usePrSearchBar(
   onClear: () => void,
 ) {
   const draft = reactive<PrListQuery>({ ...query.value });
+  const titleDraft = ref(query.value.title);
   const activeFilterCount = computed(
     () =>
       [
@@ -21,22 +22,70 @@ export function usePrSearchBar(
   const hasFilters = computed(() => activeFilterCount.value > 0);
 
   watch(query, (value) => Object.assign(draft, value), { deep: true });
+  watch(
+    () => query.value.title,
+    (value) => {
+      titleDraft.value = value;
+    },
+  );
 
   function apply() {
-    onApply({ ...draft });
+    titleDraft.value = titleDraft.value.trim();
+    onApply({ ...draft, title: titleDraft.value });
   }
 
   function clear() {
+    titleDraft.value = "";
     onClear();
   }
 
+  function applyFilters() {
+    onApply({ ...draft, title: query.value.title });
+  }
+
+  function setAuthor(value: string) {
+    if (draft.author === value) return;
+    draft.author = value;
+    applyFilters();
+  }
+
+  function setLabel(value: string) {
+    if (draft.label === value) return;
+    draft.label = value;
+    applyFilters();
+  }
+
+  function setAssignee(value: string) {
+    if (draft.assignee === value) return;
+    draft.assignee = value;
+    applyFilters();
+  }
+
   function setReviews(value: string) {
-    draft.reviews = (value || null) as PrReviewFilter | null;
+    const reviews = (value || null) as PrReviewFilter | null;
+    if (draft.reviews === reviews) return;
+    draft.reviews = reviews;
+    applyFilters();
   }
 
   function setSort(value: string) {
-    draft.sort = value as PrListSort;
+    const sort = value as PrListSort;
+    if (draft.sort === sort) return;
+    draft.sort = sort;
+    applyFilters();
   }
 
-  return { draft, hasFilters, activeFilterCount, apply, clear, setReviews, setSort };
+  return {
+    draft,
+    titleDraft,
+    hasFilters,
+    activeFilterCount,
+    apply,
+    clear,
+    setAuthor,
+    setLabel,
+    setAssignee,
+    setReviews,
+    setSort,
+  };
 }

@@ -88,4 +88,53 @@ describe("PrSearchBar", () => {
       "All review states",
     );
   });
+
+  it("下拉筛选改变时立即搜索，标题仍需提交表单后才生效", async () => {
+    const wrapper = mount(PrSearchBar, {
+      props: {
+        query: query(),
+        authorOptions: [{ value: "octocat", label: "octocat" }],
+        labelOptions: [{ value: "bug", label: "bug" }],
+        assigneeOptions: [{ value: "maintainer", label: "maintainer" }],
+      },
+    });
+    const titleInput = wrapper.get<HTMLInputElement>("#pr-title-search");
+    await titleInput.setValue("parser");
+
+    for (const [accessibleName, value] of [
+      ["作者筛选", "octocat"],
+      ["标签筛选", "bug"],
+      ["负责人筛选", "maintainer"],
+      ["评审状态筛选", "approved"],
+      ["Pull Request 排序", "comments_desc"],
+    ]) {
+      await wrapper.get(`[aria-label="${accessibleName}"]`).trigger("click");
+      await wrapper.get(`.dropdown-option[data-value="${value}"]`).trigger("click");
+    }
+
+    const appliedQueries = wrapper.emitted<PrListQuery[]>("apply") ?? [];
+    expect(appliedQueries).toHaveLength(5);
+    expect(appliedQueries[0][0]).toEqual({ ...query(), author: "octocat" });
+    expect(appliedQueries[4][0]).toEqual({
+      ...query(),
+      author: "octocat",
+      label: "bug",
+      assignee: "maintainer",
+      reviews: "approved",
+      sort: "comments_desc",
+    });
+    expect(titleInput.element.value).toBe("parser");
+
+    await wrapper.get("form").trigger("submit");
+
+    expect(wrapper.emitted<PrListQuery[]>("apply")?.at(-1)?.[0]).toEqual({
+      ...query(),
+      title: "parser",
+      author: "octocat",
+      label: "bug",
+      assignee: "maintainer",
+      reviews: "approved",
+      sort: "comments_desc",
+    });
+  });
 });

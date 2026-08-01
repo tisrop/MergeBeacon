@@ -16,6 +16,8 @@ import type {
 } from "@/types";
 import {
   prList,
+  prListStatuses,
+  prListStatusesCancel,
   prDetail,
   prDiff,
   prCommits,
@@ -98,6 +100,17 @@ export const usePrStore = defineStore("pr", () => {
   let metadataRequestSequence = 0;
   let listContextKey = "";
   let detailContextKey = "";
+  let activeListStatusRequestId: string | null = null;
+
+  function cancelListStatusSupplement() {
+    const requestId = activeListStatusRequestId;
+    activeListStatusRequestId = null;
+    if (requestId) {
+      void prListStatusesCancel(requestId).catch(() => {
+        // 取消是尽力而为；批次已在本地作废，迟到结果仍不会覆盖当前列表。
+      });
+    }
+  }
 
   function clearContext() {
     const filtersChanged =
@@ -115,6 +128,7 @@ export const usePrStore = defineStore("pr", () => {
     countsRequestSequence++;
     readinessRequestSequence++;
     metadataRequestSequence++;
+    cancelListStatusSupplement();
     listContextKey = "";
     detailContextKey = "";
     list.value = [];
@@ -159,8 +173,41 @@ export const usePrStore = defineStore("pr", () => {
     filters.value.page = 1;
   }
 
+  async function supplementListStatuses(
+    platform: Platform,
+    owner: string,
+    repo: string,
+    numbers: number[],
+    sequence: number,
+    contextKey: string,
+  ): Promise<void> {
+    if (sequence !== listRequestSequence || listContextKey !== contextKey) return;
+    const requestId = crypto.randomUUID();
+    activeListStatusRequestId = requestId;
+    try {
+      const statuses = await prListStatuses(requestId, platform, owner, repo, numbers);
+      if (
+        activeListStatusRequestId !== requestId ||
+        sequence !== listRequestSequence ||
+        listContextKey !== contextKey
+      ) {
+        return;
+      }
+      const statusesByNumber = new Map(statuses.map((item) => [item.number, item.status]));
+      list.value = list.value.map((item) => {
+        const status = statusesByNumber.get(item.number);
+        return status && item.state === "open" ? { ...item, status } : item;
+      });
+    } catch {
+      // 基础列表保持可用；状态补充失败时继续展示 unknown，详情页仍会执行权威检查。
+    } finally {
+      if (activeListStatusRequestId === requestId) activeListStatusRequestId = null;
+    }
+  }
+
   async function fetchPrList(platform: Platform, owner: string, repo: string) {
     const sequence = ++listRequestSequence;
+    cancelListStatusSupplement();
     const contextKey = `${platform}:${owner}/${repo}`;
     if (listContextKey !== contextKey) {
       list.value = [];
@@ -195,6 +242,12 @@ export const usePrStore = defineStore("pr", () => {
       totalPages.value = result.total_pages;
       listTotalCount.value = result.total_count;
       listTruncated.value = result.truncated === true;
+      const openNumbers = result.items
+        .filter((item) => item.state === "open")
+        .map((item) => item.number);
+      if (platform === "github" && openNumbers.length > 0) {
+        void supplementListStatuses(platform, owner, repo, openNumbers, sequence, contextKey);
+      }
     } catch (e) {
       if (sequence !== listRequestSequence) return;
       error.value = typeof e === "string" ? e : String(e);
@@ -530,6 +583,7 @@ export const usePrStore = defineStore("pr", () => {
     setPerPage,
     stateCounts,
     clearContext,
+    cancelListStatusSupplement,
     fetchPrList,
     fetchPrDetail,
     fetchPrDiff,

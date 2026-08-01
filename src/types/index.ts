@@ -159,6 +159,11 @@ export interface PrSummary {
   status?: PrStatusSummary | null;
 }
 
+export interface PrListStatus {
+  number: number;
+  status: PrStatusSummary;
+}
+
 export type ReviewInboxCategory = "review_requested" | "authored";
 export type ReviewInboxRelationship = "reviewer" | "assignee" | "tester" | "author";
 

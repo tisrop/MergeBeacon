@@ -80,7 +80,19 @@ const withAllOption = (label: string, options: SelectOption[]) => [
   { value: "", label },
   ...options,
 ];
-const { draft, hasFilters, activeFilterCount, apply, clear, setReviews, setSort } = usePrSearchBar(
+const {
+  draft,
+  titleDraft,
+  hasFilters,
+  activeFilterCount,
+  apply,
+  clear,
+  setAuthor,
+  setLabel,
+  setAssignee,
+  setReviews,
+  setSort,
+} = usePrSearchBar(
   toRef(props, "query"),
   (query) => emit("apply", query),
   () => emit("clear"),
@@ -106,7 +118,7 @@ const { draft, hasFilters, activeFilterCount, apply, clear, setReviews, setSort 
       <label class="sr-only" for="pr-title-search">{{ t("pr.titleSearch") }}</label>
       <input
         id="pr-title-search"
-        v-model="draft.title"
+        v-model="titleDraft"
         class="search-title-input"
         type="search"
         autocomplete="off"
@@ -127,7 +139,7 @@ const { draft, hasFilters, activeFilterCount, apply, clear, setReviews, setSort 
           :disabled="optionsLoading"
           :model-value="draft.author"
           :options="withAllOption(t('pr.allAuthors'), authorOptions)"
-          @update:model-value="draft.author = $event"
+          @update:model-value="setAuthor"
         />
       </div>
       <div class="filter-field select-field">
@@ -139,7 +151,7 @@ const { draft, hasFilters, activeFilterCount, apply, clear, setReviews, setSort 
           :disabled="optionsLoading"
           :model-value="draft.label"
           :options="withAllOption(t('pr.allLabels'), labelOptions)"
-          @update:model-value="draft.label = $event"
+          @update:model-value="setLabel"
         />
       </div>
       <div class="filter-field select-field">
@@ -151,7 +163,7 @@ const { draft, hasFilters, activeFilterCount, apply, clear, setReviews, setSort 
           :disabled="optionsLoading"
           :model-value="draft.assignee"
           :options="withAllOption(assigneeLabels.all, assigneeOptions)"
-          @update:model-value="draft.assignee = $event"
+          @update:model-value="setAssignee"
         />
       </div>
       <div class="filter-field select-field">

@@ -61,6 +61,7 @@ const mocks = vi.hoisted(() => ({
     fetchStateCounts: vi.fn(),
     fetchPrList: vi.fn(),
     clearContext: vi.fn(() => false),
+    cancelListStatusSupplement: vi.fn(),
     prevPage: vi.fn(),
     nextPage: vi.fn(),
     setPage: vi.fn(),
@@ -161,6 +162,7 @@ describe("PrListPage 截断提示", () => {
     mocks.prStore.fetchStateCounts.mockReset();
     mocks.prStore.clearContext.mockReset();
     mocks.prStore.clearContext.mockReturnValue(false);
+    mocks.prStore.cancelListStatusSupplement.mockReset();
     mocks.prStore.setPage.mockReset();
     mocks.prStore.setFilter.mockReset();
     mocks.prStore.prevPage.mockReset();
@@ -359,6 +361,14 @@ describe("PrListPage 截断提示", () => {
     expect(mocks.prStore.filters).toEqual({ state: "open", page: 1 });
     expect(mocks.prStore.fetchPrList).toHaveBeenCalledOnce();
     expect(mocks.prStore.fetchPrList).toHaveBeenCalledWith("github", "other", "repo");
+  });
+
+  it("离开列表页时取消在途的 GitHub 状态补充", () => {
+    const wrapper = mountPage("github");
+
+    wrapper.unmount();
+
+    expect(mocks.prStore.cancelListStatusSupplement).toHaveBeenCalledOnce();
   });
 
   it.each([

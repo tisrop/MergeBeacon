@@ -69,27 +69,27 @@ impl OperationCoordinator {
     }
 }
 
-struct AiTaskEntry {
+struct AbortableTaskEntry {
     generation: u64,
     abort_handle: AbortHandle,
 }
 
-const AI_CANCEL_RACE_WINDOW: Duration = Duration::from_secs(30);
+const TASK_CANCEL_RACE_WINDOW: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
-struct AiTaskRegistryState {
-    tasks: HashMap<String, AiTaskEntry>,
+struct AbortableTaskRegistryState {
+    tasks: HashMap<String, AbortableTaskEntry>,
     pending_cancellations: HashMap<String, Instant>,
 }
 
-pub struct AiTaskRegistry {
-    state: Mutex<AiTaskRegistryState>,
+pub struct AbortableTaskRegistry {
+    state: Mutex<AbortableTaskRegistryState>,
     next_generation: AtomicU64,
 }
 
-impl AiTaskRegistry {
+impl AbortableTaskRegistry {
     fn new() -> Self {
-        Self { state: Mutex::new(AiTaskRegistryState::default()), next_generation: AtomicU64::new(1) }
+        Self { state: Mutex::new(AbortableTaskRegistryState::default()), next_generation: AtomicU64::new(1) }
     }
 
     pub fn next_generation(&self) -> u64 {
@@ -103,7 +103,7 @@ impl AiTaskRegistry {
             abort_handle.abort();
             return;
         }
-        if let Some(previous) = state.tasks.insert(request_id, AiTaskEntry { generation, abort_handle }) {
+        if let Some(previous) = state.tasks.insert(request_id, AbortableTaskEntry { generation, abort_handle }) {
             previous.abort_handle.abort();
         }
     }
@@ -125,8 +125,8 @@ impl AiTaskRegistry {
         }
     }
 
-    fn remove_expired_cancellations(state: &mut AiTaskRegistryState) {
-        state.pending_cancellations.retain(|_, cancelled_at| cancelled_at.elapsed() <= AI_CANCEL_RACE_WINDOW);
+    fn remove_expired_cancellations(state: &mut AbortableTaskRegistryState) {
+        state.pending_cancellations.retain(|_, cancelled_at| cancelled_at.elapsed() <= TASK_CANCEL_RACE_WINDOW);
     }
 }
 
@@ -135,7 +135,8 @@ pub struct AppState {
     pub http_client: Arc<HttpClient>,
     pub token_vault: Arc<TokenVault>,
     pub ai_config: Arc<AiConfigManager>,
-    pub ai_tasks: Arc<AiTaskRegistry>,
+    pub ai_tasks: Arc<AbortableTaskRegistry>,
+    pub pr_list_status_tasks: Arc<AbortableTaskRegistry>,
     pub operations: Arc<OperationCoordinator>,
 }
 
@@ -145,7 +146,8 @@ impl AppState {
             http_client: Arc::new(HttpClient::new()),
             token_vault: Arc::new(TokenVault::new()),
             ai_config: Arc::new(AiConfigManager::new()),
-            ai_tasks: Arc::new(AiTaskRegistry::new()),
+            ai_tasks: Arc::new(AbortableTaskRegistry::new()),
+            pr_list_status_tasks: Arc::new(AbortableTaskRegistry::new()),
             operations: Arc::new(OperationCoordinator::new()),
         }
     }
@@ -154,14 +156,14 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::{
-        AiTaskRegistry, OperationCoordinator, AI_OPERATION_ACTIVE_ERROR, UPDATE_BLOCKS_AI_ERROR,
+        AbortableTaskRegistry, OperationCoordinator, AI_OPERATION_ACTIVE_ERROR, UPDATE_BLOCKS_AI_ERROR,
         UPDATE_OPERATION_ACTIVE_ERROR,
     };
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn cancellation_before_registration_aborts_late_ai_task() {
-        let registry = AiTaskRegistry::new();
+    async fn cancellation_before_registration_aborts_late_task() {
+        let registry = AbortableTaskRegistry::new();
         let request_id = "draft-request".to_string();
         registry.cancel(&request_id).await;
         let task = tokio::spawn(std::future::pending::<()>());
@@ -172,8 +174,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancellation_aborts_registered_ai_task() {
-        let registry = AiTaskRegistry::new();
+    async fn cancellation_aborts_registered_task() {
+        let registry = AbortableTaskRegistry::new();
         let request_id = "review-request".to_string();
         let task = tokio::spawn(std::future::pending::<()>());
         registry.replace(request_id.clone(), registry.next_generation(), task.abort_handle()).await;

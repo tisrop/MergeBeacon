@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::{stream, StreamExt};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 
@@ -55,6 +56,12 @@ pub struct GitLabAdapter {
     client: HttpClient,
     token: String,
     base_url: String,
+}
+
+struct GitLabPrSearchPage {
+    items: Vec<Value>,
+    total_pages: Option<u32>,
+    total_count: Option<u32>,
 }
 
 impl GitLabAdapter {
@@ -621,6 +628,87 @@ impl GitLabAdapter {
         title_matches && author_matches && label_matches && assignee_matches && review_matches
     }
 
+    fn supports_server_paged_pr_search(query: &PrListQuery) -> bool {
+        query.reviews.is_none()
+            && matches!(
+                query.sort,
+                PrListSort::UpdatedDesc | PrListSort::UpdatedAsc | PrListSort::CreatedDesc | PrListSort::CreatedAsc
+            )
+    }
+
+    fn pr_search_params(state: &PrState, query: &PrListQuery, page: u32, per_page: u32) -> Vec<(&'static str, String)> {
+        let state_param = match state {
+            PrState::All => "all",
+            PrState::Merged => "merged",
+            PrState::Closed => "closed",
+            PrState::Open => "opened",
+        };
+        let mut params =
+            vec![("state", state_param.to_string()), ("page", page.to_string()), ("per_page", per_page.to_string())];
+        if !query.title.is_empty() {
+            params.push(("search", query.title.clone()));
+            params.push(("in", "title".into()));
+        }
+        if !query.author.is_empty() {
+            params.push(("author_username", query.author.clone()));
+        }
+        if !query.assignee.is_empty() {
+            params.push(("assignee_username", query.assignee.clone()));
+        }
+        if !query.label.is_empty() {
+            params.push(("labels", query.label.clone()));
+        }
+        match query.sort {
+            PrListSort::UpdatedDesc | PrListSort::UpdatedAsc => params.push(("order_by", "updated_at".into())),
+            PrListSort::CreatedDesc | PrListSort::CreatedAsc => params.push(("order_by", "created_at".into())),
+            PrListSort::BestMatch | PrListSort::CommentsDesc | PrListSort::CommentsAsc => {}
+        }
+        match query.sort {
+            PrListSort::UpdatedAsc | PrListSort::CreatedAsc | PrListSort::CommentsAsc => {
+                params.push(("sort", "asc".into()));
+            }
+            PrListSort::BestMatch | PrListSort::UpdatedDesc | PrListSort::CreatedDesc | PrListSort::CommentsDesc => {
+                params.push(("sort", "desc".into()))
+            }
+        }
+        params
+    }
+
+    async fn fetch_pr_search_page(
+        &self,
+        url: &str,
+        state: &PrState,
+        query: &PrListQuery,
+        page: u32,
+        per_page: u32,
+    ) -> Result<GitLabPrSearchPage, AppError> {
+        let response = self
+            .client
+            .raw_client()
+            .get(url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .header("User-Agent", "mergebeacon")
+            .query(&Self::pr_search_params(state, query, page, per_page))
+            .send()
+            .await?;
+        let status = response.status();
+        let total_pages = response
+            .headers()
+            .get("x-total-pages")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u32>().ok());
+        let total_count = response
+            .headers()
+            .get("x-total")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u32>().ok());
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Api(format!("GitLab API {status} ({url}): {body}")));
+        }
+        Ok(GitLabPrSearchPage { items: response.json().await?, total_pages, total_count })
+    }
+
     fn sort_merge_request_results(items: &mut [Value], sort: PrListSort) {
         let string_field = |item: &Value, field: &str| item[field].as_str().unwrap_or("").to_string();
         match sort {
@@ -1005,82 +1093,60 @@ impl GitPlatform for GitLabAdapter {
         }
 
         let project_id = urlencoding(owner, repo);
-        let state_param = match state {
-            PrState::All => "all",
-            PrState::Merged => "merged",
-            PrState::Closed => "closed",
-            PrState::Open => "opened",
-        };
         let url = format!("{}/projects/{project_id}/merge_requests", self.base_url);
-        let mut remote_page = 1_u32;
-        let mut candidates = Vec::new();
+        let page = page.max(1);
+        let per_page = per_page.clamp(1, 100);
+
+        if Self::supports_server_paged_pr_search(query) {
+            let remote = self.fetch_pr_search_page(&url, state, query, page, per_page).await?;
+            let total_pages = remote.total_pages.unwrap_or(page).max(1);
+            let total_count = remote.total_count.unwrap_or_else(|| {
+                if remote.items.len() < per_page as usize || page >= total_pages {
+                    page.saturating_sub(1).saturating_mul(per_page) + remote.items.len() as u32
+                } else {
+                    total_pages.saturating_mul(per_page)
+                }
+            });
+            let items = remote.items.iter().map(Self::map_merge_request_summary).collect();
+            return Ok(Paginated { items, page, total_pages, total_count, truncated: None });
+        }
+
+        let first_page = self.fetch_pr_search_page(&url, state, query, 1, REMOTE_PAGE_SIZE).await?;
+        let first_page_len = first_page.items.len();
+        let mut candidates = first_page.items;
+        let max_remote_pages = (SEARCH_RESULT_LIMIT as u32).div_ceil(REMOTE_PAGE_SIZE);
         let mut truncated = false;
 
-        loop {
-            let mut params = vec![
-                ("state", state_param.to_string()),
-                ("page", remote_page.to_string()),
-                ("per_page", REMOTE_PAGE_SIZE.to_string()),
-            ];
-            if !query.title.is_empty() {
-                params.push(("search", query.title.clone()));
-                params.push(("in", "title".into()));
+        if let Some(total_pages) = first_page.total_pages {
+            let last_page = total_pages.min(max_remote_pages);
+            let pages = stream::iter(2..=last_page)
+                .map(|remote_page| self.fetch_pr_search_page(&url, state, query, remote_page, REMOTE_PAGE_SIZE))
+                .buffered(4)
+                .collect::<Vec<_>>()
+                .await;
+            for remote in pages {
+                candidates.extend(remote?.items);
             }
-            if !query.author.is_empty() {
-                params.push(("author_username", query.author.clone()));
-            }
-            if !query.assignee.is_empty() {
-                params.push(("assignee_username", query.assignee.clone()));
-            }
-            if !query.label.is_empty() {
-                params.push(("labels", query.label.clone()));
-            }
-            match query.sort {
-                PrListSort::UpdatedDesc | PrListSort::UpdatedAsc => params.push(("order_by", "updated_at".into())),
-                PrListSort::CreatedDesc | PrListSort::CreatedAsc => params.push(("order_by", "created_at".into())),
-                PrListSort::BestMatch | PrListSort::CommentsDesc | PrListSort::CommentsAsc => {}
-            }
-            match query.sort {
-                PrListSort::UpdatedAsc | PrListSort::CreatedAsc | PrListSort::CommentsAsc => {
-                    params.push(("sort", "asc".into()));
+            truncated = total_pages > last_page;
+        } else if first_page_len == REMOTE_PAGE_SIZE as usize {
+            let mut remote_page = 2_u32;
+            loop {
+                let remote = self.fetch_pr_search_page(&url, state, query, remote_page, REMOTE_PAGE_SIZE).await?;
+                let fetched = remote.items.len();
+                candidates.extend(remote.items);
+                if candidates.len() >= SEARCH_RESULT_LIMIT {
+                    truncated = true;
+                    break;
                 }
-                PrListSort::BestMatch
-                | PrListSort::UpdatedDesc
-                | PrListSort::CreatedDesc
-                | PrListSort::CommentsDesc => params.push(("sort", "desc".into())),
+                if fetched < REMOTE_PAGE_SIZE as usize {
+                    break;
+                }
+                remote_page = remote_page.saturating_add(1);
             }
-
-            let response = self
-                .client
-                .raw_client()
-                .get(&url)
-                .header("PRIVATE-TOKEN", &self.token)
-                .header("User-Agent", "mergebeacon")
-                .query(&params)
-                .send()
-                .await?;
-            let status = response.status();
-            let total_pages = response
-                .headers()
-                .get("x-total-pages")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u32>().ok());
-            if !status.is_success() {
-                let body = response.text().await.unwrap_or_default();
-                return Err(AppError::Api(format!("GitLab API {status} ({url}): {body}")));
-            }
-            let remote_items: Vec<Value> = response.json().await?;
-            let fetched = remote_items.len();
-            candidates.extend(remote_items);
-            if candidates.len() >= SEARCH_RESULT_LIMIT {
-                candidates.truncate(SEARCH_RESULT_LIMIT);
-                truncated = total_pages.is_none_or(|total| remote_page < total) || fetched == REMOTE_PAGE_SIZE as usize;
-                break;
-            }
-            if total_pages.map_or(fetched < REMOTE_PAGE_SIZE as usize, |total| remote_page >= total) {
-                break;
-            }
-            remote_page = remote_page.saturating_add(1);
+        }
+        if candidates.len() > SEARCH_RESULT_LIMIT {
+            candidates.truncate(SEARCH_RESULT_LIMIT);
+            truncated = true;
         }
 
         candidates.retain(|mr| Self::merge_request_matches_query(mr, query));
@@ -1090,8 +1156,6 @@ impl GitPlatform for GitLabAdapter {
             Self::sort_merge_request_results(&mut candidates, query.sort);
         }
         let total_count = candidates.len() as u32;
-        let per_page = per_page.clamp(1, 100);
-        let page = page.max(1);
         let total_pages = total_count.div_ceil(per_page).max(1);
         let start = page.saturating_sub(1).saturating_mul(per_page) as usize;
         let items =

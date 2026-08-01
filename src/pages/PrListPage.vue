@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useRepoStore } from "@/stores/useRepoStore";
@@ -152,6 +152,10 @@ onMounted(() => {
   }
 });
 
+onUnmounted(() => {
+  pr.cancelListStatusSupplement();
+});
+
 watch(
   () => auth.isLoggedIn,
   (loggedIn) => {
@@ -271,6 +275,7 @@ function onSelectPr(prNumber: number) {
       </div>
       <PrFilterBar />
       <PrSearchBar
+        :key="`${auth.activePlatform}:${repo.activeRepo?.owner ?? ''}:${repo.activeRepo?.repo ?? ''}`"
         :platform="auth.activePlatform"
         :query="pr.listQuery"
         :loading="pr.loading"

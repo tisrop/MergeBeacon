@@ -207,6 +207,8 @@ pub fn run() {
             // PR
             inbox::review_inbox_list,
             pr::pr_list,
+            pr::pr_list_statuses,
+            pr::pr_list_statuses_cancel,
             pr::pr_detail,
             pr::pr_dependencies,
             pr::pr_merge_queue_status,
