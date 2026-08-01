@@ -4,6 +4,9 @@ import ReviewList from "@/components/review/ReviewList.vue";
 import { setAppLocale } from "@/i18n";
 import type { PrComment, Review } from "@/types";
 
+const matchMedia = vi.fn();
+vi.stubGlobal("matchMedia", matchMedia);
+
 const mocks = vi.hoisted(() => ({
   reviewList: vi.fn(),
   reviewCommentsList: vi.fn(),
@@ -54,6 +57,7 @@ const reviews: Review[] = [
     state: "CHANGES_REQUESTED",
     author,
     submitted_at: "2026-07-16T09:00:00Z",
+    kind: "overall_review",
   },
 ];
 
@@ -96,6 +100,7 @@ async function mountList(
 describe("ReviewList", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    matchMedia.mockReturnValue({ matches: true });
     setAppLocale("zh-CN");
     mocks.reviewList.mockResolvedValue(reviews);
     mocks.reviewCommentsList.mockResolvedValue([
@@ -143,6 +148,27 @@ describe("ReviewList", () => {
     ]);
   });
 
+  it("仅在用户未要求减少动态效果时平滑滚动到未解决线程", async () => {
+    const wrapper = await mountList();
+    const scrollToThread = vi.fn();
+    wrapper.findAll(".review-thread").forEach((thread) => {
+      Object.defineProperty(thread.element, "scrollIntoView", {
+        configurable: true,
+        value: scrollToThread,
+      });
+    });
+
+    await wrapper.findAll(".thread-navigation button")[1].trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(scrollToThread).toHaveBeenLastCalledWith({ behavior: "smooth", block: "center" });
+
+    scrollToThread.mockClear();
+    matchMedia.mockReturnValue({ matches: false });
+    await wrapper.findAll(".thread-navigation button")[1].trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(scrollToThread).toHaveBeenCalledWith({ behavior: "auto", block: "center" });
+  });
+
   it("已挂载时切换英文，并保留远端评审正文", async () => {
     const wrapper = await mountList();
 
@@ -153,9 +179,53 @@ describe("ReviewList", () => {
     await wrapper.vm.$nextTick();
 
     expect(wrapper.text()).toContain("Review progress");
+    expect(wrapper.text()).toContain(
+      "Overall reviews 1 · General comments 0 · Line threads 2 · Line comments 3",
+    );
     expect(wrapper.text()).toContain("Line comment threads");
     expect(wrapper.text()).toContain("整体需要修改");
     expect(wrapper.text()).not.toContain("评审进度");
+  });
+
+  it("区分总体评审和普通评论，并按时间倒序展示", async () => {
+    mocks.reviewList.mockResolvedValueOnce([
+      reviews[0],
+      {
+        id: 2,
+        body: "第一条修复说明",
+        state: "commented",
+        author,
+        submitted_at: "2026-07-16T10:00:00Z",
+        kind: "general_comment",
+      },
+      {
+        id: 3,
+        body: "第二条修复说明",
+        state: "commented",
+        author,
+        submitted_at: "2026-07-16T11:00:00Z",
+        kind: "general_comment",
+      },
+    ] satisfies Review[]);
+
+    const wrapper = await mountList({ platform: "github" });
+    const timeline = wrapper.find(".general-review-timeline");
+    const items = wrapper.findAll(".general-review-item");
+
+    expect(timeline.element.tagName).toBe("OL");
+    expect(timeline.findAll(":scope > .general-review-timeline-item")).toHaveLength(3);
+    expect(items).toHaveLength(3);
+    expect(items.map((item) => item.find(".comment-body").text())).toEqual([
+      "第二条修复说明",
+      "第一条修复说明",
+      "整体需要修改",
+    ]);
+    expect(items.map((item) => item.find(".kind-badge").text())).toEqual([
+      "普通评论",
+      "普通评论",
+      "整体评审",
+    ]);
+    expect(wrapper.text()).toContain("整体评审 1 · 普通评论 2 · 行级线程 2 · 行级评论 3");
   });
 
   it("将总体评审和行级评论中的 Markdown 链接渲染为可点击链接", async () => {

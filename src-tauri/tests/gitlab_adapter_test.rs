@@ -1649,6 +1649,31 @@ async fn test_gitlab_diff_preserves_metadata_only_rename() {
 }
 
 #[tokio::test]
+async fn test_gitlab_creates_comment_only_overall_review() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/10/notes"))
+        .and(body_json(serde_json::json!({ "body": "review summary" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "id": 60,
+            "body": "review summary",
+            "author": gitlab_user(),
+            "created_at": "2026-07-15T10:00:00Z"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let review = adapter
+        .create_review("group", "repo", 10, "review summary", &ReviewEvent::Comment, &[])
+        .await
+        .expect("should create comment-only review");
+
+    assert_eq!(review.kind, mergebeacon_lib::models::ReviewKind::OverallReview);
+}
+
+#[tokio::test]
 async fn test_gitlab_rejects_unsupported_review_without_request() {
     let mock_server = MockServer::start().await;
     let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
@@ -2062,6 +2087,55 @@ async fn test_gitlab_list_reviews_excludes_inline_discussion_notes() {
 
     assert_eq!(reviews.len(), 1);
     assert_eq!(reviews[0].id, serde_json::json!(60));
+    assert_eq!(reviews[0].kind, mergebeacon_lib::models::ReviewKind::OverallReview);
+}
+
+#[tokio::test]
+async fn test_gitlab_list_reviews_fetches_the_page_after_a_full_boundary() {
+    let mock_server = MockServer::start().await;
+    let first_page: Vec<_> = (1..=100)
+        .map(|id| {
+            serde_json::json!({
+                "id": id,
+                "body": format!("general-{id}"),
+                "system": false,
+                "author": gitlab_user(),
+                "created_at": "2026-07-15T10:00:00Z",
+                "position": null
+            })
+        })
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/10/notes"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(first_page))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests/10/notes"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 101,
+            "body": "general-101",
+            "system": false,
+            "author": gitlab_user(),
+            "created_at": "2026-07-15T10:00:00Z",
+            "position": null
+        }])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let reviews = adapter.list_reviews("group", "repo", 10).await.expect("should fetch every note page");
+
+    assert_eq!(reviews.len(), 101);
+    assert_eq!(reviews.first().map(|review| &review.id), Some(&serde_json::json!(1)));
+    assert_eq!(reviews.last().map(|review| &review.id), Some(&serde_json::json!(101)));
+    assert!(reviews.iter().all(|review| review.kind == mergebeacon_lib::models::ReviewKind::OverallReview));
 }
 
 #[tokio::test]

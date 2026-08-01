@@ -570,6 +570,7 @@ export interface Review {
   state: string;
   author: User;
   submitted_at: string;
+  kind: "overall_review" | "general_comment";
 }
 
 export interface PrComment {

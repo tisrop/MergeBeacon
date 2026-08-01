@@ -6,6 +6,7 @@ import { RouterView } from "vue-router";
 import { useUpdateStore } from "@/stores/useUpdateStore";
 import { useI18n } from "@/i18n";
 import { syncNativeMenuLabels } from "@/services/nativeMenu";
+import { motionAwareScrollBehavior } from "@/utils/motion";
 import CommandPalette from "@/components/command/CommandPalette.vue";
 import NotificationManager from "@/components/notification/NotificationManager.vue";
 import UpdateAvailableDialog from "@/components/update/UpdateAvailableDialog.vue";
@@ -64,7 +65,7 @@ async function navigateToSettings(hash = "") {
 async function openSettings() {
   await navigateToSettings();
   document.getElementById(SETTINGS_PAGE_START_ID)?.scrollIntoView({
-    behavior: "smooth",
+    behavior: motionAwareScrollBehavior(),
     block: "start",
   });
 }
@@ -72,7 +73,7 @@ async function openSettings() {
 async function openUpdateSettings() {
   await navigateToSettings(APP_UPDATE_HASH);
   document.getElementById(APP_UPDATE_SECTION_ID)?.scrollIntoView({
-    behavior: "smooth",
+    behavior: motionAwareScrollBehavior(),
     block: "start",
   });
 }
@@ -88,7 +89,7 @@ async function handleNativeMenuAction(action: NativeMenuAction) {
   } else if (action === "open-diagnostics") {
     await navigateToSettings(DIAGNOSTICS_HASH);
     document.getElementById(DIAGNOSTICS_SECTION_ID)?.scrollIntoView({
-      behavior: "smooth",
+      behavior: motionAwareScrollBehavior(),
       block: "start",
     });
   }

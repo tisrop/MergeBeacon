@@ -5,7 +5,7 @@ use mergebeacon_lib::models::{
     Issue, IssueMetadataPermissions, IssueMetadataUpdate, IssueState, MergeQueueState, PrCommitTruncatedEnd,
     PrCreatePreviewRequest, PrCreateRequest, PrDetail, PrListQuery, PrListSort, PrMetadataField, PrMetadataPermissions,
     PrMetadataUpdate, PrMilestone, PrReviewFilter, PrReviewStatus, PrState, PrSummary, ReadinessState,
-    ReviewInboxCategory, ReviewInboxRelationship, User,
+    ReviewInboxCategory, ReviewInboxRelationship, ReviewKind, User,
 };
 use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
 use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
@@ -1027,6 +1027,59 @@ async fn test_github_create_review() {
     assert_eq!(review.id, serde_json::json!(1001));
     assert_eq!(review.body, "LGTM!");
     assert_eq!(review.state, "APPROVED");
+    assert_eq!(review.kind, ReviewKind::OverallReview);
+}
+
+#[tokio::test]
+async fn test_github_list_reviews_combines_reviews_and_conversation_comments() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/pulls/42/reviews"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 1001,
+            "body": "Blocking review",
+            "state": "CHANGES_REQUESTED",
+            "user": { "id": 1, "login": "reviewer", "name": "", "avatar_url": "" },
+            "submitted_at": "2026-07-30T07:16:17Z"
+        }])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/issues/42/comments"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "id": 2001,
+                "body": "First remediation update",
+                "user": { "id": 2, "login": "author", "name": "", "avatar_url": "" },
+                "created_at": "2026-07-30T04:32:39Z"
+            },
+            {
+                "id": 2002,
+                "body": "Second remediation update",
+                "user": { "id": 2, "login": "author", "name": "", "avatar_url": "" },
+                "created_at": "2026-07-30T10:03:50Z"
+            }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".to_string()).with_base_url(mock_server.uri());
+    let reviews = adapter.list_reviews("octocat", "hello-world", 42).await.expect("should list conversation");
+
+    assert_eq!(reviews.len(), 3);
+    assert_eq!(reviews[0].body, "First remediation update");
+    assert_eq!(reviews[0].kind, ReviewKind::GeneralComment);
+    assert_eq!(reviews[1].body, "Blocking review");
+    assert_eq!(reviews[1].kind, ReviewKind::OverallReview);
+    assert_eq!(reviews[2].body, "Second remediation update");
+    assert_eq!(reviews[2].kind, ReviewKind::GeneralComment);
+    assert!(reviews.windows(2).all(|items| items[0].submitted_at <= items[1].submitted_at));
 }
 
 #[tokio::test]

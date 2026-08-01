@@ -659,6 +659,13 @@ pub struct CreateReviewRequest {
     pub comments: Vec<ReviewCommentPosition>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewKind {
+    OverallReview,
+    GeneralComment,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Review {
     pub id: serde_json::Value,
@@ -666,6 +673,7 @@ pub struct Review {
     pub state: String,
     pub author: User,
     pub submitted_at: String,
+    pub kind: ReviewKind,
 }
 
 // ── PR Comment ──
