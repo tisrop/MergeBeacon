@@ -67,7 +67,10 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function mountList(extraProps: Record<string, unknown> = {}) {
+async function mountList(
+  extraProps: Record<string, unknown> = {},
+  options: { stubMarkdownRenderer?: boolean } = {},
+) {
   const wrapper = mount(ReviewList, {
     props: {
       platform: "gitlab",
@@ -78,6 +81,13 @@ async function mountList(extraProps: Record<string, unknown> = {}) {
       canResolveThreads: true,
       ...extraProps,
     },
+    global: options.stubMarkdownRenderer
+      ? {
+          stubs: {
+            MarkdownRenderer: true,
+          },
+        }
+      : undefined,
   });
   await flushPromises();
   return wrapper;
@@ -111,7 +121,7 @@ describe("ReviewList", () => {
   });
 
   it("按 Discussion 组织行级评论并保留回复关系和过期状态", async () => {
-    const wrapper = await mountList();
+    const wrapper = await mountList({}, { stubMarkdownRenderer: true });
 
     expect(wrapper.findAll(".review-thread")).toHaveLength(2);
     expect(wrapper.findAll(".review-thread")[0].findAll(".thread-comments li")).toHaveLength(2);
