@@ -114,9 +114,10 @@ interface LoadedFileContext {
   headLines: string[];
 }
 
-interface ImagePreviewTarget {
+interface MediaPreviewTarget {
   side: "base" | "head";
   label: string;
+  kind: "image" | "video";
   owner: string;
   repo: string;
   path: string;
@@ -124,7 +125,7 @@ interface ImagePreviewTarget {
   mimeType: string;
 }
 
-interface ImagePreviewPanel extends ImagePreviewTarget {
+interface MediaPreviewPanel extends MediaPreviewTarget {
   src: string | null;
   error: string | null;
 }
@@ -156,6 +157,14 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   avif: "image/avif",
   bmp: "image/bmp",
   ico: "image/x-icon",
+};
+const VIDEO_MIME_TYPES: Record<string, string> = {
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  ogv: "video/ogg",
+  ogg: "video/ogg",
 };
 
 const containerRef = ref<HTMLElement | null>(null);
@@ -339,56 +348,61 @@ const selectedStandardPatch = computed(
     ) ?? null,
 );
 
-const imageViewMode = ref<"source" | "preview">("preview");
-const imagePreviewPanels = ref<ImagePreviewPanel[]>([]);
-const imagePreviewLoading = ref(false);
-let imagePreviewRequestSequence = 0;
+const mediaViewMode = ref<"source" | "preview">("preview");
+const mediaPreviewPanels = ref<MediaPreviewPanel[]>([]);
+const mediaPreviewLoading = ref(false);
+let mediaPreviewRequestSequence = 0;
 
-function imageMimeType(path: string): string | null {
+function mediaPreviewType(path: string): Pick<MediaPreviewTarget, "kind" | "mimeType"> | null {
   const extension = path.toLowerCase().split(".").at(-1) ?? "";
-  return IMAGE_MIME_TYPES[extension] ?? null;
+  const imageMimeType = IMAGE_MIME_TYPES[extension];
+  if (imageMimeType) return { kind: "image", mimeType: imageMimeType };
+  const videoMimeType = VIDEO_MIME_TYPES[extension];
+  return videoMimeType ? { kind: "video", mimeType: videoMimeType } : null;
 }
 
-const imagePreviewTargets = computed<ImagePreviewTarget[]>(() => {
+const mediaPreviewTargets = computed<MediaPreviewTarget[]>(() => {
   const patch = selectedStandardPatch.value;
   if (!patch || !props.platform) return [];
 
-  const targets: ImagePreviewTarget[] = [];
+  const targets: MediaPreviewTarget[] = [];
   const baseOwner = props.baseOwner ?? props.owner;
   const baseRepo = props.baseRepo ?? props.repo;
-  const baseMimeType = patch.old_path ? imageMimeType(patch.old_path) : null;
-  if (patch.old_path && props.baseSha && baseMimeType && baseOwner && baseRepo) {
+  const baseMediaType = patch.old_path ? mediaPreviewType(patch.old_path) : null;
+  if (patch.old_path && props.baseSha && baseMediaType && baseOwner && baseRepo) {
     targets.push({
       side: "base",
       label: t("diff.viewer.before"),
+      kind: baseMediaType.kind,
       owner: baseOwner,
       repo: baseRepo,
       path: patch.old_path,
       revision: props.baseSha,
-      mimeType: baseMimeType,
+      mimeType: baseMediaType.mimeType,
     });
   }
   const headOwner = props.headOwner ?? props.owner;
   const headRepo = props.headRepo ?? props.repo;
-  const headMimeType = patch.new_path ? imageMimeType(patch.new_path) : null;
-  if (patch.new_path && props.headSha && headMimeType && headOwner && headRepo) {
+  const headMediaType = patch.new_path ? mediaPreviewType(patch.new_path) : null;
+  if (patch.new_path && props.headSha && headMediaType && headOwner && headRepo) {
     targets.push({
       side: "head",
-      label: t("diff.viewer.imageAfter"),
+      label: t("diff.viewer.mediaAfter"),
+      kind: headMediaType.kind,
       owner: headOwner,
       repo: headRepo,
       path: patch.new_path,
       revision: props.headSha,
-      mimeType: headMimeType,
+      mimeType: headMediaType.mimeType,
     });
   }
   return targets;
 });
-const canPreviewImage = computed(() => imagePreviewTargets.value.length > 0);
-const isShowingImagePreview = computed(
-  () => canPreviewImage.value && imageViewMode.value === "preview",
+const canPreviewMedia = computed(() => mediaPreviewTargets.value.length > 0);
+const isShowingMediaPreview = computed(
+  () => canPreviewMedia.value && mediaViewMode.value === "preview",
 );
-const imagePreviewIdentity = computed(() =>
+const mediaPreviewIdentity = computed(() =>
   [
     props.platform ?? "",
     props.owner ?? "",
@@ -452,7 +466,9 @@ function createSvgPreviewSource(content: string): string | null {
   return `data:image/svg+xml;base64,${btoa(binary)}`;
 }
 
-function createImagePreviewSource(file: PrFileContent, mimeType: string): string | null {
+function createMediaPreviewSource(file: PrFileContent, mimeType: string): string | null {
+  // `media-src data:` in tauri.conf.json is reserved for URLs assembled here from bounded
+  // backend file bytes. Markdown and other user-provided `data:` URLs remain rejected.
   if (mimeType === "image/svg+xml") {
     return file.content_base64
       ? `data:image/svg+xml;base64,${file.content_base64}`
@@ -463,18 +479,18 @@ function createImagePreviewSource(file: PrFileContent, mimeType: string): string
     : null;
 }
 
-async function loadImagePreview(): Promise<void> {
-  const targets = imagePreviewTargets.value;
-  const identity = imagePreviewIdentity.value;
-  if (!canPreviewImage.value || !props.platform) return;
+async function loadMediaPreview(): Promise<void> {
+  const targets = mediaPreviewTargets.value;
+  const identity = mediaPreviewIdentity.value;
+  if (!canPreviewMedia.value || !props.platform) return;
   const platform = props.platform;
 
-  const requestSequence = ++imagePreviewRequestSequence;
-  imagePreviewLoading.value = true;
-  imagePreviewPanels.value = targets.map((target) => ({ ...target, src: null, error: null }));
+  const requestSequence = ++mediaPreviewRequestSequence;
+  mediaPreviewLoading.value = true;
+  mediaPreviewPanels.value = targets.map((target) => ({ ...target, src: null, error: null }));
 
   const panels = await Promise.all(
-    targets.map(async (target): Promise<ImagePreviewPanel> => {
+    targets.map(async (target): Promise<MediaPreviewPanel> => {
       try {
         const file = await prFileContent(
           platform,
@@ -482,44 +498,45 @@ async function loadImagePreview(): Promise<void> {
           target.repo,
           target.path,
           target.revision,
+          { mediaPreview: true },
         );
         if (file.truncated) {
-          return { ...target, src: null, error: t("diff.viewer.imageTooLarge") };
+          return { ...target, src: null, error: t("diff.viewer.mediaTooLarge") };
         }
-        const src = createImagePreviewSource(file, target.mimeType);
+        const src = createMediaPreviewSource(file, target.mimeType);
         return src
           ? { ...target, src, error: null }
-          : { ...target, src: null, error: t("diff.viewer.imageInvalid") };
+          : { ...target, src: null, error: t("diff.viewer.mediaInvalid") };
       } catch (error) {
         return {
           ...target,
           src: null,
-          error: getErrorMessage(error, t("diff.viewer.imageLoadFailed")),
+          error: getErrorMessage(error, t("diff.viewer.mediaLoadFailed")),
         };
       }
     }),
   );
 
-  if (requestSequence !== imagePreviewRequestSequence || identity !== imagePreviewIdentity.value)
+  if (requestSequence !== mediaPreviewRequestSequence || identity !== mediaPreviewIdentity.value)
     return;
-  imagePreviewPanels.value = panels;
-  imagePreviewLoading.value = false;
+  mediaPreviewPanels.value = panels;
+  mediaPreviewLoading.value = false;
 }
 
-function setImageViewMode(mode: "source" | "preview"): void {
-  imageViewMode.value = mode;
+function setMediaViewMode(mode: "source" | "preview"): void {
+  mediaViewMode.value = mode;
   if (mode === "preview") closeCodeSearch();
 }
 
-function imagePreviewPanelKey(panel: ImagePreviewTarget): string {
+function mediaPreviewPanelKey(panel: MediaPreviewTarget): string {
   return [panel.side, panel.owner, panel.repo, panel.path, panel.revision].join("\0");
 }
 
-function handleImagePreviewError(failedPanel: ImagePreviewPanel): void {
-  imagePreviewPanels.value = imagePreviewPanels.value.map((currentPanel) =>
-    imagePreviewPanelKey(currentPanel) === imagePreviewPanelKey(failedPanel) &&
+function handleMediaPreviewError(failedPanel: MediaPreviewPanel): void {
+  mediaPreviewPanels.value = mediaPreviewPanels.value.map((currentPanel) =>
+    mediaPreviewPanelKey(currentPanel) === mediaPreviewPanelKey(failedPanel) &&
     currentPanel.src === failedPanel.src
-      ? { ...currentPanel, src: null, error: t("diff.viewer.imageDecodeFailed") }
+      ? { ...currentPanel, src: null, error: t("diff.viewer.mediaDecodeFailed") }
       : currentPanel,
   );
 }
@@ -1037,7 +1054,7 @@ const diffHtml = computed(() => {
 
 const hasDiffContent = computed(() => hasControlledPatch.value || Boolean(diffHtml.value));
 const canSearchCurrentFile = computed(() => {
-  if (!selectedFile.value || isShowingImagePreview.value) return false;
+  if (!selectedFile.value || isShowingMediaPreview.value) return false;
   if (selectedStandardPatch.value) {
     return selectedStandardPatch.value.content_kind === "text" && controlledHunks.value.length > 0;
   }
@@ -1109,7 +1126,7 @@ function resizeNavigatorWithKeyboard(event: KeyboardEvent): void {
 
 async function selectFile(path: string) {
   if (selectedFilePath.value === path) {
-    if (isShowingImagePreview.value && !imagePreviewLoading.value) void loadImagePreview();
+    if (isShowingMediaPreview.value && !mediaPreviewLoading.value) void loadMediaPreview();
     return;
   }
   selectedFilePath.value = path;
@@ -1460,15 +1477,15 @@ watch(
 );
 
 watch(
-  [imagePreviewIdentity, isShowingImagePreview],
+  [mediaPreviewIdentity, isShowingMediaPreview],
   async ([identity, showingPreview]) => {
-    imagePreviewRequestSequence += 1;
-    imagePreviewPanels.value = [];
-    imagePreviewLoading.value = false;
+    mediaPreviewRequestSequence += 1;
+    mediaPreviewPanels.value = [];
+    mediaPreviewLoading.value = false;
     if (!showingPreview) return;
     await nextTick();
-    if (identity === imagePreviewIdentity.value && isShowingImagePreview.value) {
-      void loadImagePreview();
+    if (identity === mediaPreviewIdentity.value && isShowingMediaPreview.value) {
+      void loadMediaPreview();
     }
   },
   { immediate: true, flush: "post" },
@@ -1578,7 +1595,7 @@ const {
   diffHtml,
   selectedStandardPatch,
   expandedContextGaps,
-  isShowingImagePreview,
+  isShowingMediaPreview,
   canSearchCurrentFile,
   isDiffSyncScrollEnabled,
   quickComment,
@@ -1959,7 +1976,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  imagePreviewRequestSequence += 1;
+  mediaPreviewRequestSequence += 1;
   stopNavigatorResize();
   diffResizeObserver?.disconnect();
   for (const scroller of visibleSideDiffScrollers()) {
@@ -2238,21 +2255,21 @@ onUnmounted(() => {
             </svg>
           </button>
           <div
-            v-if="canPreviewImage"
-            class="image-view-toggle"
-            :aria-label="t('diff.viewer.imageViewMode')"
+            v-if="canPreviewMedia"
+            class="media-view-toggle"
+            :aria-label="t('diff.viewer.mediaViewMode')"
           >
             <button
               type="button"
-              :aria-pressed="imageViewMode === 'source'"
-              @click="setImageViewMode('source')"
+              :aria-pressed="mediaViewMode === 'source'"
+              @click="setMediaViewMode('source')"
             >
               {{ t("diff.viewer.code") }}
             </button>
             <button
               type="button"
-              :aria-pressed="imageViewMode === 'preview'"
-              @click="setImageViewMode('preview')"
+              :aria-pressed="mediaViewMode === 'preview'"
+              @click="setMediaViewMode('preview')"
             >
               {{ t("diff.viewer.preview") }}
             </button>
@@ -2308,7 +2325,7 @@ onUnmounted(() => {
             </button>
           </div>
           <div
-            v-if="hasControlledPatch && canExpandContext && !isShowingImagePreview"
+            v-if="hasControlledPatch && canExpandContext && !isShowingMediaPreview"
             class="context-toolbar-actions"
           >
             <button
@@ -2348,7 +2365,7 @@ onUnmounted(() => {
         />
 
         <div
-          v-if="!isShowingImagePreview"
+          v-if="!isShowingMediaPreview"
           class="diff-top-scrollbars"
           :class="{ independent: !isDiffSyncScrollEnabled }"
         >
@@ -2401,7 +2418,7 @@ onUnmounted(() => {
         <div
           ref="diffScrollRef"
           class="diff-scroll-region"
-          :class="{ 'image-preview-active': isShowingImagePreview }"
+          :class="{ 'media-preview-active': isShowingMediaPreview }"
           @wheel="handleDiffWheel"
         >
           <div ref="containerRef" class="diff2html-container">
@@ -2422,7 +2439,7 @@ onUnmounted(() => {
                 </span>
               </header>
               <p
-                v-if="contextError && !isShowingImagePreview"
+                v-if="contextError && !isShowingMediaPreview"
                 class="context-load-error"
                 role="alert"
               >
@@ -2430,47 +2447,61 @@ onUnmounted(() => {
               </p>
 
               <div
-                v-if="isShowingImagePreview"
-                class="image-preview-grid"
-                :class="{ 'single-panel': imagePreviewPanels.length === 1 }"
+                v-if="isShowingMediaPreview"
+                class="media-preview-grid"
+                :class="{ 'single-panel': mediaPreviewPanels.length === 1 }"
                 aria-live="polite"
               >
                 <div
-                  v-if="!imagePreviewLoading && imagePreviewPanels.length === 0"
-                  class="image-preview-error image-preview-empty"
+                  v-if="!mediaPreviewLoading && mediaPreviewPanels.length === 0"
+                  class="media-preview-error media-preview-empty"
                   role="alert"
                 >
-                  <span>{{ t("diff.viewer.imageNotLoaded") }}</span>
-                  <button type="button" @click="loadImagePreview">
-                    {{ t("diff.viewer.imageReload") }}
+                  <span>{{ t("diff.viewer.mediaNotLoaded") }}</span>
+                  <button type="button" @click="loadMediaPreview">
+                    {{ t("diff.viewer.mediaReload") }}
                   </button>
                 </div>
                 <section
-                  v-for="panel in imagePreviewPanels"
-                  :key="imagePreviewPanelKey(panel)"
-                  class="image-preview-panel"
-                  :aria-label="t('diff.viewer.imagePanel', { label: panel.label })"
+                  v-for="panel in mediaPreviewPanels"
+                  :key="mediaPreviewPanelKey(panel)"
+                  class="media-preview-panel"
+                  :aria-label="t('diff.viewer.mediaPanel', { label: panel.label })"
                 >
-                  <header class="image-preview-header">
+                  <header class="media-preview-header">
                     <strong>{{ panel.label }}</strong>
                     <span :title="panel.path">{{ panel.path }}</span>
                   </header>
-                  <div class="image-preview-stage">
-                    <span v-if="imagePreviewLoading" class="image-preview-status">
-                      {{ t("diff.viewer.imageLoading") }}
+                  <div class="media-preview-stage">
+                    <span v-if="mediaPreviewLoading" class="media-preview-status">
+                      {{ t("diff.viewer.mediaLoading") }}
                     </span>
-                    <div v-else-if="panel.error" class="image-preview-error" role="alert">
+                    <div v-else-if="panel.error" class="media-preview-error" role="alert">
                       <span>{{ panel.error }}</span>
-                      <button type="button" @click="loadImagePreview">
-                        {{ t("diff.viewer.imageReload") }}
+                      <button type="button" @click="loadMediaPreview">
+                        {{ t("diff.viewer.mediaReload") }}
                       </button>
                     </div>
                     <img
-                      v-else-if="panel.src"
-                      class="image-preview-image"
+                      v-else-if="panel.src && panel.kind === 'image'"
+                      class="media-preview-image"
                       :src="panel.src"
-                      :alt="t('diff.viewer.imageAlt', { label: panel.label, path: panel.path })"
-                      @error="handleImagePreviewError(panel)"
+                      :alt="
+                        t('diff.viewer.mediaImageAlt', { label: panel.label, path: panel.path })
+                      "
+                      @error="handleMediaPreviewError(panel)"
+                    />
+                    <video
+                      v-else-if="panel.src && panel.kind === 'video'"
+                      class="media-preview-video"
+                      :src="panel.src"
+                      :aria-label="
+                        t('diff.viewer.videoLabel', { label: panel.label, path: panel.path })
+                      "
+                      controls
+                      playsinline
+                      preload="metadata"
+                      @error="handleMediaPreviewError(panel)"
                     />
                   </div>
                 </section>

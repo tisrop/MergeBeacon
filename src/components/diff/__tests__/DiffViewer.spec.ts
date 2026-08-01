@@ -1113,11 +1113,11 @@ describe("DiffViewer 受控标准 patch", () => {
     );
     const wrapper = await mountViewer(svgDiff, contextProps);
 
-    expect(wrapper.findAll(".image-view-toggle button").map((button) => button.text())).toEqual([
+    expect(wrapper.findAll(".media-view-toggle button").map((button) => button.text())).toEqual([
       "代码",
       "预览",
     ]);
-    expect(wrapper.findAll(".image-view-toggle button")[1].attributes("aria-pressed")).toBe("true");
+    expect(wrapper.findAll(".media-view-toggle button")[1].attributes("aria-pressed")).toBe("true");
 
     expect(prFileContentMock).toHaveBeenCalledTimes(2);
     expect(prFileContentMock).toHaveBeenCalledWith(
@@ -1126,6 +1126,7 @@ describe("DiffViewer 受控标准 patch", () => {
       "demo",
       "assets/diagram.svg",
       "base-sha",
+      { mediaPreview: true },
     );
     expect(prFileContentMock).toHaveBeenCalledWith(
       "github",
@@ -1133,23 +1134,24 @@ describe("DiffViewer 受控标准 patch", () => {
       "demo",
       "assets/diagram.svg",
       "head-sha",
+      { mediaPreview: true },
     );
-    expect(wrapper.findAll(".image-preview-panel")).toHaveLength(2);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-image").element.parentElement?.className).toBe(
-      "image-preview-stage",
+    expect(wrapper.findAll(".media-preview-panel")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-image").element.parentElement?.className).toBe(
+      "media-preview-stage",
     );
-    expect(wrapper.get(".image-preview-image").attributes("src")).toMatch(
+    expect(wrapper.get(".media-preview-image").attributes("src")).toMatch(
       /^data:image\/svg\+xml;base64,/,
     );
-    expect(wrapper.find(".image-preview-stage script").exists()).toBe(false);
+    expect(wrapper.find(".media-preview-stage script").exists()).toBe(false);
     expect(wrapper.find(".diff-top-scrollbars").exists()).toBe(false);
     expect(wrapper.find(".controlled-side-by-side").exists()).toBe(false);
 
-    await wrapper.findAll(".image-view-toggle button")[0].trigger("click");
+    await wrapper.findAll(".media-view-toggle button")[0].trigger("click");
 
     expect(wrapper.find(".controlled-side-by-side").exists()).toBe(true);
-    expect(wrapper.find(".image-preview-grid").exists()).toBe(false);
+    expect(wrapper.find(".media-preview-grid").exists()).toBe(false);
   });
 
   it("新增的 fork SVG 使用 UTF-8 base64 渲染完整样式内容", async () => {
@@ -1203,9 +1205,10 @@ describe("DiffViewer 受控标准 patch", () => {
       "dbx",
       "docs/public/icons/database/qdrant.svg",
       "head-sha",
+      { mediaPreview: true },
     );
-    expect(wrapper.findAll(".image-preview-panel")).toHaveLength(1);
-    const source = wrapper.get(".image-preview-image").attributes("src");
+    expect(wrapper.findAll(".media-preview-panel")).toHaveLength(1);
+    const source = wrapper.get(".media-preview-image").attributes("src");
     expect(source).toMatch(/^data:image\/svg\+xml;base64,/);
     const renderedSvg = atob(source!.replace("data:image/svg+xml;base64,", ""));
     expect(renderedSvg).toContain('width="346.42"');
@@ -1258,7 +1261,7 @@ describe("DiffViewer 受控标准 patch", () => {
     });
 
     await wrapper.get(`[data-file-path="${standardizedDiff.files[0].filename}"]`).trigger("click");
-    expect(wrapper.find(".image-view-toggle").exists()).toBe(false);
+    expect(wrapper.find(".media-view-toggle").exists()).toBe(false);
     await wrapper.get(`[data-file-path="${qdrantPath}"]`).trigger("click");
     await flushPromises();
 
@@ -1268,9 +1271,10 @@ describe("DiffViewer 受控标准 patch", () => {
       "dbx",
       qdrantPath,
       "head-sha",
+      { mediaPreview: true },
     );
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(1);
-    expect(wrapper.find(".image-preview-empty").exists()).toBe(false);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(1);
+    expect(wrapper.find(".media-preview-empty").exists()).toBe(false);
   });
 
   it("非 UTF-8 编码的 SVG 使用原始 base64 渲染", async () => {
@@ -1306,11 +1310,11 @@ describe("DiffViewer 受控标准 patch", () => {
 
     const wrapper = await mountViewer(encodedSvgDiff, contextProps);
 
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-image").attributes("src")).toBe(
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-image").attributes("src")).toBe(
       "data:image/svg+xml;base64,//48AHMAdgBnACAAeABtAGwAbgBzAD0AIgBoAHQAdABwADoALwAvAHcAdwB3AC4AdwAzAC4AbwByAGcALwAyADAAMAAwAC8AcwB2AGcAIgAgAHYAaQBlAHcAQgBvAHgAPQAiADAAIAAwACAAMQAgADEAIgA+ADwALwBzAHYAZwA+AA==",
     );
-    expect(wrapper.find(".image-preview-error").exists()).toBe(false);
+    expect(wrapper.find(".media-preview-error").exists()).toBe(false);
   });
 
   it("PNG 等普通二进制图片默认渲染双侧预览", async () => {
@@ -1370,6 +1374,7 @@ describe("DiffViewer 受控标准 patch", () => {
       "images",
       "assets/screenshot.png",
       "base-sha",
+      { mediaPreview: true },
     );
     expect(prFileContentMock).toHaveBeenCalledWith(
       "github",
@@ -1377,13 +1382,78 @@ describe("DiffViewer 受控标准 patch", () => {
       "images",
       "assets/screenshot.png",
       "head-sha",
+      { mediaPreview: true },
     );
-    expect(wrapper.findAll(".image-preview-panel")).toHaveLength(2);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-image").attributes("src")).toBe(
+    expect(wrapper.findAll(".media-preview-panel")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-image").attributes("src")).toBe(
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
     );
     expect(wrapper.find(".controlled-file-message").exists()).toBe(false);
+  });
+
+  it.each([
+    ["mp4", "video/mp4"],
+    ["webm", "video/webm"],
+    ["mov", "video/quicktime"],
+    ["ogv", "video/ogg"],
+  ])("%s 视频默认使用原生控件安全播放", async (extension, mimeType) => {
+    const path = `assets/demo.${extension}`;
+    const videoDiff: DiffResult = {
+      diff: "",
+      files: [
+        {
+          filename: path,
+          status: "added",
+          patch: "",
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: path,
+          old_path: null,
+          new_path: path,
+          status: "added",
+          additions: 0,
+          deletions: 0,
+          content_kind: "binary",
+          patch: "",
+          message: "二进制文件不提供文本 Diff",
+          hunks: [],
+        },
+      ],
+    };
+    prFileContentMock.mockImplementation(
+      async (
+        _platform: Platform,
+        _owner: string,
+        _repo: string,
+        requestedPath: string,
+        revision: string,
+      ) => ({
+        ...fileContent(requestedPath, revision, ""),
+        content_base64: "AAAAHGZ0eXBtcDQy",
+        binary: true,
+      }),
+    );
+
+    const wrapper = await mountViewer(videoDiff, contextProps);
+
+    expect(prFileContentMock).toHaveBeenCalledWith("github", "octo", "demo", path, "head-sha", {
+      mediaPreview: true,
+    });
+    expect(wrapper.findAll(".media-preview-panel")).toHaveLength(1);
+    expect(wrapper.find(".media-preview-image").exists()).toBe(false);
+    const video = wrapper.get(".media-preview-video");
+    expect(video.attributes("src")).toBe(`data:${mimeType};base64,AAAAHGZ0eXBtcDQy`);
+    expect(video.attributes("controls")).toBeDefined();
+    expect(video.attributes("playsinline")).toBeDefined();
+    expect(video.attributes("preload")).toBe("metadata");
+    expect(video.attributes("autoplay")).toBeUndefined();
+    expect(video.attributes("aria-label")).toContain(path);
   });
 
   it("从文本文件第一次切换到图片时立即加载并展示预览", async () => {
@@ -1447,7 +1517,7 @@ describe("DiffViewer 受控标准 patch", () => {
 
     expect(wrapper.get(".selected-file-name").text()).toBe("zzz/screenshot.png");
     expect(prFileContentMock).toHaveBeenCalledTimes(2);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
   });
 
   it("首次自动预览失败后点击当前图片会重新加载", async () => {
@@ -1496,14 +1566,14 @@ describe("DiffViewer 受控标准 patch", () => {
       );
     const wrapper = await mountViewer(imageDiff, contextProps);
 
-    expect(wrapper.findAll(".image-preview-error")).toHaveLength(2);
-    expect(wrapper.find(".image-preview-image").exists()).toBe(false);
+    expect(wrapper.findAll(".media-preview-error")).toHaveLength(2);
+    expect(wrapper.find(".media-preview-image").exists()).toBe(false);
 
     await wrapper.get('.tree-row[data-file-path="assets/screenshot.png"]').trigger("click");
     await flushPromises();
 
     expect(prFileContentMock).toHaveBeenCalledTimes(4);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
   });
 
   it("切换图片时重建节点并忽略上一张图片迟到的解码错误", async () => {
@@ -1567,21 +1637,21 @@ describe("DiffViewer 受控标准 patch", () => {
       }),
     );
     const wrapper = await mountViewer(imageDiff, contextProps);
-    const firstImage = wrapper.get(".image-preview-image");
+    const firstImage = wrapper.get(".media-preview-image");
     const firstElement = firstImage.element;
 
     await wrapper.get('.tree-row[data-file-path="assets/second.png"]').trigger("click");
     await flushPromises();
 
-    const secondImage = wrapper.get(".image-preview-image");
+    const secondImage = wrapper.get(".media-preview-image");
     expect(secondImage.element).not.toBe(firstElement);
     expect(secondImage.attributes("src")).toContain("c2Vjb25k");
 
     await firstImage.trigger("error");
     await flushPromises();
 
-    expect(wrapper.get(".image-preview-image").attributes("src")).toContain("c2Vjb25k");
-    expect(wrapper.find(".image-preview-error").exists()).toBe(false);
+    expect(wrapper.get(".media-preview-image").attributes("src")).toContain("c2Vjb25k");
+    expect(wrapper.find(".media-preview-error").exists()).toBe(false);
   });
 
   it("图片请求未完成时切走再切回同一文件会启动新请求并展示预览", async () => {
@@ -1649,7 +1719,7 @@ describe("DiffViewer 受控标准 patch", () => {
     }
     await flushPromises();
 
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
 
     for (const resolve of pending.slice(0, 2)) {
       resolve({
@@ -1660,8 +1730,8 @@ describe("DiffViewer 受控标准 patch", () => {
     }
     await flushPromises();
 
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-image").attributes("src")).toContain(
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-image").attributes("src")).toContain(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
     );
   });
@@ -1713,7 +1783,7 @@ describe("DiffViewer 受控标准 patch", () => {
     await flushPromises();
 
     expect(prFileContentMock).toHaveBeenCalledTimes(2);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
   });
 
   it("SVG 内容被截断时显示可重试错误并保留代码 Diff", async () => {
@@ -1743,11 +1813,11 @@ describe("DiffViewer 受控标准 patch", () => {
     );
     const wrapper = await mountViewer(svgDiff, contextProps);
 
-    expect(wrapper.findAll(".image-preview-error")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-error").text()).toContain("图片文件过大");
-    expect(wrapper.find(".image-preview-image").exists()).toBe(false);
+    expect(wrapper.findAll(".media-preview-error")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-error").text()).toContain("媒体文件过大");
+    expect(wrapper.find(".media-preview-image").exists()).toBe(false);
 
-    await wrapper.findAll(".image-view-toggle button")[0].trigger("click");
+    await wrapper.findAll(".media-view-toggle button")[0].trigger("click");
 
     expect(wrapper.find(".controlled-side-by-side").exists()).toBe(true);
   });

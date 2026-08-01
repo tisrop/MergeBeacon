@@ -908,13 +908,17 @@ pub async fn pr_file_content(
     repo: String,
     path: String,
     revision: String,
+    media_preview: Option<bool>,
 ) -> CommandResult<PrFileContent> {
     if owner.trim().is_empty() || repo.trim().is_empty() {
         return Err("仓库 owner 和名称不能为空".into());
     }
     crate::file_content::validate_request(&path, &revision).map_err(CommandError::from)?;
+    let maximum_content_bytes = crate::file_content::preview_content_limit(&path, media_preview.unwrap_or(false));
     let p = build_platform(&platform, &state).map_err(CommandError::from)?;
-    p.get_pr_file_content(&owner, &repo, &path, &revision).await.map_err(CommandError::from)
+    p.get_pr_file_content_with_limit(&owner, &repo, &path, &revision, maximum_content_bytes)
+        .await
+        .map_err(CommandError::from)
 }
 
 #[allow(clippy::too_many_arguments)]

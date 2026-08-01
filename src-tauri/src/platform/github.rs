@@ -2299,12 +2299,13 @@ impl GitPlatform for GitHubAdapter {
         Ok((diff, files))
     }
 
-    async fn get_pr_file_content(
+    async fn get_pr_file_content_with_limit(
         &self,
         owner: &str,
         repo: &str,
         path: &str,
         revision: &str,
+        maximum_content_bytes: u64,
     ) -> Result<PrFileContent, AppError> {
         crate::file_content::validate_request(path, revision)?;
         let encoded_path = crate::file_content::encode_path_segments(path);
@@ -2312,7 +2313,7 @@ impl GitPlatform for GitHubAdapter {
         let url =
             format!("{}/repos/{}/{}/contents/{}?ref={}", self.base_url, owner, repo, encoded_path, encoded_revision);
         let json = self.get_json::<Value>(&url).await?;
-        crate::file_content::decode_response("GitHub", path, revision, &json)
+        crate::file_content::decode_response_with_limit("GitHub", path, revision, &json, maximum_content_bytes)
     }
 
     async fn create_review(

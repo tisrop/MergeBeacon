@@ -396,8 +396,16 @@ export async function prFileContent(
   repo: string,
   path: string,
   revision: string,
+  options?: { mediaPreview?: boolean },
 ): Promise<PrFileContent> {
-  return invoke("pr_file_content", { platform, owner, repo, path, revision });
+  return invoke("pr_file_content", {
+    platform,
+    owner,
+    repo,
+    path,
+    revision,
+    mediaPreview: options?.mediaPreview ?? false,
+  });
 }
 
 export async function prMerge(

@@ -1990,12 +1990,13 @@ impl GitPlatform for GiteeAdapter {
         Ok((diff, files))
     }
 
-    async fn get_pr_file_content(
+    async fn get_pr_file_content_with_limit(
         &self,
         owner: &str,
         repo: &str,
         path: &str,
         revision: &str,
+        maximum_content_bytes: u64,
     ) -> Result<PrFileContent, AppError> {
         crate::file_content::validate_request(path, revision)?;
         let encoded_path = crate::file_content::encode_path_segments(path);
@@ -2015,7 +2016,7 @@ impl GitPlatform for GiteeAdapter {
             return Err(AppError::Api(format!("Gitee 文件内容请求失败（HTTP {}）", response.status())));
         }
         let json = response.json::<Value>().await.map_err(|error| AppError::Http(error.without_url()))?;
-        crate::file_content::decode_response("Gitee", path, revision, &json)
+        crate::file_content::decode_response_with_limit("Gitee", path, revision, &json, maximum_content_bytes)
     }
 
     async fn create_review(

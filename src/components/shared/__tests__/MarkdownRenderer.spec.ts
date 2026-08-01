@@ -67,6 +67,86 @@ describe("MarkdownRenderer", () => {
     expect(wrapper.text()).not.toContain("iframe 内容");
   });
 
+  it("拒绝用户提供的 data 视频地址", () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content:
+          "[内联视频](data:video/mp4;base64,AAAAHGZ0eXBtcDQy)" +
+          '<video controls src="data:video/mp4;base64,AAAAHGZ0eXBtcDQy">视频</video>',
+      },
+    });
+
+    expect(wrapper.find("video").exists()).toBe(false);
+    expect(wrapper.get("a").attributes("href")).toBeUndefined();
+  });
+
+  it("将 GitHub 无扩展名视频附件探测为可播放媒体", async () => {
+    const attachmentUrl =
+      "https://github.com/user-attachments/assets/f69a3ffc-b901-437d-8b98-5ad2aae384bb";
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: attachmentUrl,
+        variant: "document",
+      },
+    });
+
+    const video = wrapper.get<HTMLVideoElement>("video[data-media-attachment-preview]");
+    const fallback = wrapper.get<HTMLAnchorElement>("a[data-media-attachment-fallback]");
+    expect(video.attributes("src")).toBe(attachmentUrl);
+    expect(video.attributes("controls")).toBeDefined();
+    expect(video.attributes("playsinline")).toBeDefined();
+    expect(video.attributes("preload")).toBe("metadata");
+    expect(video.attributes("data-media-attachment-preview")).toBe("pending");
+    expect(video.attributes("hidden")).toBeUndefined();
+    expect(video.attributes("aria-hidden")).toBeUndefined();
+    expect(fallback.attributes("hidden")).toBeDefined();
+
+    await video.trigger("loadedmetadata");
+
+    expect(video.attributes("data-media-attachment-preview")).toBe("ready");
+    expect(video.attributes("aria-hidden")).toBeUndefined();
+    expect(fallback.attributes("hidden")).toBeDefined();
+  });
+
+  it("视频附件探测失败时保留原始链接", async () => {
+    const attachmentUrl =
+      "https://github.com/user-attachments/assets/f69a3ffc-b901-437d-8b98-5ad2aae384bb";
+    const wrapper = mount(MarkdownRenderer, {
+      props: { content: attachmentUrl },
+    });
+
+    await wrapper.get("video[data-media-attachment-preview]").trigger("error");
+
+    expect(wrapper.find("video[data-media-attachment-preview]").exists()).toBe(false);
+    expect(wrapper.get("a[data-media-attachment-fallback]").attributes("hidden")).toBeUndefined();
+  });
+
+  it("不将伪造或非 GitHub 的附件链接转换为视频", () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content:
+          "https://evil.example/user-attachments/assets/f69a3ffc-b901-437d-8b98-5ad2aae384bb\n\n" +
+          "https://github.com/user-attachments/assets/not-a-uuid",
+      },
+    });
+
+    expect(wrapper.find("video").exists()).toBe(false);
+    expect(wrapper.findAll("a")).toHaveLength(2);
+  });
+
+  it("支持 GitHub 可信附件域上的常见视频扩展名", () => {
+    const webmUrl = "https://user-images.githubusercontent.com/42/demo.webm";
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: `${webmUrl}\n\nhttps://user-images.githubusercontent.com/42/screenshot.png`,
+      },
+    });
+
+    expect(wrapper.findAll("video")).toHaveLength(1);
+    expect(wrapper.get("video").attributes("src")).toBe(webmUrl);
+    expect(wrapper.findAll("a")).toHaveLength(2);
+  });
+
   it("可按文档排版合并普通换行", () => {
     const wrapper = mount(MarkdownRenderer, {
       props: {

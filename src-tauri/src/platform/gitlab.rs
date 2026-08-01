@@ -2227,12 +2227,13 @@ impl GitPlatform for GitLabAdapter {
         Ok((diff, files))
     }
 
-    async fn get_pr_file_content(
+    async fn get_pr_file_content_with_limit(
         &self,
         owner: &str,
         repo: &str,
         path: &str,
         revision: &str,
+        maximum_content_bytes: u64,
     ) -> Result<PrFileContent, AppError> {
         crate::file_content::validate_request(path, revision)?;
         let project_id = urlencoding(owner, repo);
@@ -2243,7 +2244,7 @@ impl GitPlatform for GitLabAdapter {
             self.base_url, project_id, encoded_path, encoded_revision
         );
         let json = self.get_json::<Value>(&url).await?;
-        crate::file_content::decode_response("GitLab", path, revision, &json)
+        crate::file_content::decode_response_with_limit("GitLab", path, revision, &json, maximum_content_bytes)
     }
 
     async fn create_review(

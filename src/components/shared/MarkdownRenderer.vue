@@ -70,6 +70,23 @@ const allowedAttributes: Record<string, Set<string>> = {
 const safeRelativeUrlBase = new URL("https://mergebeacon.invalid");
 const explicitSchemePattern = /^[a-z][a-z\d+.-]*:/i;
 const protocolRelativePattern = /^[\\/]{2}/;
+const githubUserAttachmentPathPattern =
+  /^\/user-attachments\/assets\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+const githubVideoAttachmentHosts = new Set([
+  "user-images.githubusercontent.com",
+  "secured-user-images.githubusercontent.com",
+  "private-user-images.githubusercontent.com",
+  "github-production-user-asset-6210df.s3.amazonaws.com",
+]);
+const videoAttachmentPathPattern = /\.(?:mp4|m4v|mov|webm|ogv|ogg)$/i;
+// Reuse the parser for synchronous recomputations; parseFromString still returns an isolated document.
+const htmlParser = new DOMParser();
+
+function parseHtmlFragment(html: string): { document: Document; root: Element } | null {
+  const document = htmlParser.parseFromString(`<div>${html}</div>`, "text/html");
+  const root = document.body.firstElementChild;
+  return root ? { document, root } : null;
+}
 
 function isSafeUrl(value: string, attribute: "href" | "src"): boolean {
   const trimmed = value.trim();
@@ -90,9 +107,9 @@ function isSafeUrl(value: string, attribute: "href" | "src"): boolean {
 }
 
 function sanitizeHtml(rawHtml: string): string {
-  const document = new DOMParser().parseFromString(`<div>${rawHtml}</div>`, "text/html");
-  const root = document.body.firstElementChild;
-  if (!root) return "";
+  const fragment = parseHtmlFragment(rawHtml);
+  if (!fragment) return "";
+  const { root } = fragment;
 
   for (const element of Array.from(root.querySelectorAll("*"))) {
     if (!allowedTags.has(element.tagName)) {
@@ -129,6 +146,53 @@ function sanitizeHtml(rawHtml: string): string {
   return root.innerHTML;
 }
 
+function isGitHubVideoAttachmentCandidate(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.port !== "" ||
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.hash !== ""
+    ) {
+      return false;
+    }
+    if (parsed.hostname === "github.com") {
+      return parsed.search === "" && githubUserAttachmentPathPattern.test(parsed.pathname);
+    }
+    return (
+      githubVideoAttachmentHosts.has(parsed.hostname) &&
+      videoAttachmentPathPattern.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function addGitHubAttachmentPreviews(sanitizedHtml: string): string {
+  const fragment = parseHtmlFragment(sanitizedHtml);
+  if (!fragment) return "";
+  const { document, root } = fragment;
+
+  for (const anchor of Array.from(root.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
+    const href = anchor.getAttribute("href");
+    if (!href || !isGitHubVideoAttachmentCandidate(href)) continue;
+
+    const video = document.createElement("video");
+    video.src = href;
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.dataset.mediaAttachmentPreview = "pending";
+    video.setAttribute("aria-label", t("markdown.videoAttachment"));
+    anchor.dataset.mediaAttachmentFallback = "";
+    anchor.hidden = true;
+    anchor.before(video);
+  }
+  return root.innerHTML;
+}
+
 function copyIcon(): string {
   return `
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
@@ -139,9 +203,9 @@ function copyIcon(): string {
 }
 
 function addCodeBlockControls(sanitizedHtml: string): string {
-  const document = new DOMParser().parseFromString(`<div>${sanitizedHtml}</div>`, "text/html");
-  const root = document.body.firstElementChild;
-  if (!root) return "";
+  const fragment = parseHtmlFragment(sanitizedHtml);
+  if (!fragment) return "";
+  const { document, root } = fragment;
 
   for (const [index, pre] of Array.from(root.querySelectorAll("pre")).entries()) {
     const wrapper = document.createElement("div");
@@ -165,9 +229,9 @@ function addCodeBlockControls(sanitizedHtml: string): string {
 }
 
 function addRepositoryReferenceLinks(sanitizedHtml: string): string {
-  const document = new DOMParser().parseFromString(`<div>${sanitizedHtml}</div>`, "text/html");
-  const root = document.body.firstElementChild;
-  if (!root) return "";
+  const fragment = parseHtmlFragment(sanitizedHtml);
+  if (!fragment) return "";
+  const { document, root } = fragment;
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const textNodes: Text[] = [];
@@ -212,7 +276,8 @@ const html = computed(() => {
     }) as string,
   );
   const linked = props.repositoryReferences ? addRepositoryReferenceLinks(sanitized) : sanitized;
-  return props.variant === "document" ? addCodeBlockControls(linked) : linked;
+  const withMedia = addGitHubAttachmentPreviews(linked);
+  return props.variant === "document" ? addCodeBlockControls(withMedia) : withMedia;
 });
 
 const rootRef = ref<HTMLElement | null>(null);
@@ -303,6 +368,44 @@ async function handleRendererClick(event: MouseEvent): Promise<void> {
   }
 }
 
+function mediaAttachmentVideo(event: Event): HTMLVideoElement | null {
+  const video = event.target;
+  if (
+    !(video instanceof HTMLVideoElement) ||
+    !video.dataset.mediaAttachmentPreview ||
+    !rootRef.value?.contains(video)
+  ) {
+    return null;
+  }
+  return video;
+}
+
+function handleMediaAttachmentLoaded(event: Event): void {
+  const video = mediaAttachmentVideo(event);
+  if (!video) return;
+  video.dataset.mediaAttachmentPreview = "ready";
+  const fallback = video.nextElementSibling;
+  if (
+    fallback instanceof HTMLAnchorElement &&
+    fallback.dataset.mediaAttachmentFallback !== undefined
+  ) {
+    fallback.hidden = true;
+  }
+}
+
+function handleMediaAttachmentError(event: Event): void {
+  const video = mediaAttachmentVideo(event);
+  if (!video) return;
+  const fallback = video.nextElementSibling;
+  if (
+    fallback instanceof HTMLAnchorElement &&
+    fallback.dataset.mediaAttachmentFallback !== undefined
+  ) {
+    fallback.hidden = false;
+  }
+  video.remove();
+}
+
 watch(
   () => [props.content, props.variant, props.repositoryReferences],
   () => {
@@ -323,6 +426,8 @@ onUnmounted(() => {
     class="markdown-renderer"
     :class="{ 'markdown-renderer-document': variant === 'document' }"
     @click="handleRendererClick"
+    @error.capture="handleMediaAttachmentError"
+    @loadedmetadata.capture="handleMediaAttachmentLoaded"
     v-html="html"
   />
 </template>

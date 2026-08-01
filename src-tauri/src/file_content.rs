@@ -6,6 +6,21 @@ use serde_json::Value;
 /// Context expansion only needs a bounded text window. Refuse to materialize very
 /// large blobs in the renderer even when a provider returns them successfully.
 pub const MAX_PR_FILE_CONTENT_BYTES: u64 = 1024 * 1024;
+/// Media previews are opt-in and remain bounded because base64 IPC payloads
+/// temporarily amplify memory usage in both the Rust process and the webview.
+pub const MAX_PR_MEDIA_CONTENT_BYTES: u64 = 16 * 1024 * 1024;
+
+const PREVIEWABLE_MEDIA_EXTENSIONS: &[&str] =
+    &["svg", "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "mp4", "m4v", "mov", "webm", "ogv", "ogg"];
+
+pub fn preview_content_limit(path: &str, media_preview: bool) -> u64 {
+    let extension = path.rsplit_once('.').map(|(_, extension)| extension).unwrap_or("");
+    if media_preview && PREVIEWABLE_MEDIA_EXTENSIONS.iter().any(|candidate| extension.eq_ignore_ascii_case(candidate)) {
+        MAX_PR_MEDIA_CONTENT_BYTES
+    } else {
+        MAX_PR_FILE_CONTENT_BYTES
+    }
+}
 
 pub fn encode_path_segments(path: &str) -> String {
     path.split('/').map(|segment| urlencoding::encode(segment)).collect::<Vec<_>>().join("/")
@@ -25,8 +40,18 @@ pub fn validate_request(path: &str, revision: &str) -> Result<(), AppError> {
 }
 
 pub fn decode_response(platform: &str, path: &str, revision: &str, json: &Value) -> Result<PrFileContent, AppError> {
+    decode_response_with_limit(platform, path, revision, json, MAX_PR_FILE_CONTENT_BYTES)
+}
+
+pub fn decode_response_with_limit(
+    platform: &str,
+    path: &str,
+    revision: &str,
+    json: &Value,
+    maximum_content_bytes: u64,
+) -> Result<PrFileContent, AppError> {
     let reported_size = json["size"].as_u64().unwrap_or(0);
-    if reported_size > MAX_PR_FILE_CONTENT_BYTES {
+    if reported_size > maximum_content_bytes {
         return Ok(PrFileContent {
             path: path.to_string(),
             revision: revision.to_string(),
@@ -45,7 +70,7 @@ pub fn decode_response(platform: &str, path: &str, revision: &str, json: &Value)
 
     // GitHub wraps the base64 payload with newlines; other providers may do the
     // same. Whitespace is not part of the payload and is safe to remove here.
-    let maximum_encoded_length = MAX_PR_FILE_CONTENT_BYTES as usize * 4 / 3 + 8;
+    let maximum_encoded_length = maximum_content_bytes as usize * 4 / 3 + 8;
     if encoded.len() > maximum_encoded_length.saturating_mul(2) {
         return Ok(PrFileContent {
             path: path.to_string(),
@@ -71,7 +96,7 @@ pub fn decode_response(platform: &str, path: &str, revision: &str, json: &Value)
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(compact)
         .map_err(|error| AppError::Api(format!("{platform} 文件内容不是有效的 base64：{error}")))?;
-    if bytes.len() as u64 > MAX_PR_FILE_CONTENT_BYTES {
+    if bytes.len() as u64 > maximum_content_bytes {
         return Ok(PrFileContent {
             path: path.to_string(),
             revision: revision.to_string(),
@@ -161,6 +186,14 @@ mod tests {
 
         assert!(result.truncated);
         assert!(result.content.is_empty());
+    }
+
+    #[test]
+    fn grants_the_larger_limit_only_to_supported_media_previews() {
+        assert_eq!(preview_content_limit("demo.MP4", true), MAX_PR_MEDIA_CONTENT_BYTES);
+        assert_eq!(preview_content_limit("demo.webm", true), MAX_PR_MEDIA_CONTENT_BYTES);
+        assert_eq!(preview_content_limit("src/large.rs", true), MAX_PR_FILE_CONTENT_BYTES);
+        assert_eq!(preview_content_limit("demo.mp4", false), MAX_PR_FILE_CONTENT_BYTES);
     }
 
     #[test]

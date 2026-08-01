@@ -55,7 +55,7 @@ interface UseDiffCodeSearchOptions {
   diffHtml: ComputedRef<string>;
   selectedStandardPatch: ComputedRef<{ content_kind?: string } | null>;
   expandedContextGaps: Ref<unknown>;
-  isShowingImagePreview: ComputedRef<boolean>;
+  isShowingMediaPreview: ComputedRef<boolean>;
   canSearchCurrentFile: ComputedRef<boolean>;
   isDiffSyncScrollEnabled: Ref<boolean>;
   quickComment: Ref<unknown>;
@@ -151,7 +151,7 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
   }
 
   function searchableCodeElements(side: SearchSide): HTMLElement[] {
-    return options.isShowingImagePreview.value ? [] : codeElementsForSide(side);
+    return options.isShowingMediaPreview.value ? [] : codeElementsForSide(side);
   }
 
   function matchingMarks(element: HTMLElement, text: string): HTMLElement[] {
@@ -677,7 +677,7 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
       options.diffHtml,
       options.selectedStandardPatch,
       options.expandedContextGaps,
-      options.isShowingImagePreview,
+      options.isShowingMediaPreview,
     ],
     ([path], [previousPath]) => {
       const preserve = path === previousPath;
@@ -698,7 +698,7 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
       options.diffHtml,
       options.selectedStandardPatch,
       options.expandedContextGaps,
-      options.isShowingImagePreview,
+      options.isShowingMediaPreview,
     ],
     async () => {
       const refreshes = SEARCH_SIDES.map((side) => {

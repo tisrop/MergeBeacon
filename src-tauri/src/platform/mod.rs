@@ -667,6 +667,18 @@ pub trait GitPlatform: Send + Sync {
         repo: &str,
         path: &str,
         revision: &str,
+    ) -> Result<PrFileContent, AppError> {
+        self.get_pr_file_content_with_limit(owner, repo, path, revision, crate::file_content::MAX_PR_FILE_CONTENT_BYTES)
+            .await
+    }
+
+    async fn get_pr_file_content_with_limit(
+        &self,
+        owner: &str,
+        repo: &str,
+        path: &str,
+        revision: &str,
+        maximum_content_bytes: u64,
     ) -> Result<PrFileContent, AppError>;
 
     // ── Review ──
