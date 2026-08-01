@@ -24,6 +24,7 @@ import {
   patchContainsLine,
 } from "@/utils/diffHunk";
 import { getErrorMessage } from "@/utils/error";
+import { motionAwareScrollBehavior } from "@/utils/motion";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
 import { currentLocale, useI18n } from "@/i18n";
 import MiniDiffView from "./MiniDiffView.vue";
@@ -389,7 +390,10 @@ function navigateUnresolvedThread(direction: -1 | 1): void {
   const target = candidates[nextIndex];
   activeThreadId.value = target.id;
   void nextTick(() => {
-    threadElements.get(target.id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    threadElements.get(target.id)?.scrollIntoView({
+      behavior: motionAwareScrollBehavior(),
+      block: "center",
+    });
     threadElements.get(target.id)?.focus();
   });
 }

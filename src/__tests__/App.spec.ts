@@ -10,11 +10,13 @@ import App from "../App.vue";
 
 const storage = new Map<string, string>();
 const scrollIntoView = vi.fn();
+const matchMedia = vi.fn();
 
 Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
   configurable: true,
   value: scrollIntoView,
 });
+vi.stubGlobal("matchMedia", matchMedia);
 const noUpdate = {
   current_version: "0.7.0",
   available: false,
@@ -51,6 +53,8 @@ describe("App", () => {
     storage.clear();
     setAppLocale("zh-CN");
     scrollIntoView.mockReset();
+    matchMedia.mockReset();
+    matchMedia.mockReturnValue({ matches: true });
     vi.mocked(checkForUpdates).mockReset();
     vi.mocked(isDesktopRuntime).mockReset();
     vi.mocked(isDesktopRuntime).mockReturnValue(false);
@@ -381,6 +385,37 @@ describe("App", () => {
     expect(router.currentRoute.value.fullPath).toBe("/settings");
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
     expect((scrollIntoView.mock.instances[0] as HTMLElement).id).toBe("settings-page-start");
+    wrapper.unmount();
+  });
+
+  it("减少动态效果时从应用菜单打开设置不使用平滑滚动", async () => {
+    matchMedia.mockReturnValue({ matches: false });
+    vi.mocked(checkForUpdates).mockResolvedValue(noUpdate);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: "/pr", component: { template: "<div>PR 列表</div>" } },
+        {
+          path: "/settings",
+          component: { template: '<div id="settings-page-start">设置</div>' },
+        },
+      ],
+    });
+    await router.push("/pr");
+    await router.isReady();
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: {
+        plugins: [createPinia(), router],
+        stubs: { CommandPalette: true, NotificationManager: true },
+      },
+    });
+    await flushPromises();
+
+    await window.__goToSettings?.();
+    await flushPromises();
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "start" });
     wrapper.unmount();
   });
 
