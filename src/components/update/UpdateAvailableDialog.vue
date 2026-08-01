@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onUnmounted, ref, watch } from "vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
+import { useI18n } from "@/i18n";
 
 const props = defineProps<{
   open: boolean;
@@ -12,6 +13,7 @@ const emit = defineEmits<{
   close: [];
   confirm: [];
 }>();
+const { t } = useI18n();
 
 const dialogRef = ref<HTMLElement | null>(null);
 const primaryButtonRef = ref<HTMLButtonElement | null>(null);
@@ -95,14 +97,14 @@ onUnmounted(() => {
             </svg>
           </div>
           <div class="update-dialog-heading">
-            <span class="update-dialog-eyebrow">应用更新</span>
-            <h2 id="update-dialog-title">发现新版本 v{{ version }}</h2>
-            <p id="update-dialog-summary">新版本已准备好，你可以先了解变化，再决定何时更新。</p>
+            <span class="update-dialog-eyebrow">{{ t("update.eyebrow") }}</span>
+            <h2 id="update-dialog-title">{{ t("update.title", { version }) }}</h2>
+            <p id="update-dialog-summary">{{ t("update.ready") }}</p>
           </div>
           <button
             type="button"
             class="update-dialog-close"
-            aria-label="稍后处理更新"
+            :aria-label="t('update.close')"
             @click="close"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -112,25 +114,27 @@ onUnmounted(() => {
         </header>
 
         <div class="update-dialog-content">
-          <div class="update-dialog-notes-heading">本次更新</div>
+          <div class="update-dialog-notes-heading">{{ t("update.notes") }}</div>
           <MarkdownRenderer
             v-if="notes"
             class="update-dialog-notes"
             :content="notes"
             :breaks="false"
           />
-          <p v-else class="update-dialog-empty">此版本暂无详细更新说明。</p>
+          <p v-else class="update-dialog-empty">{{ t("update.noNotes") }}</p>
         </div>
 
         <footer class="update-dialog-actions">
-          <button type="button" class="update-dialog-secondary" @click="close">稍后处理</button>
+          <button type="button" class="update-dialog-secondary" @click="close">
+            {{ t("update.close") }}
+          </button>
           <button
             ref="primaryButtonRef"
             type="button"
             class="update-dialog-primary"
             @click="confirm"
           >
-            查看并更新
+            {{ t("update.review") }}
           </button>
         </footer>
       </section>

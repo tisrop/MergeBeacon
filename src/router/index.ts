@@ -3,13 +3,15 @@ import LoginPage from "@/pages/LoginPage.vue";
 import PrListPage from "@/pages/PrListPage.vue";
 import ReviewInboxPage from "@/pages/ReviewInboxPage.vue";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
-import PrNewPage from "@/pages/PrNewPage.vue";
 import IssueListPage from "@/pages/IssueListPage.vue";
 import IssueDetailPage from "@/pages/IssueDetailPage.vue";
 import IssueNewPage from "@/pages/IssueNewPage.vue";
 import SettingsPage from "@/pages/SettingsPage.vue";
+import { recordSettingsEntry } from "@/services/settingsReturnNavigation";
 import { useAuthStore } from "@/stores/useAuthStore";
 import type { Platform } from "@/types";
+
+const PrNewPage = () => import("@/pages/PrNewPage.vue");
 
 const routes = [
   {
@@ -121,6 +123,10 @@ router.beforeEach(async (to, _from, next) => {
   } else {
     next();
   }
+});
+
+router.afterEach((to, from, failure) => {
+  if (!failure) recordSettingsEntry(to.name, from.name, from.fullPath);
 });
 
 export default router;

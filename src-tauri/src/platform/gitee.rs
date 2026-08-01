@@ -14,6 +14,11 @@ pub struct GiteeAdapter {
     base_url: String,
 }
 
+struct GiteePrSearchPage {
+    items: Vec<Value>,
+    last_page: Option<u32>,
+}
+
 impl GiteeAdapter {
     fn map_label_colors(labels: &Value) -> std::collections::BTreeMap<String, String> {
         labels
@@ -97,10 +102,8 @@ impl GiteeAdapter {
         }
     }
 
-    fn parse_last_page_gitee(link: Option<&str>, fallback: u32) -> u32 {
-        let Some(header) = link else {
-            return fallback;
-        };
+    fn last_page_from_link_gitee(link: Option<&str>) -> Option<u32> {
+        let header = link?;
         for part in header.split(',') {
             let part = part.trim();
             if part.contains("rel=\"last\"") || part.contains("rel='last'") {
@@ -111,14 +114,18 @@ impl GiteeAdapter {
                     for seg in query.split('&') {
                         if let Some(page_str) = seg.strip_prefix("page=") {
                             if let Ok(n) = page_str.parse::<u32>() {
-                                return n;
+                                return Some(n);
                             }
                         }
                     }
                 }
             }
         }
-        fallback
+        None
+    }
+
+    fn parse_last_page_gitee(link: Option<&str>, fallback: u32) -> u32 {
+        Self::last_page_from_link_gitee(link).unwrap_or(fallback)
     }
 
     fn auth_query(&self) -> String {
@@ -131,6 +138,38 @@ impl GiteeAdapter {
 
         let resp = self.client.get(&full_url).header("User-Agent", "mergebeacon").send().await?.error_for_status()?;
         Ok(resp.json().await?)
+    }
+
+    async fn fetch_pr_search_page(
+        &self,
+        url: &str,
+        remote_state: &str,
+        page: u32,
+        per_page: u32,
+    ) -> Result<GiteePrSearchPage, AppError> {
+        let params = [
+            ("state", remote_state.to_string()),
+            ("page", page.to_string()),
+            ("per_page", per_page.to_string()),
+            ("access_token", self.token.clone()),
+        ];
+        let response = self.client.get(url).header("User-Agent", "mergebeacon").query(&params).send().await?;
+        let status = response.status();
+        let total_pages = response
+            .headers()
+            .get("total_page")
+            .or_else(|| response.headers().get("x-total-pages"))
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u32>().ok());
+        let link = response.headers().get("link").and_then(|value| value.to_str().ok()).map(str::to_string);
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Api(format!("Gitee API {status} ({url}): {body}")));
+        }
+        Ok(GiteePrSearchPage {
+            items: response.json().await?,
+            last_page: total_pages.or_else(|| Self::last_page_from_link_gitee(link.as_deref())),
+        })
     }
 
     async fn get_json_optional(&self, url: &str) -> Result<Option<Value>, AppError> {
@@ -1079,46 +1118,42 @@ impl GitPlatform for GiteeAdapter {
             PrState::Closed | PrState::Merged | PrState::All => "all",
             PrState::Open => "open",
         };
-        let mut remote_page = 1_u32;
-        let mut candidates = Vec::new();
+        let first_page = self.fetch_pr_search_page(&url, remote_state, 1, REMOTE_PAGE_SIZE).await?;
+        let first_page_len = first_page.items.len();
+        let mut candidates = first_page.items;
+        let max_remote_pages = (SEARCH_RESULT_LIMIT as u32).div_ceil(REMOTE_PAGE_SIZE);
         let mut truncated = false;
 
-        loop {
-            let params = [
-                ("state", remote_state.to_string()),
-                ("page", remote_page.to_string()),
-                ("per_page", REMOTE_PAGE_SIZE.to_string()),
-                ("access_token", self.token.clone()),
-            ];
-            let response = self.client.get(&url).header("User-Agent", "mergebeacon").query(&params).send().await?;
-            let status = response.status();
-            let total_pages = response
-                .headers()
-                .get("total_page")
-                .or_else(|| response.headers().get("x-total-pages"))
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u32>().ok());
-            let link = response.headers().get("link").and_then(|value| value.to_str().ok()).map(str::to_string);
-            if !status.is_success() {
-                let body = response.text().await.unwrap_or_default();
-                return Err(AppError::Api(format!("Gitee API {status} ({url}): {body}")));
+        if let Some(total_pages) = first_page.last_page {
+            let last_page = total_pages.min(max_remote_pages);
+            let pages = stream::iter(2..=last_page)
+                .map(|remote_page| self.fetch_pr_search_page(&url, remote_state, remote_page, REMOTE_PAGE_SIZE))
+                .buffered(4)
+                .collect::<Vec<_>>()
+                .await;
+            for remote in pages {
+                candidates.extend(remote?.items);
             }
-            let remote_items: Vec<Value> = response.json().await?;
-            let fetched = remote_items.len();
-            candidates.extend(remote_items);
-            if candidates.len() >= SEARCH_RESULT_LIMIT {
-                candidates.truncate(SEARCH_RESULT_LIMIT);
-                let link_pages = Self::parse_last_page_gitee(link.as_deref(), remote_page);
-                truncated = total_pages.map_or(link_pages > remote_page, |total| remote_page < total)
-                    || fetched == REMOTE_PAGE_SIZE as usize;
-                break;
+            truncated = total_pages > last_page;
+        } else if first_page_len == REMOTE_PAGE_SIZE as usize {
+            let mut remote_page = 2_u32;
+            loop {
+                let remote = self.fetch_pr_search_page(&url, remote_state, remote_page, REMOTE_PAGE_SIZE).await?;
+                let fetched = remote.items.len();
+                candidates.extend(remote.items);
+                if candidates.len() >= SEARCH_RESULT_LIMIT {
+                    truncated = true;
+                    break;
+                }
+                if fetched < REMOTE_PAGE_SIZE as usize {
+                    break;
+                }
+                remote_page = remote_page.saturating_add(1);
             }
-            let pagination_known = total_pages.is_some() || link.is_some();
-            let last_page = total_pages.unwrap_or_else(|| Self::parse_last_page_gitee(link.as_deref(), remote_page));
-            if fetched < REMOTE_PAGE_SIZE as usize || (pagination_known && remote_page >= last_page) {
-                break;
-            }
-            remote_page = remote_page.saturating_add(1);
+        }
+        if candidates.len() > SEARCH_RESULT_LIMIT {
+            candidates.truncate(SEARCH_RESULT_LIMIT);
+            truncated = true;
         }
 
         candidates.retain(|pr| Self::pull_request_matches_query(pr, state, query));
@@ -1955,12 +1990,13 @@ impl GitPlatform for GiteeAdapter {
         Ok((diff, files))
     }
 
-    async fn get_pr_file_content(
+    async fn get_pr_file_content_with_limit(
         &self,
         owner: &str,
         repo: &str,
         path: &str,
         revision: &str,
+        maximum_content_bytes: u64,
     ) -> Result<PrFileContent, AppError> {
         crate::file_content::validate_request(path, revision)?;
         let encoded_path = crate::file_content::encode_path_segments(path);
@@ -1980,7 +2016,7 @@ impl GitPlatform for GiteeAdapter {
             return Err(AppError::Api(format!("Gitee 文件内容请求失败（HTTP {}）", response.status())));
         }
         let json = response.json::<Value>().await.map_err(|error| AppError::Http(error.without_url()))?;
-        crate::file_content::decode_response("Gitee", path, revision, &json)
+        crate::file_content::decode_response_with_limit("Gitee", path, revision, &json, maximum_content_bytes)
     }
 
     async fn create_review(

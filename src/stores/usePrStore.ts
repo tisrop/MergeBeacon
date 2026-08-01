@@ -16,6 +16,8 @@ import type {
 } from "@/types";
 import {
   prList,
+  prListStatuses,
+  prListStatusesCancel,
   prDetail,
   prDiff,
   prCommits,
@@ -31,6 +33,7 @@ import {
   type CommitRangeRevisions,
   type CommitRangeSelection,
 } from "@/utils/commitRange";
+import { translate } from "@/i18n";
 
 const PAGE_SIZES = [10, 20, 50, 100] as const;
 export const DEFAULT_LIST_QUERY: Readonly<Required<PrListQuery>> = {
@@ -67,6 +70,8 @@ export const usePrStore = defineStore("pr", () => {
   const mergeReadiness = ref<PrMergeReadiness | null>(null);
   const readinessLoading = ref(false);
   const readinessError = ref<string | null>(null);
+  const detailLoading = ref(false);
+  const diffLoading = ref(false);
   const loading = ref(false);
   const error = ref<string | null>(null);
   const totalPages = ref(1);
@@ -95,6 +100,17 @@ export const usePrStore = defineStore("pr", () => {
   let metadataRequestSequence = 0;
   let listContextKey = "";
   let detailContextKey = "";
+  let activeListStatusRequestId: string | null = null;
+
+  function cancelListStatusSupplement() {
+    const requestId = activeListStatusRequestId;
+    activeListStatusRequestId = null;
+    if (requestId) {
+      void prListStatusesCancel(requestId).catch(() => {
+        // 取消是尽力而为；批次已在本地作废，迟到结果仍不会覆盖当前列表。
+      });
+    }
+  }
 
   function clearContext() {
     const filtersChanged =
@@ -112,6 +128,7 @@ export const usePrStore = defineStore("pr", () => {
     countsRequestSequence++;
     readinessRequestSequence++;
     metadataRequestSequence++;
+    cancelListStatusSupplement();
     listContextKey = "";
     detailContextKey = "";
     list.value = [];
@@ -124,6 +141,8 @@ export const usePrStore = defineStore("pr", () => {
     mergeReadiness.value = null;
     readinessError.value = null;
     error.value = null;
+    detailLoading.value = false;
+    diffLoading.value = false;
     commitsLoading.value = false;
     totalPages.value = 1;
     listTotalCount.value = 0;
@@ -154,8 +173,41 @@ export const usePrStore = defineStore("pr", () => {
     filters.value.page = 1;
   }
 
+  async function supplementListStatuses(
+    platform: Platform,
+    owner: string,
+    repo: string,
+    numbers: number[],
+    sequence: number,
+    contextKey: string,
+  ): Promise<void> {
+    if (sequence !== listRequestSequence || listContextKey !== contextKey) return;
+    const requestId = crypto.randomUUID();
+    activeListStatusRequestId = requestId;
+    try {
+      const statuses = await prListStatuses(requestId, platform, owner, repo, numbers);
+      if (
+        activeListStatusRequestId !== requestId ||
+        sequence !== listRequestSequence ||
+        listContextKey !== contextKey
+      ) {
+        return;
+      }
+      const statusesByNumber = new Map(statuses.map((item) => [item.number, item.status]));
+      list.value = list.value.map((item) => {
+        const status = statusesByNumber.get(item.number);
+        return status && item.state === "open" ? { ...item, status } : item;
+      });
+    } catch {
+      // 基础列表保持可用；状态补充失败时继续展示 unknown，详情页仍会执行权威检查。
+    } finally {
+      if (activeListStatusRequestId === requestId) activeListStatusRequestId = null;
+    }
+  }
+
   async function fetchPrList(platform: Platform, owner: string, repo: string) {
     const sequence = ++listRequestSequence;
+    cancelListStatusSupplement();
     const contextKey = `${platform}:${owner}/${repo}`;
     if (listContextKey !== contextKey) {
       list.value = [];
@@ -190,6 +242,12 @@ export const usePrStore = defineStore("pr", () => {
       totalPages.value = result.total_pages;
       listTotalCount.value = result.total_count;
       listTruncated.value = result.truncated === true;
+      const openNumbers = result.items
+        .filter((item) => item.state === "open")
+        .map((item) => item.number);
+      if (platform === "github" && openNumbers.length > 0) {
+        void supplementListStatuses(platform, owner, repo, openNumbers, sequence, contextKey);
+      }
     } catch (e) {
       if (sequence !== listRequestSequence) return;
       error.value = typeof e === "string" ? e : String(e);
@@ -221,7 +279,7 @@ export const usePrStore = defineStore("pr", () => {
       readinessError.value = null;
     }
     detailContextKey = contextKey;
-    loading.value = true;
+    detailLoading.value = true;
     error.value = null;
     try {
       const result = await prDetail(platform, owner, repo, number);
@@ -233,22 +291,22 @@ export const usePrStore = defineStore("pr", () => {
       currentPr.value = null;
       const message = typeof requestError === "string" ? requestError : String(requestError);
       error.value = /\b404\b|not found/i.test(message)
-        ? `找不到 ${owner}/${repo} #${number}，该 PR / MR 可能不存在，或当前 Token 无权访问。`
+        ? translate("pr.detailNotFound", { repository: `${owner}/${repo}`, number })
         : message;
       return false;
     } finally {
-      if (sequence === detailRequestSequence) loading.value = false;
+      if (sequence === detailRequestSequence) detailLoading.value = false;
     }
   }
 
   async function fetchPrDiff(platform: Platform, owner: string, repo: string, number: number) {
     const sequence = ++diffRequestSequence;
-    loading.value = true;
+    diffLoading.value = true;
     try {
       const result = await prDiff(platform, owner, repo, number);
       if (sequence === diffRequestSequence) diff.value = result;
     } finally {
-      if (sequence === diffRequestSequence) loading.value = false;
+      if (sequence === diffRequestSequence) diffLoading.value = false;
     }
   }
 
@@ -324,7 +382,7 @@ export const usePrStore = defineStore("pr", () => {
       rangeDiff.value = null;
       rangeRevisions.value = null;
       rangeDiffLoading.value = false;
-      rangeDiffError.value = "无法确定所选提交的对比基准，请改用整体 Diff。";
+      rangeDiffError.value = translate("pr.commitRangeBaseUnavailable");
       return;
     }
     rangeDiff.value = null;
@@ -507,6 +565,8 @@ export const usePrStore = defineStore("pr", () => {
     mergeReadiness,
     readinessLoading,
     readinessError,
+    detailLoading,
+    diffLoading,
     loading,
     error,
     totalPages,
@@ -523,6 +583,7 @@ export const usePrStore = defineStore("pr", () => {
     setPerPage,
     stateCounts,
     clearContext,
+    cancelListStatusSupplement,
     fetchPrList,
     fetchPrDetail,
     fetchPrDiff,

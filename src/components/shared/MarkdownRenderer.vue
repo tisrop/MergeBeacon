@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { marked } from "marked";
 import { clipboardWriteText } from "@/api";
+import { useI18n } from "@/i18n";
 import { getErrorMessage } from "@/utils/error";
 
 const props = defineProps<{
@@ -15,6 +16,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   "link-click": [payload: { href: string; text: string; title: string | null }];
 }>();
+
+const { t } = useI18n();
 
 const allowedTags = new Set([
   "A",
@@ -67,6 +70,23 @@ const allowedAttributes: Record<string, Set<string>> = {
 const safeRelativeUrlBase = new URL("https://mergebeacon.invalid");
 const explicitSchemePattern = /^[a-z][a-z\d+.-]*:/i;
 const protocolRelativePattern = /^[\\/]{2}/;
+const githubUserAttachmentPathPattern =
+  /^\/user-attachments\/assets\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+const githubVideoAttachmentHosts = new Set([
+  "user-images.githubusercontent.com",
+  "secured-user-images.githubusercontent.com",
+  "private-user-images.githubusercontent.com",
+  "github-production-user-asset-6210df.s3.amazonaws.com",
+]);
+const videoAttachmentPathPattern = /\.(?:mp4|m4v|mov|webm|ogv|ogg)$/i;
+// Reuse the parser for synchronous recomputations; parseFromString still returns an isolated document.
+const htmlParser = new DOMParser();
+
+function parseHtmlFragment(html: string): { document: Document; root: Element } | null {
+  const document = htmlParser.parseFromString(`<div>${html}</div>`, "text/html");
+  const root = document.body.firstElementChild;
+  return root ? { document, root } : null;
+}
 
 function isSafeUrl(value: string, attribute: "href" | "src"): boolean {
   const trimmed = value.trim();
@@ -87,9 +107,9 @@ function isSafeUrl(value: string, attribute: "href" | "src"): boolean {
 }
 
 function sanitizeHtml(rawHtml: string): string {
-  const document = new DOMParser().parseFromString(`<div>${rawHtml}</div>`, "text/html");
-  const root = document.body.firstElementChild;
-  if (!root) return "";
+  const fragment = parseHtmlFragment(rawHtml);
+  if (!fragment) return "";
+  const { root } = fragment;
 
   for (const element of Array.from(root.querySelectorAll("*"))) {
     if (!allowedTags.has(element.tagName)) {
@@ -126,6 +146,53 @@ function sanitizeHtml(rawHtml: string): string {
   return root.innerHTML;
 }
 
+function isGitHubVideoAttachmentCandidate(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.port !== "" ||
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.hash !== ""
+    ) {
+      return false;
+    }
+    if (parsed.hostname === "github.com") {
+      return parsed.search === "" && githubUserAttachmentPathPattern.test(parsed.pathname);
+    }
+    return (
+      githubVideoAttachmentHosts.has(parsed.hostname) &&
+      videoAttachmentPathPattern.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function addGitHubAttachmentPreviews(sanitizedHtml: string): string {
+  const fragment = parseHtmlFragment(sanitizedHtml);
+  if (!fragment) return "";
+  const { document, root } = fragment;
+
+  for (const anchor of Array.from(root.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
+    const href = anchor.getAttribute("href");
+    if (!href || !isGitHubVideoAttachmentCandidate(href)) continue;
+
+    const video = document.createElement("video");
+    video.src = href;
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.dataset.mediaAttachmentPreview = "pending";
+    video.setAttribute("aria-label", t("markdown.videoAttachment"));
+    anchor.dataset.mediaAttachmentFallback = "";
+    anchor.hidden = true;
+    anchor.before(video);
+  }
+  return root.innerHTML;
+}
+
 function copyIcon(): string {
   return `
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
@@ -136,9 +203,9 @@ function copyIcon(): string {
 }
 
 function addCodeBlockControls(sanitizedHtml: string): string {
-  const document = new DOMParser().parseFromString(`<div>${sanitizedHtml}</div>`, "text/html");
-  const root = document.body.firstElementChild;
-  if (!root) return "";
+  const fragment = parseHtmlFragment(sanitizedHtml);
+  if (!fragment) return "";
+  const { document, root } = fragment;
 
   for (const [index, pre] of Array.from(root.querySelectorAll("pre")).entries()) {
     const wrapper = document.createElement("div");
@@ -147,8 +214,8 @@ function addCodeBlockControls(sanitizedHtml: string): string {
     button.className = "markdown-code-copy";
     button.type = "button";
     button.dataset.codeCopy = String(index);
-    button.title = "复制代码";
-    button.setAttribute("aria-label", "复制代码");
+    button.title = t("markdown.copyCode");
+    button.setAttribute("aria-label", t("markdown.copyCode"));
     button.innerHTML = copyIcon();
     pre.replaceWith(wrapper);
     wrapper.append(pre, button);
@@ -162,9 +229,9 @@ function addCodeBlockControls(sanitizedHtml: string): string {
 }
 
 function addRepositoryReferenceLinks(sanitizedHtml: string): string {
-  const document = new DOMParser().parseFromString(`<div>${sanitizedHtml}</div>`, "text/html");
-  const root = document.body.firstElementChild;
-  if (!root) return "";
+  const fragment = parseHtmlFragment(sanitizedHtml);
+  if (!fragment) return "";
+  const { document, root } = fragment;
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const textNodes: Text[] = [];
@@ -190,7 +257,7 @@ function addRepositoryReferenceLinks(sanitizedHtml: string): string {
       const anchor = document.createElement("a");
       anchor.href = `/__mergebeacon__/reference/${symbol === "#" ? "hash" : "bang"}/${number}`;
       anchor.textContent = `${symbol}${number}`;
-      anchor.title = `打开仓库引用 ${symbol}${number}`;
+      anchor.title = t("markdown.openReference", { reference: `${symbol}${number}` });
       fragment.append(anchor);
       offset = index + match[0].length;
     }
@@ -209,7 +276,8 @@ const html = computed(() => {
     }) as string,
   );
   const linked = props.repositoryReferences ? addRepositoryReferenceLinks(sanitized) : sanitized;
-  return props.variant === "document" ? addCodeBlockControls(linked) : linked;
+  const withMedia = addGitHubAttachmentPreviews(linked);
+  return props.variant === "document" ? addCodeBlockControls(withMedia) : withMedia;
 });
 
 const rootRef = ref<HTMLElement | null>(null);
@@ -225,8 +293,8 @@ function clearCopyFeedback(): void {
   }
   if (activeCopyButton) {
     delete activeCopyButton.dataset.copyState;
-    activeCopyButton.title = "复制代码";
-    activeCopyButton.setAttribute("aria-label", "复制代码");
+    activeCopyButton.title = t("markdown.copyCode");
+    activeCopyButton.setAttribute("aria-label", t("markdown.copyCode"));
     activeCopyButton = null;
   }
   const status = rootRef.value?.querySelector(".markdown-copy-status");
@@ -267,14 +335,20 @@ async function handleRendererClick(event: MouseEvent): Promise<void> {
     const sequence = ++copySequence;
     copyInFlight = true;
     button.disabled = true;
-    setCopyStatus("正在复制代码");
+    setCopyStatus(t("markdown.copyingCode"));
     try {
       await clipboardWriteText(code.textContent ?? "");
       if (sequence !== copySequence) return;
-      showCopyFeedback(button, "copied", "代码已复制");
+      showCopyFeedback(button, "copied", t("markdown.codeCopied"));
     } catch (error) {
       if (sequence !== copySequence) return;
-      showCopyFeedback(button, "error", `复制失败：${getErrorMessage(error, "无法访问剪贴板")}`);
+      showCopyFeedback(
+        button,
+        "error",
+        t("common.copyFailed", {
+          message: getErrorMessage(error, t("markdown.clipboardUnavailable")),
+        }),
+      );
     } finally {
       button.disabled = false;
       copyInFlight = false;
@@ -292,6 +366,44 @@ async function handleRendererClick(event: MouseEvent): Promise<void> {
       title: anchor.getAttribute("title"),
     });
   }
+}
+
+function mediaAttachmentVideo(event: Event): HTMLVideoElement | null {
+  const video = event.target;
+  if (
+    !(video instanceof HTMLVideoElement) ||
+    !video.dataset.mediaAttachmentPreview ||
+    !rootRef.value?.contains(video)
+  ) {
+    return null;
+  }
+  return video;
+}
+
+function handleMediaAttachmentLoaded(event: Event): void {
+  const video = mediaAttachmentVideo(event);
+  if (!video) return;
+  video.dataset.mediaAttachmentPreview = "ready";
+  const fallback = video.nextElementSibling;
+  if (
+    fallback instanceof HTMLAnchorElement &&
+    fallback.dataset.mediaAttachmentFallback !== undefined
+  ) {
+    fallback.hidden = true;
+  }
+}
+
+function handleMediaAttachmentError(event: Event): void {
+  const video = mediaAttachmentVideo(event);
+  if (!video) return;
+  const fallback = video.nextElementSibling;
+  if (
+    fallback instanceof HTMLAnchorElement &&
+    fallback.dataset.mediaAttachmentFallback !== undefined
+  ) {
+    fallback.hidden = false;
+  }
+  video.remove();
 }
 
 watch(
@@ -314,6 +426,8 @@ onUnmounted(() => {
     class="markdown-renderer"
     :class="{ 'markdown-renderer-document': variant === 'document' }"
     @click="handleRendererClick"
+    @error.capture="handleMediaAttachmentError"
+    @loadedmetadata.capture="handleMediaAttachmentLoaded"
     v-html="html"
   />
 </template>

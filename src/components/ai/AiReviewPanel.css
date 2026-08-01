@@ -139,6 +139,22 @@
   width: 84px;
 }
 
+.review-language-control {
+  width: 172px;
+}
+
+.review-language-select {
+  flex-wrap: wrap;
+}
+
+.review-language-status {
+  flex-basis: 100%;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
 .toolbar-select {
   width: 100%;
 }
@@ -163,6 +179,23 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   user-select: none;
+}
+
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ai-interrupt-button {
+  color: var(--color-danger);
+  border-color: var(--color-danger-border);
+}
+
+.review-status {
+  margin: 0 0 var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
 }
 
 .loading-state {

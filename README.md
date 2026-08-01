@@ -1,5 +1,7 @@
 # MergeBeacon
 
+**简体中文** | [English](README.en.md)
+
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue.svg)](https://v2.tauri.app)
 [![Vue](https://img.shields.io/badge/Vue-3.x-42b883.svg)](https://vuejs.org)
@@ -45,12 +47,14 @@
   - 使用 Personal Access Token 登录 GitHub、GitLab、Gitee
   - 各平台独立保存登录状态、仓库选择、Fork 上下文和分页进度
   - 仓库侧栏支持增量“加载更多”、去重、失败重试、独立刷新和已加载仓库搜索
+  - 可按平台在本地星标常用仓库，并在侧栏顶部集中展示
   - GitLab 与 Gitee 支持填写私有化部署地址，并统一规范化 API 版本路径
 - **Pull Request / Merge Request**
-  - 按 Open、Closed、Merged、All 状态筛选
+  - 按 Open、Closed、Merged、All 状态筛选，并可按标题、作者、标签、评审状态和负责人 / 测试者组合搜索
+  - 支持最佳匹配、更新时间、创建时间和评论数排序；GitHub、GitLab、Gitee 均使用服务端筛选与分页
   - 支持上一页、下一页、页码跳转以及 10 / 20 / 50 / 100 条每页；平台无法继续分页时会明确提示
   - Open 列表卡片展示审批、CI / 测试、Draft、冲突和总体合并状态，悬浮时显示具体阻塞原因
-  - GitHub 对当前页 Open PR 执行一次批量状态查询；GitLab 和 Gitee 使用列表字段，不逐条请求详情检查
+  - 当前页状态补充使用可取消的批量请求；筛选、翻页或切换仓库后，旧请求不会覆盖新列表
   - Closed / Merged 列表只显示关闭或合并终态，不继续查询实时审批和 CI / 测试状态
   - 查看标题、作者、分支、标签、合并状态和跨平台合并就绪检查；详情页检查仍是合并前的最终依据
   - 按平台能力修改标题、Markdown 描述、Draft / Ready、Reviewers、Assignees、标签和 Milestone
@@ -63,7 +67,8 @@
 - **Diff 与人工评审**
   - 使用标准化 patch 和 diff2html 渲染 side-by-side Diff
   - 支持在当前文本文件中使用 `⌘/Ctrl + F` 查找代码，并提供大小写、全词和正则匹配
-  - 对可预览的图片文件可在源代码与图片预览间切换；图片过大、无效或加载失败时会明确提示
+  - 对受支持的图片和视频文件可在源代码与媒体预览间切换；内容过大、无效或加载失败时会明确提示
+  - Markdown 描述和评论可播放受限来源的 GitHub 视频附件；加载失败时保留原始安全链接
   - 提供文件导航、Diff 专注侧栏、重命名路径展示和按文件上下文展开/收起
   - 在 GitHub、GitLab、Gitee 上均可选中代码后添加行级评论
   - 评论支持逻辑、安全、性能、代码风格、日志等分类
@@ -89,16 +94,20 @@
   - 支持 OpenAI 兼容的 Chat Completions 与 Models API
   - 内置 OpenAI、DeepSeek、通义千问、Moonshot、Ollama 预设
   - 支持连接测试、模型列表获取与搜索、Temperature、Max Tokens 配置
-  - 支持普通响应和标准 SSE 流式响应；每次流式请求使用独立 `request_id`
+  - 支持普通响应和标准 SSE 流式响应；每次流式请求使用独立 `request_id`，并可主动停止当前评审
+  - 评审意见默认使用当前界面语言，也可在开始评审前手动切换为简体中文或英文
+  - 每次评审在启动时固定意见语言；界面语言的后续变化不会改变正在进行的请求
   - 可聚焦全部、安全、性能、逻辑或代码风格，并输出 Critical / Major / Minor / Info 建议
   - 可将建议直接加入评审草稿、编辑后加入或忽略，并从建议跳转到对应 Diff 文件和行
   - 记录评审所基于的 `head_sha`；PR / MR 更新后标记旧结果，并禁止提交旧版本草稿
   - 支持比较上次成功评审版本与当前版本，只评审新增改动；切换页签时保留评审状态
-  - 支持仓库级本地评审规则、按 `head_sha` 保存评审历史，并记录模型、范围和截断状态
+  - 支持仓库级本地评审规则、按 `head_sha` 保存评审历史，并记录模型、范围、意见语言和截断状态
   - 按当前提交版本自动发现仓库规则文件；仓库规则不会覆盖系统安全约束或触发远端操作
   - AI 草稿与人工草稿统一保存在本地；提交前重新校验当前 SHA 和评论位置
 - **桌面集成与更新**
-  - 原生菜单提供设置入口和撤销、重做、剪切、复制、粘贴、全选
+  - 界面支持简体中文和英文，默认使用简体中文；切换后立即生效并在下次启动时恢复
+  - 原生菜单随界面语言切换，提供新建 PR / MR、新建 Issue、命令面板、设置、更新检查、诊断、窗口和帮助入口
+  - 保留撤销、重做、剪切、复制、粘贴、全选、重新加载和全屏等桌面快捷操作
   - 单实例运行；再次启动时激活现有主窗口
   - 安全恢复窗口位置、尺寸和最大化状态
   - 设置页支持签名更新检查、下载安装、确认重启和每日自动检查
@@ -150,7 +159,7 @@
 | 代码规范 | oxlint + oxfmt + 前端规范检查器 |
 | 后端 | Rust 2021、Tokio、Reqwest |
 | 平台抽象 | `GitPlatform` trait + GitHub / GitLab / Gitee Adapter |
-| Diff 渲染 | 标准化 patch、diff2html、highlight.js、代码搜索与图片预览 |
+| Diff 渲染 | 标准化 patch、diff2html、highlight.js、代码搜索与受限图片 / 视频预览 |
 | AI | OpenAI 兼容 API、SSE Streaming、增量 Compare Diff |
 | 凭证存储 | 系统 Keyring 优先，AES-256-GCM 加密文件降级 |
 | 本地数据 | SQLite 评论快照缓存 |
@@ -259,18 +268,20 @@ Token 至少需要读取仓库、PR / MR 和 Issue 的权限；提交评审、�
 3. 输入 API Key，点击 **保存设置**。
 4. 点击 **获取模型** 并选择模型。
 5. 调整 Temperature、Max Tokens，并使用 **测试连接** 验证配置。
-6. 打开 PR / MR 的 **AI 评审** 页签，选择聚焦模式后开始评审。
+6. 打开 PR / MR 的 **AI 评审** 页签，选择聚焦模式和意见语言后开始评审。意见语言默认跟随
+   当前界面，也可单独指定为简体中文或英文；需要时可停止当前流式评审。
 7. 将建议加入评审草稿、编辑或忽略；点击文件位置可跳转到 Diff，再返回 AI 评审继续处理。
 8. PR / MR 有新提交时，可使用增量评审比较上次成功版本与当前版本。
-9. 可为仓库保存本地评审规则，并从历史记录查看不同 `head_sha`、模型、聚焦维度和截断状态。
+9. 可为仓库保存本地评审规则，并从历史记录查看不同 `head_sha`、模型、聚焦维度、意见语言和
+   截断状态。
 10. 提交前确认 AI 与人工草稿；应用会重新校验当前提交版本和评论位置。
 
 常用端点示例：
 
 | 服务 | API 端点 | 默认模型示例 |
 |---|---|---|
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o` |
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-5.6` |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-v4-flash` |
 | 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
 | Moonshot | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
 | Ollama | `http://localhost:11434/v1` | `llama3` |
@@ -280,10 +291,11 @@ UTF-8 字符边界安全截断，避免切断中文或 emoji。
 
 ### 7. 配置桌面通知和命令面板
 
-1. 打开 **设置 → 桌面通知**，授权系统通知并选择平台和事件类型。
-2. 保留“隐藏私有仓库通知内容”可避免通知展示仓库名和 PR / MR 标题；该选项默认启用。
-3. 保持应用运行以接收低频轮询通知；网络、权限或平台限流错误会在应用内显示。
-4. 使用 `Ctrl/⌘ + K` 打开命令面板，搜索平台、仓库、PR / MR 或当前 Diff 文件。
+1. 在 **设置 → 通用** 中选择简体中文或英文；界面会立即切换，并在下次启动时恢复。
+2. 打开 **设置 → 桌面通知**，授权系统通知并选择平台和事件类型。
+3. 保留“隐藏私有仓库通知内容”可避免通知展示仓库名和 PR / MR 标题；该选项默认启用。
+4. 保持应用运行以接收低频轮询通知；网络、权限或平台限流错误会在应用内显示。
+5. 使用 `Ctrl/⌘ + K` 打开命令面板，搜索平台、仓库、PR / MR 或当前 Diff 文件。
 
 ### 8. 更新应用和复制诊断信息
 
@@ -324,7 +336,7 @@ mergebeacon/
 │   ├── components/
 │   │   ├── ai/                  # AI 设置、流式/增量评审、历史与建议卡片
 │   │   ├── command/             # 全局命令面板
-│   │   ├── diff/                # 标准化 Diff、代码搜索、图片预览、上下文展开与快速评论
+│   │   ├── diff/                # 标准化 Diff、代码搜索、媒体预览、上下文展开与快速评论
 │   │   ├── inbox/               # 跨平台 PR 收件箱卡片
 │   │   ├── issue/               # Issue 卡片与表单
 │   │   ├── layout/              # 应用布局、平台与仓库侧边栏
@@ -334,20 +346,21 @@ mergebeacon/
 │   │   └── shared/              # 共享表单与状态组件
 │   ├── pages/                   # 9 个页面：登录、收件箱、PR、Issue 与设置
 │   ├── router/index.ts          # 11 条路由记录与登录恢复守卫
-│   ├── stores/                  # Auth / Capability / Repo / PR / Issue / Inbox / Notification / Review / UI / Update
+│   ├── stores/                  # 11 个 Pinia store：认证、能力、仓库、PR、Issue、通知与评审状态等
 │   └── types/index.ts           # 前端共享类型
 ├── src-tauri/
 │   ├── src/
 │   │   ├── ai/                  # OpenAI 兼容客户端、Prompt、配置
-│   │   ├── commands/            # 认证、诊断、更新、平台、收件箱、PR、评审、Issue、AI
+│   │   ├── commands/            # 认证、诊断、更新、能力、原生菜单、通知、PR、评审、Issue、AI
 │   │   ├── platform/            # GitPlatform trait 与三个平台 Adapter
-│   │   ├── file_content.rs      # Diff 上下文文件内容处理
+│   │   ├── file_content.rs      # Diff 上下文与受限媒体文件内容处理
+│   │   ├── native_menu.rs       # 本地化原生菜单与桌面入口
 │   │   ├── patch.rs             # 跨平台 patch 标准化
 │   │   ├── single_instance.rs   # 单实例窗口激活协调
 │   │   ├── window_state.rs      # 窗口状态安全恢复
 │   │   ├── local_store.rs       # SQLite 评论快照缓存
 │   │   ├── error_log.rs         # 脱敏错误日志、大小限制与安全轮转
-│   │   ├── state.rs             # 共享状态与可取消 AI 任务注册表
+│   │   ├── state.rs             # 共享状态、更新协调与可取消任务注册表
 │   │   └── vault.rs             # Keyring 优先、加密文件降级的 TokenVault
 │   ├── tests/                   # GitHub / GitLab / Gitee WireMock 集成测试
 │   ├── Cargo.toml
@@ -356,7 +369,8 @@ mergebeacon/
 ├── CODE_STANDARDS.md            # 代码实现与评审规范
 ├── FRONTEND_STANDARDS.md        # 前端视觉、交互与可访问性规范
 ├── package.json
-└── README.md
+├── README.en.md                 # English README
+└── README.md                    # 简体中文 README
 ```
 
 ## 代码规范
@@ -393,16 +407,18 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-当前注册 67 个 Tauri Commands：
+当前注册 70 个 Tauri Commands：
 
 - 认证（5）：`auth_login`、`auth_logout`、`auth_check`、`auth_has_any_token`、`auth_has_token`
-- 诊断、更新与平台能力（10）：`support_info`、`copy_support_info`、`copy_recent_error_logs`、
-  `clipboard_write_text`、`error_log_record`、`app_version`、`update_check`、
-  `update_download_and_install`、`update_restart`、`platform_capabilities`
+- 诊断、更新、平台能力与原生菜单（11）：`support_info`、`copy_support_info`、
+  `copy_recent_error_logs`、`clipboard_write_text`、`error_log_record`、`app_version`、
+  `update_check`、`update_download_and_install`、`update_restart`、`platform_capabilities`、
+  `native_menu_set_labels`
 - 仓库（1）：`repo_list`
 - 桌面通知（3）：`desktop_notification_permission_granted`、`desktop_notification_request_permission`、
   `desktop_notification_send`
-- 收件箱与 PR / MR（21）：`review_inbox_list`、`pr_list`、`pr_detail`、`pr_dependencies`、
+- 收件箱与 PR / MR（23）：`review_inbox_list`、`pr_list`、`pr_list_statuses`、
+  `pr_list_statuses_cancel`、`pr_detail`、`pr_dependencies`、
   `pr_merge_queue_status`、`pr_branches`、`pr_labels`、`pr_templates`、
   `pr_description_image_upload`、`pr_participant_suggestions`、`pr_create_preview`、`pr_create`、
   `pr_metadata_update`、`pr_merge_readiness`、`pr_diff`、`pr_commits`、`pr_compare_diff`、

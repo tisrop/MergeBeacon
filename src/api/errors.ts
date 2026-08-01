@@ -1,4 +1,5 @@
 import type { CommandErrorCode, CommandErrorPayload } from "@/types";
+import { translate } from "@/i18n";
 
 const COMMAND_ERROR_CODES = new Set<CommandErrorCode>([
   "validation",
@@ -80,16 +81,24 @@ export function normalizeApiError(error: unknown): ApiError {
   if (typeof error === "string") {
     const parsed = parsedCommandError(error);
     if (parsed) return new ApiError(parsed);
-    return new ApiError({ code: "unknown", message: error.trim() || "操作失败", retryable: false });
+    return new ApiError({
+      code: "unknown",
+      message: error.trim() || translate("common.operationFailed"),
+      retryable: false,
+    });
   }
   if (error instanceof Error) {
     return new ApiError({
       code: "unknown",
-      message: error.message.trim() || "操作失败",
+      message: error.message.trim() || translate("common.operationFailed"),
       retryable: false,
     });
   }
-  return new ApiError({ code: "unknown", message: "操作失败", retryable: false });
+  return new ApiError({
+    code: "unknown",
+    message: translate("common.operationFailed"),
+    retryable: false,
+  });
 }
 
 export function commandErrorCode(error: unknown): CommandErrorCode | null {

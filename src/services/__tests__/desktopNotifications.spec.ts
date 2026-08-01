@@ -11,6 +11,7 @@ import {
   showDesktopTestNotification,
   showInboxNotification,
 } from "@/services/desktopNotifications";
+import { setAppLocale } from "@/i18n";
 
 vi.mock("@/api", () => ({
   isDesktopRuntime: vi.fn(),
@@ -32,6 +33,7 @@ const event = {
 
 describe("desktopNotifications", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     vi.mocked(isDesktopRuntime).mockReturnValue(true);
     vi.mocked(sendDesktopNotification).mockReset();
     vi.mocked(sendDesktopNotification).mockResolvedValue(undefined);
@@ -65,6 +67,28 @@ describe("desktopNotifications", () => {
       actionable: false,
       extra: {},
     });
+  });
+
+  it("发送时按当前界面语言生成通知文案", async () => {
+    setAppLocale("en-US");
+
+    await showInboxNotification(event, false);
+    await showDesktopTestNotification();
+
+    expect(sendDesktopNotification).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        title: "Pull request has new comments",
+        body: "A pull request in a private repository has new activity",
+      }),
+    );
+    expect(sendDesktopNotification).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        title: "MergeBeacon test notification",
+        body: expect.stringContaining("stops checking PR and MR activity"),
+      }),
+    );
   });
 
   it("通知点击只接受完整合法的 PR 定位信息", async () => {

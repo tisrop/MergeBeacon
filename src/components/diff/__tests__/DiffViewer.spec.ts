@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DiffViewer from "@/components/diff/DiffViewer.vue";
+import { setAppLocale } from "@/i18n";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import type { DiffLocationRequest, DiffResult, Platform, PrFileContent } from "@/types";
 
@@ -31,6 +32,10 @@ vi.stubGlobal("localStorage", {
   setItem: (key: string, value: string) => storage.set(key, value),
   removeItem: (key: string) => storage.delete(key),
   clear: () => storage.clear(),
+});
+
+beforeEach(() => {
+  setAppLocale("zh-CN");
 });
 
 const diff: DiffResult = {
@@ -299,6 +304,74 @@ describe("DiffViewer 受控标准 patch", () => {
     expect(wrapper.find(".controlled-side-left script").exists()).toBe(false);
   });
 
+  it("切换界面语言时立即更新本地文案并保留远端文件名和代码", async () => {
+    const remoteChineseDiff: DiffResult = {
+      diff: "",
+      files: [
+        {
+          filename: "src/中文模块.ts",
+          status: "modified",
+          patch: "",
+          additions: 1,
+          deletions: 1,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: "src/中文模块.ts",
+          old_path: "src/中文模块.ts",
+          new_path: "src/中文模块.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          content_kind: "text",
+          patch: "",
+          message: null,
+          hunks: [
+            {
+              header: "@@ -1 +1 @@",
+              old_start: 1,
+              old_count: 1,
+              new_start: 1,
+              new_count: 1,
+              section_header: null,
+              lines: [
+                {
+                  kind: "deletion",
+                  content: 'export const 标题 = "旧标题";',
+                  old_line: 1,
+                  new_line: null,
+                },
+                {
+                  kind: "addition",
+                  content: 'export const 标题 = "新标题";',
+                  old_line: null,
+                  new_line: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const wrapper = await mountViewer(remoteChineseDiff);
+
+    expect(wrapper.get(".navigator-header strong").text()).toBe("文件");
+    expect(wrapper.get(".selected-file-status").text()).toBe("修改");
+    expect(wrapper.text()).toContain("src/中文模块.ts");
+    expect(wrapper.text()).toContain('export const 标题 = "新标题";');
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get(".navigator-header strong").text()).toBe("Files");
+    expect(wrapper.get(".selected-file-status").text()).toBe("Modified");
+    wrapper.get('[aria-label="Find in code"]');
+    expect(wrapper.text()).toContain("src/中文模块.ts");
+    expect(wrapper.text()).toContain('export const 标题 = "新标题";');
+  });
+
   it("切换文件时只渲染对应的标准 patch", async () => {
     const wrapper = await mountViewer(standardizedDiff);
 
@@ -512,9 +585,9 @@ describe("DiffViewer 受控标准 patch", () => {
     await wrapper.get('[aria-label="查找代码"]').trigger("click");
     const pane = wrapper.get('.code-search-pane[data-side="right"]');
     const search = pane.get<HTMLInputElement>('input[type="search"]');
-    const caseSensitive = pane.get('[aria-label="右侧区分大小写"]');
-    const wholeWord = pane.get('[aria-label="右侧全词匹配"]');
-    const regex = pane.get('[aria-label="右侧使用正则表达式"]');
+    const caseSensitive = pane.get('[aria-label="右侧 区分大小写"]');
+    const wholeWord = pane.get('[aria-label="右侧 全词匹配"]');
+    const regex = pane.get('[aria-label="右侧 使用正则表达式"]');
 
     await setCodeSearchQuery(search, "<NEW>");
     expect(pane.get(".code-search-result").text()).toBe("1/1");
@@ -573,6 +646,12 @@ describe("DiffViewer 受控标准 patch", () => {
     expect(pane.get(".code-search-result").text()).toBe("正则表达式无效");
     expect(wrapper.find("mark.diff-search-match").exists()).toBe(false);
     expect(pane.get('[aria-label="右侧下一个匹配项"]').attributes()).toHaveProperty("disabled");
+
+    setAppLocale("en-US");
+    await setCodeSearchQuery(search, "(a+)+$");
+    expect(pane.get(".code-search-result").text()).toBe(
+      "The regular expression contains a repeated pattern that may freeze search",
+    );
   });
 
   it("正则模式拒绝搜索超长代码行", async () => {
@@ -618,7 +697,7 @@ describe("DiffViewer 受控标准 patch", () => {
 
     await wrapper.get('[aria-label="查找代码"]').trigger("click");
     const pane = wrapper.get('.code-search-pane[data-side="right"]');
-    await pane.get('[aria-label="右侧使用正则表达式"]').trigger("click");
+    await pane.get('[aria-label="右侧 使用正则表达式"]').trigger("click");
     const search = pane.get<HTMLInputElement>('input[type="search"]');
     await setCodeSearchQuery(search, "a+$");
 
@@ -1034,11 +1113,11 @@ describe("DiffViewer 受控标准 patch", () => {
     );
     const wrapper = await mountViewer(svgDiff, contextProps);
 
-    expect(wrapper.findAll(".image-view-toggle button").map((button) => button.text())).toEqual([
+    expect(wrapper.findAll(".media-view-toggle button").map((button) => button.text())).toEqual([
       "代码",
       "预览",
     ]);
-    expect(wrapper.findAll(".image-view-toggle button")[1].attributes("aria-pressed")).toBe("true");
+    expect(wrapper.findAll(".media-view-toggle button")[1].attributes("aria-pressed")).toBe("true");
 
     expect(prFileContentMock).toHaveBeenCalledTimes(2);
     expect(prFileContentMock).toHaveBeenCalledWith(
@@ -1047,6 +1126,7 @@ describe("DiffViewer 受控标准 patch", () => {
       "demo",
       "assets/diagram.svg",
       "base-sha",
+      { mediaPreview: true },
     );
     expect(prFileContentMock).toHaveBeenCalledWith(
       "github",
@@ -1054,23 +1134,24 @@ describe("DiffViewer 受控标准 patch", () => {
       "demo",
       "assets/diagram.svg",
       "head-sha",
+      { mediaPreview: true },
     );
-    expect(wrapper.findAll(".image-preview-panel")).toHaveLength(2);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-image").element.parentElement?.className).toBe(
-      "image-preview-stage",
+    expect(wrapper.findAll(".media-preview-panel")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-image").element.parentElement?.className).toBe(
+      "media-preview-stage",
     );
-    expect(wrapper.get(".image-preview-image").attributes("src")).toMatch(
+    expect(wrapper.get(".media-preview-image").attributes("src")).toMatch(
       /^data:image\/svg\+xml;base64,/,
     );
-    expect(wrapper.find(".image-preview-stage script").exists()).toBe(false);
+    expect(wrapper.find(".media-preview-stage script").exists()).toBe(false);
     expect(wrapper.find(".diff-top-scrollbars").exists()).toBe(false);
     expect(wrapper.find(".controlled-side-by-side").exists()).toBe(false);
 
-    await wrapper.findAll(".image-view-toggle button")[0].trigger("click");
+    await wrapper.findAll(".media-view-toggle button")[0].trigger("click");
 
     expect(wrapper.find(".controlled-side-by-side").exists()).toBe(true);
-    expect(wrapper.find(".image-preview-grid").exists()).toBe(false);
+    expect(wrapper.find(".media-preview-grid").exists()).toBe(false);
   });
 
   it("新增的 fork SVG 使用 UTF-8 base64 渲染完整样式内容", async () => {
@@ -1124,9 +1205,10 @@ describe("DiffViewer 受控标准 patch", () => {
       "dbx",
       "docs/public/icons/database/qdrant.svg",
       "head-sha",
+      { mediaPreview: true },
     );
-    expect(wrapper.findAll(".image-preview-panel")).toHaveLength(1);
-    const source = wrapper.get(".image-preview-image").attributes("src");
+    expect(wrapper.findAll(".media-preview-panel")).toHaveLength(1);
+    const source = wrapper.get(".media-preview-image").attributes("src");
     expect(source).toMatch(/^data:image\/svg\+xml;base64,/);
     const renderedSvg = atob(source!.replace("data:image/svg+xml;base64,", ""));
     expect(renderedSvg).toContain('width="346.42"');
@@ -1179,7 +1261,7 @@ describe("DiffViewer 受控标准 patch", () => {
     });
 
     await wrapper.get(`[data-file-path="${standardizedDiff.files[0].filename}"]`).trigger("click");
-    expect(wrapper.find(".image-view-toggle").exists()).toBe(false);
+    expect(wrapper.find(".media-view-toggle").exists()).toBe(false);
     await wrapper.get(`[data-file-path="${qdrantPath}"]`).trigger("click");
     await flushPromises();
 
@@ -1189,9 +1271,10 @@ describe("DiffViewer 受控标准 patch", () => {
       "dbx",
       qdrantPath,
       "head-sha",
+      { mediaPreview: true },
     );
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(1);
-    expect(wrapper.find(".image-preview-empty").exists()).toBe(false);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(1);
+    expect(wrapper.find(".media-preview-empty").exists()).toBe(false);
   });
 
   it("非 UTF-8 编码的 SVG 使用原始 base64 渲染", async () => {
@@ -1227,11 +1310,11 @@ describe("DiffViewer 受控标准 patch", () => {
 
     const wrapper = await mountViewer(encodedSvgDiff, contextProps);
 
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-image").attributes("src")).toBe(
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-image").attributes("src")).toBe(
       "data:image/svg+xml;base64,//48AHMAdgBnACAAeABtAGwAbgBzAD0AIgBoAHQAdABwADoALwAvAHcAdwB3AC4AdwAzAC4AbwByAGcALwAyADAAMAAwAC8AcwB2AGcAIgAgAHYAaQBlAHcAQgBvAHgAPQAiADAAIAAwACAAMQAgADEAIgA+ADwALwBzAHYAZwA+AA==",
     );
-    expect(wrapper.find(".image-preview-error").exists()).toBe(false);
+    expect(wrapper.find(".media-preview-error").exists()).toBe(false);
   });
 
   it("PNG 等普通二进制图片默认渲染双侧预览", async () => {
@@ -1291,6 +1374,7 @@ describe("DiffViewer 受控标准 patch", () => {
       "images",
       "assets/screenshot.png",
       "base-sha",
+      { mediaPreview: true },
     );
     expect(prFileContentMock).toHaveBeenCalledWith(
       "github",
@@ -1298,13 +1382,78 @@ describe("DiffViewer 受控标准 patch", () => {
       "images",
       "assets/screenshot.png",
       "head-sha",
+      { mediaPreview: true },
     );
-    expect(wrapper.findAll(".image-preview-panel")).toHaveLength(2);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-image").attributes("src")).toBe(
+    expect(wrapper.findAll(".media-preview-panel")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-image").attributes("src")).toBe(
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
     );
     expect(wrapper.find(".controlled-file-message").exists()).toBe(false);
+  });
+
+  it.each([
+    ["mp4", "video/mp4"],
+    ["webm", "video/webm"],
+    ["mov", "video/quicktime"],
+    ["ogv", "video/ogg"],
+  ])("%s 视频默认使用原生控件安全播放", async (extension, mimeType) => {
+    const path = `assets/demo.${extension}`;
+    const videoDiff: DiffResult = {
+      diff: "",
+      files: [
+        {
+          filename: path,
+          status: "added",
+          patch: "",
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+      patch_schema_version: 1,
+      patches: [
+        {
+          filename: path,
+          old_path: null,
+          new_path: path,
+          status: "added",
+          additions: 0,
+          deletions: 0,
+          content_kind: "binary",
+          patch: "",
+          message: "二进制文件不提供文本 Diff",
+          hunks: [],
+        },
+      ],
+    };
+    prFileContentMock.mockImplementation(
+      async (
+        _platform: Platform,
+        _owner: string,
+        _repo: string,
+        requestedPath: string,
+        revision: string,
+      ) => ({
+        ...fileContent(requestedPath, revision, ""),
+        content_base64: "AAAAHGZ0eXBtcDQy",
+        binary: true,
+      }),
+    );
+
+    const wrapper = await mountViewer(videoDiff, contextProps);
+
+    expect(prFileContentMock).toHaveBeenCalledWith("github", "octo", "demo", path, "head-sha", {
+      mediaPreview: true,
+    });
+    expect(wrapper.findAll(".media-preview-panel")).toHaveLength(1);
+    expect(wrapper.find(".media-preview-image").exists()).toBe(false);
+    const video = wrapper.get(".media-preview-video");
+    expect(video.attributes("src")).toBe(`data:${mimeType};base64,AAAAHGZ0eXBtcDQy`);
+    expect(video.attributes("controls")).toBeDefined();
+    expect(video.attributes("playsinline")).toBeDefined();
+    expect(video.attributes("preload")).toBe("metadata");
+    expect(video.attributes("autoplay")).toBeUndefined();
+    expect(video.attributes("aria-label")).toContain(path);
   });
 
   it("从文本文件第一次切换到图片时立即加载并展示预览", async () => {
@@ -1368,7 +1517,7 @@ describe("DiffViewer 受控标准 patch", () => {
 
     expect(wrapper.get(".selected-file-name").text()).toBe("zzz/screenshot.png");
     expect(prFileContentMock).toHaveBeenCalledTimes(2);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
   });
 
   it("首次自动预览失败后点击当前图片会重新加载", async () => {
@@ -1417,14 +1566,14 @@ describe("DiffViewer 受控标准 patch", () => {
       );
     const wrapper = await mountViewer(imageDiff, contextProps);
 
-    expect(wrapper.findAll(".image-preview-error")).toHaveLength(2);
-    expect(wrapper.find(".image-preview-image").exists()).toBe(false);
+    expect(wrapper.findAll(".media-preview-error")).toHaveLength(2);
+    expect(wrapper.find(".media-preview-image").exists()).toBe(false);
 
     await wrapper.get('.tree-row[data-file-path="assets/screenshot.png"]').trigger("click");
     await flushPromises();
 
     expect(prFileContentMock).toHaveBeenCalledTimes(4);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
   });
 
   it("切换图片时重建节点并忽略上一张图片迟到的解码错误", async () => {
@@ -1488,21 +1637,21 @@ describe("DiffViewer 受控标准 patch", () => {
       }),
     );
     const wrapper = await mountViewer(imageDiff, contextProps);
-    const firstImage = wrapper.get(".image-preview-image");
+    const firstImage = wrapper.get(".media-preview-image");
     const firstElement = firstImage.element;
 
     await wrapper.get('.tree-row[data-file-path="assets/second.png"]').trigger("click");
     await flushPromises();
 
-    const secondImage = wrapper.get(".image-preview-image");
+    const secondImage = wrapper.get(".media-preview-image");
     expect(secondImage.element).not.toBe(firstElement);
     expect(secondImage.attributes("src")).toContain("c2Vjb25k");
 
     await firstImage.trigger("error");
     await flushPromises();
 
-    expect(wrapper.get(".image-preview-image").attributes("src")).toContain("c2Vjb25k");
-    expect(wrapper.find(".image-preview-error").exists()).toBe(false);
+    expect(wrapper.get(".media-preview-image").attributes("src")).toContain("c2Vjb25k");
+    expect(wrapper.find(".media-preview-error").exists()).toBe(false);
   });
 
   it("图片请求未完成时切走再切回同一文件会启动新请求并展示预览", async () => {
@@ -1570,7 +1719,7 @@ describe("DiffViewer 受控标准 patch", () => {
     }
     await flushPromises();
 
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
 
     for (const resolve of pending.slice(0, 2)) {
       resolve({
@@ -1581,8 +1730,8 @@ describe("DiffViewer 受控标准 patch", () => {
     }
     await flushPromises();
 
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-image").attributes("src")).toContain(
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-image").attributes("src")).toContain(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
     );
   });
@@ -1634,7 +1783,7 @@ describe("DiffViewer 受控标准 patch", () => {
     await flushPromises();
 
     expect(prFileContentMock).toHaveBeenCalledTimes(2);
-    expect(wrapper.findAll(".image-preview-image")).toHaveLength(2);
+    expect(wrapper.findAll(".media-preview-image")).toHaveLength(2);
   });
 
   it("SVG 内容被截断时显示可重试错误并保留代码 Diff", async () => {
@@ -1664,11 +1813,11 @@ describe("DiffViewer 受控标准 patch", () => {
     );
     const wrapper = await mountViewer(svgDiff, contextProps);
 
-    expect(wrapper.findAll(".image-preview-error")).toHaveLength(2);
-    expect(wrapper.get(".image-preview-error").text()).toContain("图片文件过大");
-    expect(wrapper.find(".image-preview-image").exists()).toBe(false);
+    expect(wrapper.findAll(".media-preview-error")).toHaveLength(2);
+    expect(wrapper.get(".media-preview-error").text()).toContain("媒体文件过大");
+    expect(wrapper.find(".media-preview-image").exists()).toBe(false);
 
-    await wrapper.findAll(".image-view-toggle button")[0].trigger("click");
+    await wrapper.findAll(".media-view-toggle button")[0].trigger("click");
 
     expect(wrapper.find(".controlled-side-by-side").exists()).toBe(true);
   });

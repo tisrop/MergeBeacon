@@ -96,6 +96,36 @@ export interface SupportInfo {
   formatted: string;
 }
 
+export interface NativeMenuLabels {
+  about: string;
+  check_updates: string;
+  settings: string;
+  quit: string;
+  file: string;
+  new_pull_request: string;
+  new_issue: string;
+  close_window: string;
+  edit: string;
+  undo: string;
+  redo: string;
+  cut: string;
+  copy: string;
+  paste: string;
+  select_all: string;
+  view: string;
+  command_palette: string;
+  reload: string;
+  enter_fullscreen: string;
+  window: string;
+  minimize: string;
+  maximize: string;
+  help: string;
+  github_homepage: string;
+  report_issue: string;
+  release_notes: string;
+  diagnostics: string;
+}
+
 // ── PR ──
 export type PrState = "open" | "closed" | "merged" | "all";
 export type PrReviewFilter = "none" | "required" | "approved" | "changes_requested";
@@ -127,6 +157,11 @@ export interface PrSummary {
   labels: string[];
   label_colors?: Record<string, string>;
   status?: PrStatusSummary | null;
+}
+
+export interface PrListStatus {
+  number: number;
+  status: PrStatusSummary;
 }
 
 export type ReviewInboxCategory = "review_requested" | "authored";
@@ -653,6 +688,8 @@ export interface RepoSummary {
 // ── AI ──
 export type Severity = "critical" | "major" | "minor" | "info";
 export type AiReviewFocus = "all" | "security" | "performance" | "logic" | "code_style";
+export type AiReviewLanguage = "zh-CN" | "en-US";
+export type AiReviewLanguagePreference = "auto" | AiReviewLanguage;
 
 export interface AiConfig {
   endpoint: string;
@@ -669,6 +706,7 @@ export interface AiReviewRequest {
   context: PrContext | null;
   file_filter: string[] | null;
   focus: AiReviewFocus | null;
+  language: AiReviewLanguage;
 }
 
 export interface AiPrDraftRequest {
@@ -724,6 +762,7 @@ export interface AiReviewHistoryEntry {
   mode: AiReviewMode;
   model: string;
   truncated: boolean;
+  language: AiReviewLanguage;
   result: AiReviewResult;
 }
 

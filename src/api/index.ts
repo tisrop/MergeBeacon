@@ -9,6 +9,7 @@ import type {
   PrComment,
   PrState,
   PrListQuery,
+  PrListStatus,
   PrSummary,
   ReviewInboxCategory,
   ReviewInboxItem,
@@ -49,6 +50,7 @@ import type {
   AiReviewRequest,
   AiReviewResult,
   SupportInfo,
+  NativeMenuLabels,
   UpdateCheckResult,
   UpdateProgressEvent,
 } from "@/types";
@@ -156,6 +158,10 @@ export async function getAppVersion(): Promise<string> {
   return invoke("app_version");
 }
 
+export async function setNativeMenuLabels(labels: NativeMenuLabels): Promise<void> {
+  return invoke("native_menu_set_labels", { labels });
+}
+
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
   return invoke("update_check");
 }
@@ -225,6 +231,20 @@ export async function prList(
   query?: PrListQuery,
 ): Promise<Paginated<PrSummary>> {
   return invoke("pr_list", { platform, owner, repo, stateFilter: state, page, perPage, query });
+}
+
+export async function prListStatuses(
+  requestId: string,
+  platform: Platform,
+  owner: string,
+  repo: string,
+  numbers: number[],
+): Promise<PrListStatus[]> {
+  return invoke("pr_list_statuses", { requestId, platform, owner, repo, numbers });
+}
+
+export async function prListStatusesCancel(requestId: string): Promise<void> {
+  return invoke("pr_list_statuses_cancel", { requestId });
 }
 
 export async function prDetail(
@@ -376,8 +396,16 @@ export async function prFileContent(
   repo: string,
   path: string,
   revision: string,
+  options?: { mediaPreview?: boolean },
 ): Promise<PrFileContent> {
-  return invoke("pr_file_content", { platform, owner, repo, path, revision });
+  return invoke("pr_file_content", {
+    platform,
+    owner,
+    repo,
+    path,
+    revision,
+    mediaPreview: options?.mediaPreview ?? false,
+  });
 }
 
 export async function prMerge(
@@ -667,8 +695,11 @@ export async function aiPrDraftCancel(requestId: string): Promise<void> {
   return invoke("ai_pr_draft_cancel", { requestId });
 }
 
-export async function aiReview(request: AiReviewRequest): Promise<AiReviewResult> {
-  return invoke("ai_review", { request });
+export async function aiReview(
+  requestId: string,
+  request: AiReviewRequest,
+): Promise<AiReviewResult | null> {
+  return invoke("ai_review", { requestId, request });
 }
 
 export async function aiReviewStream(requestId: string, request: AiReviewRequest): Promise<void> {

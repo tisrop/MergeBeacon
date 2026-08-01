@@ -10,6 +10,7 @@ import {
   type ComputedRef,
   type Ref,
 } from "vue";
+import { translate } from "@/i18n";
 type SearchSide = "left" | "right";
 const SEARCH_SIDES: SearchSide[] = ["left", "right"];
 const CODE_SEARCH_QUERY_DEBOUNCE_MS = 75;
@@ -54,7 +55,7 @@ interface UseDiffCodeSearchOptions {
   diffHtml: ComputedRef<string>;
   selectedStandardPatch: ComputedRef<{ content_kind?: string } | null>;
   expandedContextGaps: Ref<unknown>;
-  isShowingImagePreview: ComputedRef<boolean>;
+  isShowingMediaPreview: ComputedRef<boolean>;
   canSearchCurrentFile: ComputedRef<boolean>;
   isDiffSyncScrollEnabled: Ref<boolean>;
   quickComment: Ref<unknown>;
@@ -150,7 +151,7 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
   }
 
   function searchableCodeElements(side: SearchSide): HTMLElement[] {
-    return options.isShowingImagePreview.value ? [] : codeElementsForSide(side);
+    return options.isShowingMediaPreview.value ? [] : codeElementsForSide(side);
   }
 
   function matchingMarks(element: HTMLElement, text: string): HTMLElement[] {
@@ -284,12 +285,12 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
 
   function regexSafetyError(pattern: string): string | null {
     if (pattern.length > MAX_CODE_SEARCH_REGEX_LENGTH) {
-      return `正则表达式过长（最多 ${MAX_CODE_SEARCH_REGEX_LENGTH} 个字符）`;
+      return translate("diff.findRegexTooLong", { count: MAX_CODE_SEARCH_REGEX_LENGTH });
     }
     // Lightweight guard only: reject common adjacent-quantifier explosions without claiming
     // complete ReDoS detection or broadly rejecting valid expressions with distinct atoms.
     if (hasRepeatedAdjacentVariableAtoms(pattern)) {
-      return "正则表达式包含可能导致卡顿的重复结构";
+      return translate("diff.findRegexUnsafe");
     }
     const frames: Array<{ hasAlternation: boolean; hasQuantifier: boolean }> = [
       { hasAlternation: false, hasQuantifier: false },
@@ -311,7 +312,7 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
       if (symbol === "\\") {
         const escaped = pattern[index + 1] ?? "";
         if (/[1-9]/.test(escaped) || (escaped === "k" && pattern[index + 2] === "<")) {
-          return "正则表达式不支持反向引用";
+          return translate("diff.findRegexBackreference");
         }
         index += 1;
         lastClosed = null;
@@ -354,7 +355,7 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
           quantifier.repeatsMultipleTimes &&
           (lastClosed.hasAlternation || lastClosed.hasQuantifier)
         ) {
-          return "正则表达式包含可能导致卡顿的重复结构";
+          return translate("diff.findRegexUnsafe");
         }
         frames[frames.length - 1].hasQuantifier = true;
         index = quantifier.end;
@@ -383,7 +384,7 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
       state.error = "";
       return new RegExp(source, `gu${state.caseSensitive ? "" : "i"}`);
     } catch {
-      state.error = "正则表达式无效";
+      state.error = translate("diff.findRegexInvalid");
       return null;
     }
   }
@@ -463,7 +464,9 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
         (element) => (element.textContent?.length ?? 0) > MAX_CODE_SEARCH_REGEX_LINE_LENGTH,
       )
     ) {
-      state.error = `当前文件包含超长代码行（超过 ${MAX_CODE_SEARCH_REGEX_LINE_LENGTH} 个字符），无法使用正则搜索`;
+      state.error = translate("diff.findRegexLineTooLong", {
+        count: MAX_CODE_SEARCH_REGEX_LINE_LENGTH,
+      });
       return;
     }
     elements.forEach((element) => {
@@ -674,7 +677,7 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
       options.diffHtml,
       options.selectedStandardPatch,
       options.expandedContextGaps,
-      options.isShowingImagePreview,
+      options.isShowingMediaPreview,
     ],
     ([path], [previousPath]) => {
       const preserve = path === previousPath;
@@ -695,7 +698,7 @@ export function useDiffCodeSearch(options: UseDiffCodeSearchOptions) {
       options.diffHtml,
       options.selectedStandardPatch,
       options.expandedContextGaps,
-      options.isShowingImagePreview,
+      options.isShowingMediaPreview,
     ],
     async () => {
       const refreshes = SEARCH_SIDES.map((side) => {

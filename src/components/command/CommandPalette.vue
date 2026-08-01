@@ -7,6 +7,7 @@ import { useRepoStore } from "@/stores/useRepoStore";
 import { useReviewInboxStore } from "@/stores/useReviewInboxStore";
 import { dispatchAppCommand } from "@/types/commands";
 import type { Platform, RepoSummary, ReviewInboxItem } from "@/types";
+import { useI18n } from "@/i18n";
 
 const props = withDefaults(
   defineProps<{
@@ -41,6 +42,7 @@ const auth = useAuthStore();
 const pr = usePrStore();
 const repo = useRepoStore();
 const inbox = useReviewInboxStore();
+const { t } = useI18n();
 
 const open = ref(false);
 const query = ref("");
@@ -148,33 +150,33 @@ const commands = computed<PaletteCommand[]>(() => {
   const result: PaletteCommand[] = [
     {
       id: "navigate:inbox",
-      group: "导航",
-      label: "打开 PR 收件箱",
-      hint: "查看待处理评审",
+      group: t("command.groupNavigation"),
+      label: t("command.openReviewInbox"),
+      hint: t("command.openReviewInboxHint"),
       keywords: "inbox 收件箱 review",
       run: () => void router.push({ name: "review-inbox" }),
     },
     {
       id: "navigate:pr",
-      group: "导航",
-      label: "打开 Pull Request",
-      hint: "当前仓库的 PR 列表",
+      group: t("command.groupNavigation"),
+      label: t("command.openPr"),
+      hint: t("command.openPrHint"),
       keywords: "pr mr pull request merge request",
       run: () => void router.push({ name: "pr-list" }),
     },
     {
       id: "navigate:issue",
-      group: "导航",
-      label: "打开 Issue",
-      hint: "当前仓库的 Issue 列表",
+      group: t("command.groupNavigation"),
+      label: t("command.openIssue"),
+      hint: t("command.openIssueHint"),
       keywords: "issue 问题",
       run: () => void router.push({ name: "issue-list" }),
     },
     {
       id: "navigate:settings",
-      group: "导航",
-      label: "打开设置",
-      hint: "平台、通知、AI 与更新设置",
+      group: t("command.groupNavigation"),
+      label: t("command.openSettings"),
+      hint: t("command.openSettingsHint"),
       keywords: "settings preference 设置",
       run: () => void router.push({ name: "settings" }),
     },
@@ -183,18 +185,18 @@ const commands = computed<PaletteCommand[]>(() => {
   for (const platform of platforms) {
     result.push({
       id: `platform:${platform}`,
-      group: "切换平台",
-      label: `切换到 ${platformLabels[platform]}`,
-      hint: auth.platforms[platform].isLoggedIn ? "已登录" : "需要登录",
+      group: t("command.groupPlatform"),
+      label: t("command.switchPlatform", { platform: platformLabels[platform] }),
+      hint: auth.platforms[platform].isLoggedIn ? t("command.loggedIn") : t("command.needsLogin"),
       keywords: `${platform} 平台`,
       run: () => selectPlatform(platform),
     });
     for (const repository of repo.reposCache[platform]) {
       result.push({
         id: `repo:${platform}:${repository.id}:${repository.full_name}`,
-        group: "仓库",
+        group: t("command.groupRepository"),
         label: repository.full_name,
-        hint: `${platformLabels[platform]}${repository.private ? " · 私有仓库" : ""}`,
+        hint: `${platformLabels[platform]}${repository.private ? ` · ${t("command.privateRepository")}` : ""}`,
         keywords: `${repository.name} ${repository.owner} ${repository.description}`,
         run: () => selectRepository(platform, repository),
       });
@@ -207,9 +209,12 @@ const commands = computed<PaletteCommand[]>(() => {
     for (const file of pr.diff?.files ?? []) {
       result.push({
         id: `diff:${file.filename}`,
-        group: "Diff 文件",
+        group: t("command.diffFile"),
         label: file.filename,
-        hint: `${file.additions} 行新增 · ${file.deletions} 行删除`,
+        hint: t("command.diffStats", {
+          additions: file.additions,
+          deletions: file.deletions,
+        }),
         keywords: `diff ${file.status}`,
         run: () => dispatchAppCommand({ type: "open_diff_file", path: file.filename }),
       });
@@ -217,17 +222,17 @@ const commands = computed<PaletteCommand[]>(() => {
     result.push(
       {
         id: "review:start-ai",
-        group: "评审",
-        label: "开始 AI 评审",
-        hint: "使用当前 PR Diff 开始评审",
+        group: t("command.groupReview"),
+        label: t("command.startAiReview"),
+        hint: t("command.startAiReviewHint"),
         keywords: "ai review 人工智能",
         run: () => dispatchAppCommand({ type: "start_ai_review" }),
       },
       {
         id: "review:prepare-submit",
-        group: "评审",
-        label: "提交评审",
-        hint: "打开评审意见输入框",
+        group: t("command.groupReview"),
+        label: t("command.prepareReview"),
+        hint: t("command.prepareReviewHint"),
         keywords: "review submit approve comment",
         run: () => dispatchAppCommand({ type: "prepare_review" }),
       },
@@ -253,8 +258,8 @@ const filteredCommands = computed(() => {
   return [
     {
       id: `direct-pr:${auth.activePlatform}:${direct[1]}/${direct[2]}:${number}`,
-      group: "快速打开",
-      label: `打开 ${direct[1]}/${direct[2]} #${number}`,
+      group: t("command.quickOpen"),
+      label: t("command.openDirect", { repository: `${direct[1]}/${direct[2]}`, number }),
       hint: platformLabels[auth.activePlatform],
       keywords: "",
       run: () => openPullRequest(auth.activePlatform, direct[1], direct[2], number),
@@ -365,7 +370,7 @@ defineExpose({ open: openPalette, close: closePalette });
         aria-labelledby="command-palette-title"
         @keydown="handleDialogKeydown"
       >
-        <h2 id="command-palette-title" class="sr-only">命令面板</h2>
+        <h2 id="command-palette-title" class="sr-only">{{ t("command.openPalette") }}</h2>
         <div class="command-search">
           <svg
             width="17"
@@ -383,12 +388,12 @@ defineExpose({ open: openPalette, close: closePalette });
             v-model="query"
             type="search"
             autocomplete="off"
-            aria-label="搜索命令、仓库、PR 或 Diff 文件"
-            placeholder="搜索命令、仓库、PR 或 Diff 文件..."
+            :aria-label="t('command.search')"
+            :placeholder="t('command.search')"
           />
           <kbd>Esc</kbd>
         </div>
-        <div class="command-results" role="listbox" aria-label="可用命令">
+        <div class="command-results" role="listbox" :aria-label="t('command.available')">
           <button
             v-for="(command, index) in filteredCommands"
             :key="command.id"
@@ -407,12 +412,14 @@ defineExpose({ open: openPalette, close: closePalette });
             </span>
             <span class="command-group">{{ command.group }}</span>
           </button>
-          <p v-if="filteredCommands.length === 0" class="command-empty">没有匹配的命令</p>
+          <p v-if="filteredCommands.length === 0" class="command-empty">
+            {{ t("command.empty") }}
+          </p>
         </div>
         <footer class="command-footer">
-          <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
-          <span><kbd>↵</kbd> 执行</span>
-          <span><kbd>Ctrl/⌘</kbd><kbd>K</kbd> 打开</span>
+          <span><kbd>↑</kbd><kbd>↓</kbd> {{ t("command.select") }}</span>
+          <span><kbd>↵</kbd> {{ t("command.execute") }}</span>
+          <span><kbd>Ctrl/⌘</kbd><kbd>K</kbd> {{ t("command.open") }}</span>
         </footer>
       </section>
     </div>

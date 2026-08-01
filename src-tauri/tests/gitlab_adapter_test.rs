@@ -1208,6 +1208,114 @@ async fn test_gitlab_searches_filters_sorts_and_paginates_merge_requests() {
 }
 
 #[tokio::test]
+async fn test_gitlab_uses_server_pagination_for_supported_pr_filters() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests"))
+        .and(query_param("state", "opened"))
+        .and(query_param("search", "fix"))
+        .and(query_param("in", "title"))
+        .and(query_param("author_username", "alice"))
+        .and(query_param("labels", "bug"))
+        .and(query_param("order_by", "updated_at"))
+        .and(query_param("sort", "desc"))
+        .and(query_param("page", "3"))
+        .and(query_param("per_page", "20"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-total-pages", "5")
+                .insert_header("x-total", "83")
+                .set_body_json(serde_json::json!([{
+                    "iid": 41,
+                    "title": "Fix paged bug",
+                    "author": {
+                        "id": 1,
+                        "username": "alice",
+                        "name": "Alice",
+                        "avatar_url": ""
+                    },
+                    "state": "opened",
+                    "merged_at": null,
+                    "created_at": "2026-07-20T10:00:00Z",
+                    "updated_at": "2026-07-21T10:00:00Z",
+                    "labels": ["bug"]
+                }])),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".into()).with_base_url(mock_server.uri());
+    let query = PrListQuery {
+        title: "fix".into(),
+        author: "alice".into(),
+        label: "bug".into(),
+        reviews: None,
+        assignee: "".into(),
+        sort: PrListSort::UpdatedDesc,
+    };
+    let result = adapter
+        .search_pull_requests("group", "repo", &PrState::Open, &query, 3, 20)
+        .await
+        .expect("supported filters should use the requested server page");
+
+    assert_eq!(result.page, 3);
+    assert_eq!(result.total_pages, 5);
+    assert_eq!(result.total_count, 83);
+    assert_eq!(result.items[0].number, 41);
+    assert_eq!(mock_server.received_requests().await.expect("requests").len(), 1);
+}
+
+#[tokio::test]
+async fn test_gitlab_fetches_each_local_filter_page_once() {
+    let mock_server = MockServer::start().await;
+    for (page, number, comments) in [(1, 11, 1), (2, 12, 3), (3, 13, 2)] {
+        let mut response = ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "iid": number,
+            "title": format!("MR {number}"),
+            "author": gitlab_user(),
+            "state": "opened",
+            "merged_at": null,
+            "created_at": "2026-07-20T10:00:00Z",
+            "updated_at": "2026-07-21T10:00:00Z",
+            "labels": [],
+            "user_notes_count": comments
+        }]));
+        if page == 1 {
+            response = response.insert_header("x-total-pages", "3");
+        }
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/group%2Frepo/merge_requests"))
+            .and(query_param("page", page.to_string()))
+            .and(query_param("per_page", "100"))
+            .respond_with(response)
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+    }
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".into()).with_base_url(mock_server.uri());
+    let query = PrListQuery { sort: PrListSort::CommentsDesc, ..PrListQuery::default() };
+    let result = adapter
+        .search_pull_requests("group", "repo", &PrState::Open, &query, 1, 20)
+        .await
+        .expect("local sorting should collect all known pages");
+
+    assert_eq!(result.items.iter().map(|item| item.number).collect::<Vec<_>>(), vec![12, 13, 11]);
+    let mut requested_pages = mock_server
+        .received_requests()
+        .await
+        .expect("requests")
+        .iter()
+        .filter_map(|request| {
+            request.url.query_pairs().find_map(|(name, value)| (name == "page").then(|| value.into_owned()))
+        })
+        .collect::<Vec<_>>();
+    requested_pages.sort();
+    assert_eq!(requested_pages, ["1", "2", "3"]);
+}
+
+#[tokio::test]
 async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))

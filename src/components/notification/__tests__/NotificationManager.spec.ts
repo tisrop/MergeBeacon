@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import NotificationManager from "@/components/notification/NotificationManager.vue";
+import { setAppLocale } from "@/i18n";
 import {
   initializeNotificationActions,
   notificationPermissionGranted,
@@ -59,6 +60,7 @@ async function mountManager(pinia = createPinia()) {
 
 describe("NotificationManager", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     vi.useFakeTimers();
     storage.clear();
     vi.mocked(notificationPermissionGranted).mockReset();
@@ -152,6 +154,29 @@ describe("NotificationManager", () => {
     await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_INTERVAL_MS);
     expect(notificationPermissionGranted).toHaveBeenCalledOnce();
     expect(poll).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("英文权限错误在切换回中文后立即重新本地化", async () => {
+    setAppLocale("en-US");
+    vi.mocked(notificationPermissionGranted).mockRejectedValue(
+      new Error("读取 macOS 通知权限失败：UNErrorDomain error 1"),
+    );
+
+    const { wrapper, notifications } = await mountManager();
+    expect(notifications.notificationError).toContain(
+      "Failed to check desktop notification permission: UNErrorDomain error 1",
+    );
+
+    setAppLocale("zh-CN");
+    await wrapper.vm.$nextTick();
+
+    expect(notifications.notificationError).toContain(
+      "检查桌面通知权限失败：读取 macOS 通知权限失败：UNErrorDomain error 1",
+    );
+    expect(notifications.notificationError).not.toContain(
+      "Failed to check desktop notification permission",
+    );
     wrapper.unmount();
   });
 

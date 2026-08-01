@@ -18,6 +18,7 @@ import {
 } from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useRepoStore } from "@/stores/useRepoStore";
+import { setAppLocale } from "@/i18n";
 import { PR_CREATE_WARNING_QUERY, readPrCreateWarnings } from "@/utils/prCreateWarnings";
 import type {
   Platform,
@@ -191,6 +192,7 @@ async function mountPage(
 
 describe("PrNewPage", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     vi.clearAllMocks();
     window.sessionStorage.clear();
     vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "draft-request") });
@@ -283,16 +285,44 @@ describe("PrNewPage", () => {
     expect(wrapper.findAll(".section-heading > span")).toHaveLength(0);
   });
 
+  it("切换界面语言后立即更新本地文案并保留远端中文内容", async () => {
+    vi.mocked(prCreatePreview).mockResolvedValue(createPreview("远端中文提交标题"));
+    const { wrapper } = await mountPage();
+
+    expect(wrapper.get("h2").text()).toBe("创建 PR");
+    expect(wrapper.text()).toContain("远端中文提交标题");
+    const templateSelect = wrapper.get('[aria-label="PR 模板"]');
+    await templateSelect.trigger("click");
+    await wrapper
+      .get(".dropdown-option[data-value='.github/PULL_REQUEST_TEMPLATE/feature.md']")
+      .trigger("click");
+    expect(templateSelect.text()).toContain("功能变更");
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get("h2").text()).toBe("Create PR");
+    expect(wrapper.findAll(".section-heading h3").map((heading) => heading.text())).toEqual([
+      "Choose the change source",
+      "Change preview",
+      "Describe the changes",
+      "Participants and labels",
+    ]);
+    expect(wrapper.get('[aria-label="Source branch"]')).toBeDefined();
+    expect(wrapper.get('[aria-label="PR template"]').text()).toContain("功能变更");
+    expect(wrapper.text()).toContain("远端中文提交标题");
+  });
+
   it("创建同仓库 PR 后跳转现有详情页", async () => {
     const { wrapper, router } = await mountPage();
     await wrapper.get("input[placeholder='简要说明这次变更']").setValue("Add feature");
-    await wrapper.get('[aria-label="Reviewers"]').trigger("click");
+    await wrapper.get('[aria-label="评审者"]').trigger("click");
     await wrapper.get(".multi-select-option[data-value='Alice']").trigger("click");
     await wrapper.get(".multi-select-option[data-value='Bob']").trigger("click");
-    await wrapper.get('input[placeholder="搜索Reviewers"]').trigger("keydown", { key: "Escape" });
-    await wrapper.get('[aria-label="Assignees"]').trigger("click");
+    await wrapper.get('input[placeholder="搜索评审者"]').trigger("keydown", { key: "Escape" });
+    await wrapper.get('[aria-label="负责人"]').trigger("click");
     await wrapper.get(".multi-select-option[data-value='Alice']").trigger("click");
-    await wrapper.get('input[placeholder="搜索Assignees"]').trigger("keydown", { key: "Escape" });
+    await wrapper.get('input[placeholder="搜索负责人"]').trigger("keydown", { key: "Escape" });
     await wrapper.get("form").trigger("submit");
     await flushPromises();
 
@@ -514,15 +544,15 @@ describe("PrNewPage", () => {
     await flushPromises();
 
     expect(prParticipantSuggestions).toHaveBeenLastCalledWith("github", "other", "repo");
-    await wrapper.get('[aria-label="Reviewers"]').trigger("click");
+    await wrapper.get('[aria-label="评审者"]').trigger("click");
     await wrapper.get(".multi-select-option[data-value='carol']").trigger("click");
-    await wrapper.get('input[placeholder="搜索Reviewers"]').trigger("keydown", { key: "Escape" });
+    await wrapper.get('input[placeholder="搜索评审者"]').trigger("keydown", { key: "Escape" });
 
     resolveOld([{ id: 1, login: "stale-user", name: "Stale", avatar_url: "" }]);
     await flushPromises();
-    await wrapper.get('[aria-label="Reviewers"]').trigger("click");
+    await wrapper.get('[aria-label="评审者"]').trigger("click");
     expect(wrapper.find(".multi-select-option[data-value='stale-user']").exists()).toBe(false);
-    expect(wrapper.get('[aria-label="Reviewers"]').text()).toContain("carol");
+    expect(wrapper.get('[aria-label="评审者"]').text()).toContain("carol");
   });
 
   it("标签读取失败时显示错误但不阻止创建", async () => {
@@ -1243,11 +1273,11 @@ describe("PrNewPage", () => {
     );
   });
 
-  it("Gitee 使用评审者和测试者文案且不显示 Draft 选项", async () => {
+  it("Gitee 使用审查者和测试者文案且不显示 Draft 选项", async () => {
     const { wrapper } = await mountPage("gitee");
 
     expect(wrapper.get("h2").text()).toBe("创建 PR");
-    expect(wrapper.text()).toContain("评审者");
+    expect(wrapper.text()).toContain("审查者");
     expect(wrapper.text()).toContain("测试者");
     expect(wrapper.get('[aria-label="标签"]').attributes("aria-label")).toBe("标签");
     expect(wrapper.text()).not.toContain("创建为 Draft");

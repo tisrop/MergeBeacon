@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PrMetadataPanel from "../PrMetadataPanel.vue";
 import { clipboardWriteText, listRepositoryLabels, prParticipantSuggestions } from "@/api";
+import { setAppLocale } from "@/i18n";
 import type {
   Platform,
   PlatformCapabilities,
@@ -130,6 +131,7 @@ describe("PrMetadataPanel", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setAppLocale("zh-CN");
     vi.mocked(clipboardWriteText).mockResolvedValue();
     vi.mocked(prParticipantSuggestions).mockResolvedValue([
       reviewer,
@@ -147,10 +149,12 @@ describe("PrMetadataPanel", () => {
 
   it("展示元数据并按当前详情初始化编辑表单", async () => {
     const wrapper = mountPanel();
-    expect(wrapper.text()).toContain("Reviewers");
-    expect(wrapper.text()).toContain("Assignees");
+    expect(wrapper.text()).toContain("评审者");
+    expect(wrapper.text()).toContain("负责人");
     expect(wrapper.text()).toContain("reviewer");
     expect(wrapper.text()).toContain("assignee");
+    expect(wrapper.text()).toContain("标签");
+    expect(wrapper.text()).toContain("里程碑");
     expect(wrapper.text()).toContain("0.6.0");
 
     await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
@@ -161,6 +165,9 @@ describe("PrMetadataPanel", () => {
     expect(wrapper.get<HTMLTextAreaElement>('[data-testid="metadata-body"]').element.value).toBe(
       "原始描述",
     );
+    expect(
+      wrapper.get<HTMLInputElement>('[data-testid="metadata-milestone"]').attributes("placeholder"),
+    ).toBe("留空表示移除里程碑");
     expect(wrapper.get('[data-testid="metadata-reviewers"] .app-multi-select-value').text()).toBe(
       "reviewer",
     );
@@ -189,6 +196,21 @@ describe("PrMetadataPanel", () => {
     expect(link.attributes("target")).toBe("_blank");
     await link.trigger("click");
     expect(wrapper.emitted("open-external")).toEqual([[reviewUrl]]);
+  });
+
+  it("已挂载时切换英文，并保留远端中文内容", async () => {
+    const wrapper = mountPanel();
+
+    expect(wrapper.text()).toContain("参与者与分类");
+    expect(wrapper.text()).toContain("原始描述");
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("Participants and classification");
+    expect(wrapper.get('[data-testid="edit-pr-metadata"]').text()).toContain("Edit metadata");
+    expect(wrapper.text()).toContain("原始描述");
+    expect(wrapper.text()).not.toContain("参与者与分类");
   });
 
   it("PR 正文代码块支持复制", async () => {
@@ -520,7 +542,7 @@ describe("PrMetadataPanel", () => {
     expect(wrapper.get('[role="alert"]').text()).toContain("PR 标题不能超过 255 个字符");
   });
 
-  it("按平台使用参与者名称：Gitee 显示评审者和测试者", async () => {
+  it("按平台使用参与者名称：Gitee 显示审查者和测试者", async () => {
     const wrapper = mountPanel({
       capabilities: capabilities({
         platform: "gitee",
@@ -528,7 +550,7 @@ describe("PrMetadataPanel", () => {
         supports_pr_assignee_management: true,
       }),
     });
-    expect(wrapper.text()).toContain("评审者");
+    expect(wrapper.text()).toContain("审查者");
     expect(wrapper.text()).toContain("测试者");
     expect(wrapper.text()).not.toContain("Reviewers");
     expect(wrapper.text()).not.toContain("Assignees");

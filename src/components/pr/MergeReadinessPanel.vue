@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "@/i18n";
 import type { PrMergeReadiness, ReadinessState } from "@/types";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   readiness: PrMergeReadiness | null;
@@ -9,12 +12,12 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ retry: [] }>();
 
-const stateLabels: Record<ReadinessState, string> = {
-  ready: "可合并",
-  blocked: "已阻断",
-  pending: "检查中",
-  unknown: "状态未知",
-};
+const stateLabels = computed<Record<ReadinessState, string>>(() => ({
+  ready: t("readiness.stateReady"),
+  blocked: t("readiness.stateBlocked"),
+  pending: t("readiness.statePending"),
+  unknown: t("readiness.stateUnknown"),
+}));
 const stateIcons: Record<ReadinessState, string> = {
   ready: "✓",
   blocked: "!",
@@ -24,23 +27,23 @@ const stateIcons: Record<ReadinessState, string> = {
 const state = computed<ReadinessState>(
   () => props.readiness?.status ?? (props.error ? "unknown" : "pending"),
 );
-const stateLabel = computed(() => stateLabels[state.value]);
+const stateLabel = computed(() => stateLabels.value[state.value]);
 const stateIcon = computed(() => stateIcons[state.value]);
 
 const statusDetails = computed(() => {
   if (props.error && !props.readiness) return [props.error];
-  if (!props.readiness) return [props.loading ? "正在读取最新合并条件" : "尚未获取合并状态"];
+  if (!props.readiness) {
+    return [props.loading ? t("readiness.loading") : t("readiness.unavailable")];
+  }
 
   const readiness = props.readiness;
   const details = readiness.blocking_reasons.map((reason) => reason.message);
   if (details.length > 0) return details;
 
-  if (readiness.status === "ready") return ["所有合并条件均已满足"];
-  if (readiness.status === "pending") return ["平台检查尚未全部完成"];
-  if (readiness.status === "unknown") {
-    return ["平台未返回完整合并信息；仍可尝试合并，平台会在提交时执行最终校验"];
-  }
-  return ["存在未满足的合并条件"];
+  if (readiness.status === "ready") return [t("readiness.ready")];
+  if (readiness.status === "pending") return [t("readiness.pending")];
+  if (readiness.status === "unknown") return [t("readiness.unknown")];
+  return [t("readiness.blocked")];
 });
 </script>
 
@@ -61,8 +64,8 @@ const statusDetails = computed(() => {
       class="refresh-button"
       type="button"
       :disabled="loading"
-      :aria-label="loading ? '正在刷新合并状态' : '刷新合并状态'"
-      :title="loading ? '正在刷新…' : '刷新合并状态'"
+      :aria-label="loading ? t('readiness.refreshing') : t('readiness.refresh')"
+      :title="loading ? t('readiness.refreshingShort') : t('readiness.refresh')"
       @click="emit('retry')"
     >
       <svg

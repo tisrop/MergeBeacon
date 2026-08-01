@@ -1,7 +1,8 @@
 import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from "@vue/test-utils";
-import { reactive } from "vue";
+import { defineAsyncComponent, defineComponent, reactive, type Component } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PrDetailPage from "@/pages/PrDetailPage.vue";
+import { setAppLocale } from "@/i18n";
 import type {
   DiffResult,
   PrCommitSummary,
@@ -49,6 +50,8 @@ const mocks = vi.hoisted(() => ({
     mergeReadiness: null as PrMergeReadiness | null,
     readinessLoading: false,
     readinessError: null as string | null,
+    detailLoading: false,
+    diffLoading: false,
     error: null as string | null,
     fetchPrDetail: vi.fn().mockResolvedValue(true),
     fetchPrDiff: vi.fn().mockResolvedValue(undefined),
@@ -96,6 +99,14 @@ const mocks = vi.hoisted(() => ({
   openExternalUrl: vi.fn(),
 }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 vi.mock("vue-router", () => ({
   useRoute: () => mocks.route,
   useRouter: () => mocks.router,
@@ -118,6 +129,7 @@ vi.mock("@/api", () => ({
 }));
 
 mocks.uiSettingsStore = reactive(mocks.uiSettingsStore);
+mocks.prStore = reactive(mocks.prStore);
 
 enableAutoUnmount(afterEach);
 
@@ -206,6 +218,7 @@ async function selectTab(wrapper: VueWrapper, label: string): Promise<void> {
 describe("PrDetailPage 关闭权限", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setAppLocale("zh-CN");
     mocks.router.replace.mockResolvedValue(undefined);
     mocks.route.query = {};
     window.sessionStorage.clear();
@@ -219,6 +232,8 @@ describe("PrDetailPage 关闭权限", () => {
     mocks.prStore.mergeReadiness = { ...readiness };
     mocks.prStore.readinessLoading = false;
     mocks.prStore.readinessError = null;
+    mocks.prStore.detailLoading = false;
+    mocks.prStore.diffLoading = false;
     mocks.prStore.error = null;
     mocks.prStore.diff = null;
     mocks.prStore.commits = [];
@@ -251,6 +266,27 @@ describe("PrDetailPage 关闭权限", () => {
     await button.trigger("click");
 
     expect(mocks.router.push).toHaveBeenCalledWith({ name: "pr-list" });
+  });
+
+  it("中文界面将 Open PR 状态显示为打开", () => {
+    const wrapper = mountPage();
+
+    expect(wrapper.get(".pr-state-badge").text()).toBe("打开");
+  });
+
+  it("已挂载时切换英文，并保留远端 PR 标题", async () => {
+    const wrapper = mountPage();
+
+    expect(wrapper.text()).toContain("评审意见");
+    expect(wrapper.text()).toContain("权限测试");
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("Review feedback");
+    expect(wrapper.text()).toContain("Pull requests");
+    expect(wrapper.text()).toContain("权限测试");
+    expect(wrapper.text()).not.toContain("评审意见");
   });
 
   it("有 web_url 时点击标题在浏览器中打开 PR 页面", async () => {
@@ -372,7 +408,7 @@ describe("PrDetailPage 关闭权限", () => {
     expect(mocks.prStore.fetchMergeReadiness).not.toHaveBeenCalled();
   });
 
-  it("详情 Action 没有返回值但已写入当前详情时仍加载 Diff", async () => {
+  it("详情 Action 没有返回值但已写入当前详情时仍加载首屏后台数据", async () => {
     mocks.prStore.currentPr = detail;
     mocks.prStore.fetchPrDetail.mockResolvedValueOnce(undefined);
 
@@ -380,8 +416,30 @@ describe("PrDetailPage 关闭权限", () => {
     await flushPromises();
 
     expect(mocks.prStore.fetchPrDiff).toHaveBeenCalledWith("github", "owner", "repo", 42);
-    expect(mocks.prStore.fetchPrCommits).toHaveBeenCalledWith("github", "owner", "repo", 42);
     expect(mocks.prStore.fetchMergeReadiness).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.fetchPrCommits).not.toHaveBeenCalled();
+  });
+
+  it("首次打开 Diff 页签时才加载提交列表", async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(mocks.prStore.fetchPrCommits).not.toHaveBeenCalled();
+
+    await selectTab(wrapper, "Diff");
+
+    expect(mocks.prStore.fetchPrCommits).toHaveBeenCalledWith("github", "owner", "repo", 42);
+  });
+
+  it("详情已加载时不因后台 Diff 请求重新遮挡首屏", () => {
+    mocks.prStore.detailLoading = false;
+    mocks.prStore.diffLoading = true;
+
+    const wrapper = mountPage();
+
+    expect(wrapper.find(".loading-state").exists()).toBe(false);
+    expect(wrapper.find(".tabs").exists()).toBe(true);
+    expect(wrapper.text()).toContain(detail.summary.title);
   });
 
   describe("按 commit 维度查看", () => {
@@ -941,6 +999,38 @@ describe("PrDetailPage 关闭权限", () => {
     ).toContain("active");
   });
 
+  it("Diff 后台加载时显示加载态并在数据就绪后执行暂存定位", async () => {
+    mocks.prStore.diff = null;
+    mocks.prStore.diffLoading = true;
+    const wrapper = mountPage({
+      ReviewList: {
+        emits: ["locateComment"],
+        template: `<button data-testid="locate-loading-review" @click="$emit('locateComment', 'src/main.ts', 18, 'right')">定位评论</button>`,
+      },
+      DiffViewer: {
+        props: ["locationRequest"],
+        template: `<span data-testid="deferred-diff-location">{{ locationRequest?.path }}:{{ locationRequest?.line }}</span>`,
+      },
+    });
+
+    await wrapper.get('[data-testid="locate-loading-review"]').trigger("click");
+
+    expect(wrapper.get('[data-testid="diff-loading-state"]').text()).toContain("Diff");
+    expect(wrapper.find('[data-testid="deferred-diff-location"]').exists()).toBe(false);
+    expect(wrapper.find(".diff-location-error").exists()).toBe(false);
+
+    mocks.prStore.diff = {
+      diff: "diff --git a/src/main.ts b/src/main.ts",
+      files: [],
+      patch_schema_version: 1,
+      patches: [],
+    };
+    mocks.prStore.diffLoading = false;
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="deferred-diff-location"]').text()).toBe("src/main.ts:18");
+  });
+
   it("提交行级评论时按 left/right side 提取对应 hunk", async () => {
     const patch =
       "@@ -1,15 +1,0 @@\n-old1\n-old2\n-old3\n-old4\n-old5\n-old6\n-old7\n-old8\n-old9\n-old10\n-old11\n-old12\n-old13\n-old14\n-old15\n@@ -20,0 +10 @@\n+newcode";
@@ -1159,6 +1249,35 @@ describe("PrDetailPage 关闭权限", () => {
       .findAll(".tabs button")
       .find((button) => button.text().includes("Diff"));
     expect(diffTab?.classes()).toContain("active");
+    wrapper.unmount();
+  });
+
+  it("等待异步 AI 面板加载完成后启动首次命令评审", async () => {
+    const panelModule = deferred<Component>();
+    const startReview = vi.fn();
+    const wrapper = mountPage({
+      AiReviewPanel: defineAsyncComponent(() => panelModule.promise),
+    });
+    await flushPromises();
+
+    window.dispatchEvent(
+      new CustomEvent(APP_COMMAND_EVENT, { detail: { type: "start_ai_review" } }),
+    );
+    await flushPromises();
+
+    expect(startReview).not.toHaveBeenCalled();
+
+    panelModule.resolve(
+      defineComponent({
+        setup(_props, { expose }) {
+          expose({ startReview });
+          return () => null;
+        },
+      }),
+    );
+    await flushPromises();
+
+    expect(startReview).toHaveBeenCalledTimes(1);
     wrapper.unmount();
   });
 });

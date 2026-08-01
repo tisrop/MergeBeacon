@@ -745,6 +745,58 @@ async fn test_gitee_searches_filters_sorts_and_paginates_pull_requests() {
 }
 
 #[tokio::test]
+async fn test_gitee_fetches_each_local_filter_page_once() {
+    let mock_server = MockServer::start().await;
+    for (page, number, comments) in [(1, 41, 1), (2, 42, 3), (3, 43, 2)] {
+        let mut response = ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "number": number,
+            "title": format!("PR {number}"),
+            "state": "open",
+            "merged_at": null,
+            "created_at": "2026-07-20T10:00:00Z",
+            "updated_at": "2026-07-21T10:00:00Z",
+            "user": { "id": 1, "login": "alice", "name": "Alice", "avatar_url": "" },
+            "labels": [],
+            "comments_count": comments
+        }]));
+        if page == 1 {
+            response = response.append_header("total_page", "3");
+        }
+        Mock::given(method("GET"))
+            .and(path("/api/v5/repos/octocat/hello-world/pulls"))
+            .and(query_param("state", "open"))
+            .and(query_param("page", page.to_string()))
+            .and(query_param("per_page", "100"))
+            .and(query_param("access_token", "test-token"))
+            .respond_with(response)
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+    }
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".into())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let query = PrListQuery { sort: PrListSort::CommentsDesc, ..PrListQuery::default() };
+    let result = adapter
+        .search_pull_requests("octocat", "hello-world", &PrState::Open, &query, 1, 20)
+        .await
+        .expect("local sorting should collect all known pages");
+
+    assert_eq!(result.items.iter().map(|item| item.number).collect::<Vec<_>>(), vec![42, 43, 41]);
+    let mut requested_pages = mock_server
+        .received_requests()
+        .await
+        .expect("requests")
+        .iter()
+        .filter_map(|request| {
+            request.url.query_pairs().find_map(|(name, value)| (name == "page").then(|| value.into_owned()))
+        })
+        .collect::<Vec<_>>();
+    requested_pages.sort();
+    assert_eq!(requested_pages, ["1", "2", "3"]);
+}
+
+#[tokio::test]
 async fn test_gitee_create_pr_comment() {
     let mock_server = MockServer::start().await;
 

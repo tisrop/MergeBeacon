@@ -449,6 +449,63 @@ pub async fn pr_list(
 }
 
 #[tauri::command]
+pub async fn pr_list_statuses(
+    state: State<'_, AppState>,
+    request_id: String,
+    platform: String,
+    owner: String,
+    repo: String,
+    numbers: Vec<u64>,
+) -> CommandResult<Vec<PrListStatus>> {
+    let request_id = request_id.trim().to_string();
+    if request_id.is_empty() || request_id.chars().count() > 128 || request_id.chars().any(char::is_control) {
+        return Err("PR 状态补充请求 ID 无效".into());
+    }
+    if numbers.len() > 100 {
+        return Err("单次最多补充 100 个 PR / MR 状态".into());
+    }
+    let numbers = numbers.into_iter().filter(|number| *number > 0).collect::<BTreeSet<_>>();
+    if numbers.is_empty() {
+        return Ok(Vec::new());
+    }
+    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let numbers = numbers.into_iter().collect::<Vec<_>>();
+    let registry = state.pr_list_status_tasks.clone();
+    let generation = registry.next_generation();
+    let task_request_id = request_id.clone();
+    let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+    // 注册完成后才允许请求启动，使先到达的取消命令也能可靠终止该批次。
+    let task = tokio::spawn(async move {
+        if start_rx.await.is_err() {
+            return None;
+        }
+        Some(p.list_pr_statuses(&owner, &repo, &numbers).await)
+    });
+
+    registry.replace(request_id, generation, task.abort_handle()).await;
+    let _ = start_tx.send(());
+    let result = task.await;
+    registry.remove_if_current(&task_request_id, generation).await;
+
+    match result {
+        Ok(Some(result)) => result.map_err(CommandError::from),
+        Ok(None) => Ok(Vec::new()),
+        Err(error) if error.is_cancelled() => Ok(Vec::new()),
+        Err(_) => Err(CommandError::from(crate::error::AppError::Api("PR 状态补充任务异常终止".into()))),
+    }
+}
+
+#[tauri::command]
+pub async fn pr_list_statuses_cancel(state: State<'_, AppState>, request_id: String) -> CommandResult<()> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() || request_id.chars().count() > 128 || request_id.chars().any(char::is_control) {
+        return Err("PR 状态补充请求 ID 无效".into());
+    }
+    state.pr_list_status_tasks.cancel(request_id).await;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn pr_detail(
     state: State<'_, AppState>,
     platform: String,
@@ -851,13 +908,17 @@ pub async fn pr_file_content(
     repo: String,
     path: String,
     revision: String,
+    media_preview: Option<bool>,
 ) -> CommandResult<PrFileContent> {
     if owner.trim().is_empty() || repo.trim().is_empty() {
         return Err("仓库 owner 和名称不能为空".into());
     }
     crate::file_content::validate_request(&path, &revision).map_err(CommandError::from)?;
+    let maximum_content_bytes = crate::file_content::preview_content_limit(&path, media_preview.unwrap_or(false));
     let p = build_platform(&platform, &state).map_err(CommandError::from)?;
-    p.get_pr_file_content(&owner, &repo, &path, &revision).await.map_err(CommandError::from)
+    p.get_pr_file_content_with_limit(&owner, &repo, &path, &revision, maximum_content_bytes)
+        .await
+        .map_err(CommandError::from)
 }
 
 #[allow(clippy::too_many_arguments)]

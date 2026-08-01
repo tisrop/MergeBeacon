@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
+import { useRouter } from "vue-router";
 import {
   copyRecentErrorLogs as copyRecentErrorLogsToClipboard,
   copySupportInfo as copySupportInfoToClipboard,
@@ -10,15 +11,20 @@ import { getErrorMessage } from "@/utils/error";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useUpdateStore } from "@/stores/useUpdateStore";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
+import { takeSettingsReturnLocation } from "@/services/settingsReturnNavigation";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import AiSettings from "@/components/ai/AiSettings.vue";
 import NotificationSettings from "@/components/notification/NotificationSettings.vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
+import AppSelect from "@/components/shared/AppSelect.vue";
 import type { Platform } from "@/types";
+import { useI18n, type AppLocale } from "@/i18n";
 
 const auth = useAuthStore();
 const updates = useUpdateStore();
 const uiSettings = useUiSettingsStore();
+const router = useRouter();
+const { t } = useI18n();
 const {
   isAutoUpdateCheckEnabled,
   isCheckingUpdate,
@@ -31,8 +37,16 @@ const {
   updateTotal,
   updatePhase,
 } = storeToRefs(updates);
-const { isDiffSyncScrollEnabled, isPrDependenciesVisible, isMergeQueueVisible } =
+const { locale, isDiffSyncScrollEnabled, isPrDependenciesVisible, isMergeQueueVisible } =
   storeToRefs(uiSettings);
+const localeOptions = computed(() => [
+  { value: "zh-CN", label: t("language.chinese") },
+  { value: "en-US", label: t("language.english") },
+]);
+const selectedLocale = computed<AppLocale>({
+  get: () => locale.value,
+  set: (value) => uiSettings.setLocale(value),
+});
 
 const platformList: { value: Platform; label: string }[] = [
   { value: "github", label: "GitHub" },
@@ -50,6 +64,16 @@ const appVersion = ref("");
 const versionError = ref("");
 const isConfirmingInstall = ref(false);
 
+function closeSettings() {
+  const returnLocation = takeSettingsReturnLocation();
+  void router.replace(
+    returnLocation ??
+      (auth.isLoggedIn
+        ? { name: "pr-list" }
+        : { path: "/login", query: { platform: auth.activePlatform } }),
+  );
+}
+
 const updateProgressPercent = computed(() => {
   if (!updateTotal.value || updateTotal.value <= 0) return null;
   return Math.min(100, Math.round((updateDownloaded.value / updateTotal.value) * 100));
@@ -57,15 +81,17 @@ const updateProgressPercent = computed(() => {
 
 const isPortableUpdate = computed(() => updateResult.value?.update_mode === "portable");
 const updateActionLabel = computed(() => {
-  if (isInstallingUpdate.value) return isPortableUpdate.value ? "正在打开浏览器..." : "正在更新...";
-  return isPortableUpdate.value ? "下载便携版 ZIP" : "下载并安装";
+  if (isInstallingUpdate.value) {
+    return isPortableUpdate.value ? t("settings.openingBrowser") : t("settings.downloadInstalling");
+  }
+  return isPortableUpdate.value ? t("settings.downloadPortable") : t("settings.downloadUpdate");
 });
 
 onMounted(async () => {
   try {
     appVersion.value = await getAppVersion();
   } catch (error) {
-    versionError.value = getErrorMessage(error, "无法读取当前版本");
+    versionError.value = getErrorMessage(error, t("settings.versionUnavailable"));
   }
 });
 
@@ -125,10 +151,12 @@ async function copySupportInfo() {
   isSupportInfoError.value = false;
   try {
     await copySupportInfoToClipboard(auth.activePlatform);
-    supportInfoStatus.value = "诊断信息已复制，可直接粘贴到 Issue 中。";
+    supportInfoStatus.value = t("settings.supportCopied");
   } catch (error) {
     isSupportInfoError.value = true;
-    supportInfoStatus.value = `复制失败：${getErrorMessage(error, "诊断信息暂不可用")}`;
+    supportInfoStatus.value = t("common.copyFailed", {
+      message: getErrorMessage(error, t("settings.supportUnavailable")),
+    });
   } finally {
     isCopyingSupportInfo.value = false;
   }
@@ -143,10 +171,12 @@ async function copyRecentErrorLogs() {
   try {
     const count = await copyRecentErrorLogsToClipboard();
     errorLogStatus.value =
-      count > 0 ? `近期错误日志已复制（${count} 条）。` : "近期没有已记录的错误。";
+      count > 0 ? t("settings.errorLogCopied", { count }) : t("settings.errorLogEmpty");
   } catch (error) {
     isErrorLogError.value = true;
-    errorLogStatus.value = `复制失败：${getErrorMessage(error, "近期错误日志暂不可用")}`;
+    errorLogStatus.value = t("common.copyFailed", {
+      message: getErrorMessage(error, t("settings.errorLogsUnavailable")),
+    });
   } finally {
     isCopyingErrorLogs.value = false;
   }
@@ -158,13 +188,36 @@ async function copyRecentErrorLogs() {
     <template #header>
       <div class="settings-header page-heading">
         <div>
-          <h2>设置</h2>
-          <p>管理代码平台显示方式与 AI 服务</p>
+          <h2>{{ t("settings.title") }}</h2>
+          <p>{{ t("settings.description") }}</p>
         </div>
+        <button
+          class="settings-close-button"
+          type="button"
+          :title="t('settings.close')"
+          :aria-label="t('settings.close')"
+          data-testid="close-settings"
+          @click="closeSettings"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
       </div>
     </template>
 
-    <div class="settings-page">
+    <div id="settings-page-start" class="settings-page">
       <section class="card section">
         <div class="section-heading">
           <span class="section-icon" aria-hidden="true">
@@ -174,21 +227,35 @@ async function copyRecentErrorLogs() {
             </svg>
           </span>
           <div>
-            <h3>界面设置</h3>
-            <p>配置评审详情与平台切换器中显示的内容。</p>
+            <h3>{{ t("settings.interfaceTitle") }}</h3>
+            <p>{{ t("settings.interfaceDescription") }}</p>
           </div>
         </div>
         <div class="setting-row">
           <span>
-            <span class="setting-label">同步 Diff 横向滚动</span>
-            <span class="setting-hint">
-              横向滚动条始终固定在顶部；开启后左右代码同步移动，关闭后分别滚动。
-            </span>
+            <label class="setting-label" for="interface-language">
+              {{ t("language.interface") }}
+            </label>
+            <span class="setting-hint">{{ t("language.interfaceHint") }}</span>
+          </span>
+          <AppSelect
+            id="interface-language"
+            v-model="selectedLocale"
+            class="language-select"
+            size="sm"
+            :aria-label="t('language.interface')"
+            :options="localeOptions"
+          />
+        </div>
+        <div class="setting-row">
+          <span>
+            <span class="setting-label">{{ t("settings.diffSync") }}</span>
+            <span class="setting-hint">{{ t("settings.diffSyncHint") }}</span>
           </span>
           <label class="toggle">
             <input
               type="checkbox"
-              aria-label="同步 Diff 横向滚动"
+              :aria-label="t('settings.diffSync')"
               :checked="isDiffSyncScrollEnabled"
               @change="setDiffSyncScrollEnabled"
             />
@@ -197,13 +264,13 @@ async function copyRecentErrorLogs() {
         </div>
         <div class="setting-row">
           <span>
-            <span class="setting-label">显示依赖关系</span>
-            <span class="setting-hint">在 PR / MR 详情中展示根据分支推导的依赖关系。</span>
+            <span class="setting-label">{{ t("settings.showDependencies") }}</span>
+            <span class="setting-hint">{{ t("settings.showDependenciesHint") }}</span>
           </span>
           <label class="toggle">
             <input
               type="checkbox"
-              aria-label="显示依赖关系"
+              :aria-label="t('settings.showDependencies')"
               :checked="isPrDependenciesVisible"
               @change="setPrDependenciesVisible"
             />
@@ -212,19 +279,19 @@ async function copyRecentErrorLogs() {
         </div>
         <div class="setting-row">
           <span>
-            <span class="setting-label">显示 Merge Queue / Merge Train</span>
+            <span class="setting-label">{{ t("settings.mergeQueue") }}</span>
             <span class="setting-hint">
               {{
                 isPrDependenciesVisible
-                  ? "在 PR / MR 详情中展示平台原生合并队列状态。"
-                  : "需先开启依赖关系，才能展示平台原生合并队列状态。"
+                  ? t("settings.mergeQueueHint")
+                  : t("settings.mergeQueueDisabledHint")
               }}
             </span>
           </span>
           <label class="toggle">
             <input
               type="checkbox"
-              aria-label="显示 Merge Queue / Merge Train"
+              :aria-label="t('settings.mergeQueue')"
               :checked="isPrDependenciesVisible && isMergeQueueVisible"
               :disabled="!isPrDependenciesVisible"
               @change="setMergeQueueVisible"
@@ -235,12 +302,12 @@ async function copyRecentErrorLogs() {
         <div v-for="p in platformList" :key="p.value" class="setting-row">
           <span>
             <span class="setting-label">{{ p.label }}</span>
-            <span class="setting-hint">在平台切换器中显示</span>
+            <span class="setting-hint">{{ t("settings.platformVisible") }}</span>
           </span>
           <label class="toggle">
             <input
               type="checkbox"
-              :aria-label="`显示 ${p.label}`"
+              :aria-label="t('settings.showPlatform', { platform: p.label })"
               :checked="auth.platformVisibility[p.value]"
               :disabled="
                 auth.platformVisibility[p.value] &&
@@ -264,8 +331,8 @@ async function copyRecentErrorLogs() {
             </svg>
           </span>
           <div>
-            <h3>桌面通知</h3>
-            <p>按平台和事件类型控制提醒，并保护私有仓库内容。</p>
+            <h3>{{ t("settings.notificationTitle") }}</h3>
+            <p>{{ t("settings.notificationDescription") }}</p>
           </div>
         </div>
         <NotificationSettings />
@@ -281,8 +348,8 @@ async function copyRecentErrorLogs() {
             </svg>
           </span>
           <div>
-            <h3>AI 服务设置</h3>
-            <p>配置评审与 PR / MR 草稿共用的模型服务和访问凭据。</p>
+            <h3>{{ t("settings.aiTitle") }}</h3>
+            <p>{{ t("settings.aiDescription") }}</p>
           </div>
         </div>
         <AiSettings />
@@ -298,8 +365,14 @@ async function copyRecentErrorLogs() {
             </svg>
           </span>
           <div>
-            <h3>应用更新</h3>
-            <p>当前版本：{{ appVersion ? `v${appVersion}` : "读取中..." }}</p>
+            <h3>{{ t("settings.updateTitle") }}</h3>
+            <p>
+              {{
+                t("settings.currentVersion", {
+                  version: appVersion ? `v${appVersion}` : t("settings.readingVersion"),
+                })
+              }}
+            </p>
           </div>
           <button
             type="button"
@@ -309,18 +382,18 @@ async function copyRecentErrorLogs() {
             "
             @click="checkUpdate()"
           >
-            {{ isCheckingUpdate ? "正在检查..." : "检查更新" }}
+            {{ isCheckingUpdate ? t("settings.checkingUpdate") : t("settings.checkUpdate") }}
           </button>
         </div>
         <div class="auto-update-row">
           <span>
-            <span class="setting-label">每日自动检查</span>
-            <span class="setting-hint">启动时最多每天检查一次；失败不会打扰其他操作。</span>
+            <span class="setting-label">{{ t("settings.autoUpdate") }}</span>
+            <span class="setting-hint">{{ t("settings.autoUpdateHint") }}</span>
           </span>
           <label class="toggle">
             <input
               type="checkbox"
-              aria-label="每日自动检查更新"
+              :aria-label="t('settings.autoUpdateAria')"
               :checked="isAutoUpdateCheckEnabled"
               @change="setAutoUpdateCheckEnabled"
             />
@@ -332,13 +405,14 @@ async function copyRecentErrorLogs() {
           {{ updateError }}
         </p>
         <div v-if="updateResult?.available" class="update-result" role="status">
-          <strong>发现新版本 v{{ updateResult.version }}</strong>
+          <strong>{{
+            t("settings.updateAvailable", { version: updateResult.version ?? "" })
+          }}</strong>
           <p v-if="isPortableUpdate">
-            当前为 Windows 便携版。将在浏览器中下载 ZIP；请退出应用，解压后用新版 MergeBeacon.exe
-            覆盖旧文件，再重新启动。覆盖前建议备份旧文件。
+            {{ t("settings.portableInstructions") }}
           </p>
-          <p v-else-if="!isUpdateInstalled">下载完成后将安装更新，并由你确认何时重启应用。</p>
-          <p v-else>更新已安装，重启应用后生效。</p>
+          <p v-else-if="!isUpdateInstalled">{{ t("settings.updateInstallerHint") }}</p>
+          <p v-else>{{ t("settings.updateInstalled") }}</p>
           <MarkdownRenderer
             v-if="updateResult.notes"
             class="update-notes"
@@ -351,11 +425,11 @@ async function copyRecentErrorLogs() {
               :value="updateProgressPercent"
               max="100"
             />
-            <span v-if="updatePhase === 'installing'"> 正在安装更新... </span>
+            <span v-if="updatePhase === 'installing'">{{ t("settings.installingUpdate") }}</span>
             <span v-else-if="updateProgressPercent !== null">
-              正在下载... {{ updateProgressPercent }}%
+              {{ t("settings.downloading", { percent: updateProgressPercent ?? 0 }) }}
             </span>
-            <span v-else>正在下载更新...</span>
+            <span v-else>{{ t("settings.downloadingUpdate") }}</span>
           </div>
           <div class="update-actions">
             <template v-if="isUpdateInstalled">
@@ -366,25 +440,25 @@ async function copyRecentErrorLogs() {
                 :disabled="isRestartingUpdate"
                 @click="restartApp"
               >
-                {{ isRestartingUpdate ? "正在重启..." : "重启完成更新" }}
+                {{ isRestartingUpdate ? t("settings.restarting") : t("settings.restart") }}
               </button>
             </template>
             <template v-else-if="isConfirmingInstall">
-              <span class="install-warning"> 安装前请保存工作并结束正在进行的 AI 评审。 </span>
+              <span class="install-warning">{{ t("settings.workWarning") }}</span>
               <button
                 type="button"
                 class="install-update-button"
                 :disabled="isInstallingUpdate"
                 @click="installUpdate"
               >
-                确认安装
+                {{ t("settings.confirmInstall") }}
               </button>
               <button
                 type="button"
                 class="cancel-install-button"
                 @click="cancelInstallConfirmation"
               >
-                取消
+                {{ t("settings.cancelInstall") }}
               </button>
             </template>
             <button
@@ -399,12 +473,12 @@ async function copyRecentErrorLogs() {
           </div>
         </div>
         <p v-else-if="updateResult" class="support-status" role="status" aria-live="polite">
-          当前已是最新版本。
+          {{ t("settings.latestVersion") }}
         </p>
-        <p v-else class="privacy-note">仅从 MergeBeacon 官方签名更新源读取元数据。</p>
+        <p v-else class="privacy-note">{{ t("settings.officialUpdates") }}</p>
       </section>
 
-      <section class="card section">
+      <section id="diagnostics" class="card section">
         <div class="section-heading support-heading">
           <span class="section-icon support" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -413,8 +487,8 @@ async function copyRecentErrorLogs() {
             </svg>
           </span>
           <div class="section-heading-copy">
-            <h3>诊断信息</h3>
-            <p>复制经过脱敏的版本、系统和配置状态，用于反馈问题。</p>
+            <h3>{{ t("settings.diagnosticsTitle") }}</h3>
+            <p>{{ t("settings.diagnosticsDescription") }}</p>
           </div>
           <div class="support-actions">
             <button
@@ -423,7 +497,7 @@ async function copyRecentErrorLogs() {
               :disabled="isCopyingSupportInfo"
               @click="copySupportInfo"
             >
-              {{ isCopyingSupportInfo ? "正在复制..." : "复制诊断信息" }}
+              {{ isCopyingSupportInfo ? t("settings.copying") : t("settings.copySupport") }}
             </button>
             <button
               type="button"
@@ -431,16 +505,15 @@ async function copyRecentErrorLogs() {
               :disabled="isCopyingErrorLogs"
               @click="copyRecentErrorLogs"
             >
-              {{ isCopyingErrorLogs ? "正在复制..." : "复制近期错误日志" }}
+              {{ isCopyingErrorLogs ? t("settings.copying") : t("settings.copyErrorLogs") }}
             </button>
           </div>
         </div>
         <p class="privacy-note">
-          诊断信息包含版本、系统、凭证存储类型和配置状态；不包含 Token、API
-          Key、仓库信息、代码内容或完整的自托管地址。
+          {{ t("settings.diagnosticsPrivacy") }}
         </p>
         <p class="privacy-note">
-          错误日志仅包含时间、命令、操作、错误关联标识、错误类别和状态码；不包含远端正文。
+          {{ t("settings.errorLogPrivacy") }}
         </p>
         <p
           v-if="supportInfoStatus"

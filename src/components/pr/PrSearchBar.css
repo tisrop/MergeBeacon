@@ -69,10 +69,27 @@
   font-size: 11px;
   font-weight: 600;
 }
+.select-field :deep(.app-select-wrap) {
+  min-width: 0;
+  max-width: 100%;
+}
 .select-field :deep(.app-select) {
   min-height: 34px;
   height: 34px;
   font-size: 12px;
+}
+.select-field :deep(.app-select-value) {
+  min-width: 0;
+}
+.select-field :deep(.dropdown-panel) {
+  min-width: 0;
+  max-width: 100%;
+}
+.select-field :deep(.dropdown-option) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .filter-options-error {
   display: flex;

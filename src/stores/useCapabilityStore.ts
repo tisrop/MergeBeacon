@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { getPlatformCapabilities } from "@/api";
 import type { Platform, PlatformCapabilities } from "@/types";
 import { getErrorMessage } from "@/utils/error";
+import { translate } from "@/i18n";
 
 function platformRecord<T>(factory: () => T): Record<Platform, T> {
   return { github: factory(), gitlab: factory(), gitee: factory() };
@@ -26,7 +27,7 @@ export const useCapabilityStore = defineStore("capabilities", () => {
         return capabilities;
       })
       .catch((error) => {
-        errors.value[platform] = getErrorMessage(error, "读取平台能力失败");
+        errors.value[platform] = getErrorMessage(error, translate("common.capabilitiesLoadFailed"));
         throw error;
       })
       .finally(() => pending.delete(platform));

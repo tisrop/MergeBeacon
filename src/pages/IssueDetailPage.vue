@@ -6,6 +6,7 @@ import AppLayout from "@/components/layout/AppLayout.vue";
 import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 import AppSelect from "@/components/shared/AppSelect.vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
+import { currentLocale, useI18n } from "@/i18n";
 import {
   issueCommentAdd,
   issueCommentsList,
@@ -25,6 +26,7 @@ interface IssueRouteContext {
 }
 
 const route = useRoute();
+const { t } = useI18n();
 const issue = ref<Issue | null>(null);
 const loading = ref(false);
 const error = ref("");
@@ -85,7 +87,9 @@ const platformLabel = computed(() => {
   return context.value ? labels[context.value.platform] : "";
 });
 const issueBody = computed(() => issue.value?.body.trim() ?? "");
-const stateLabel = computed(() => (issue.value?.state === "closed" ? "已关闭" : "开启"));
+const stateLabel = computed(() =>
+  issue.value?.state === "closed" ? t("issue.closed") : t("issue.open"),
+);
 const canUse = (permission: boolean | null | undefined): boolean => permission === true;
 const canEditTitleBody = computed(() =>
   canUse(issue.value?.metadata_permissions.can_edit_title_body),
@@ -95,10 +99,10 @@ const canManageLabels = computed(() => canUse(issue.value?.metadata_permissions.
 const canEditMetadata = computed(
   () => canEditTitleBody.value || canChangeState.value || canManageLabels.value,
 );
-const stateOptions = [
-  { value: "open", label: "开启" },
-  { value: "closed", label: "已关闭" },
-];
+const stateOptions = computed(() => [
+  { value: "open", label: t("issue.open") },
+  { value: "closed", label: t("issue.closed") },
+]);
 const labelOptions = computed(() => {
   const byName = new Map<string, PrLabel>();
   for (const label of availableLabels.value) byName.set(label.name.toLocaleLowerCase(), label);
@@ -147,7 +151,7 @@ const metadataHasChanges = computed(() => {
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", {
+  return date.toLocaleString(currentLocale(), {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -173,7 +177,7 @@ async function loadIssue() {
   error.value = "";
   if (!current) {
     loading.value = false;
-    error.value = "Issue 地址无效";
+    error.value = t("issue.invalidAddress");
     return;
   }
 
@@ -184,7 +188,7 @@ async function loadIssue() {
     issue.value = result;
   } catch (loadError) {
     if (sequence !== requestSequence || !sameContext(current, context.value)) return;
-    error.value = getErrorMessage(loadError, "Issue 详情加载失败");
+    error.value = getErrorMessage(loadError, t("issue.loadFailed"));
   } finally {
     if (sequence === requestSequence) loading.value = false;
   }
@@ -225,7 +229,7 @@ async function loadComments() {
     );
   } catch (loadError) {
     if (sequence !== commentsRequestSequence || !sameContext(current, context.value)) return;
-    commentsError.value = getErrorMessage(loadError, "评论加载失败");
+    commentsError.value = getErrorMessage(loadError, t("issue.commentLoadFailed"));
   } finally {
     if (sequence === commentsRequestSequence) commentsLoading.value = false;
   }
@@ -256,7 +260,7 @@ async function loadLabelOptions() {
     });
   } catch (loadError) {
     if (sequence !== labelsRequestSequence || !sameContext(current, context.value)) return;
-    labelsError.value = getErrorMessage(loadError, "仓库标签加载失败");
+    labelsError.value = getErrorMessage(loadError, t("issue.labelLoadFailed"));
   } finally {
     if (sequence === labelsRequestSequence) labelsLoading.value = false;
   }
@@ -328,10 +332,10 @@ async function closeIssue(): Promise<void> {
     requestSequence += 1;
     issue.value = result;
     closeConfirmOpen.value = false;
-    metadataStatus.value = "Issue 已关闭";
+    metadataStatus.value = t("issue.closeSuccess");
   } catch (closeIssueError) {
     if (sequence !== closeMutationSequence || !sameContext(current, context.value)) return;
-    closeError.value = getErrorMessage(closeIssueError, "Issue 关闭失败");
+    closeError.value = getErrorMessage(closeIssueError, t("issue.closeFailed"));
   } finally {
     if (sequence === closeMutationSequence) closeSubmitting.value = false;
   }
@@ -371,10 +375,10 @@ async function saveMetadata() {
     if (sequence !== metadataMutationSequence || !sameContext(current, context.value)) return;
     issue.value = result;
     editing.value = false;
-    metadataStatus.value = "Issue 元数据已更新";
+    metadataStatus.value = t("issue.metadataSaved");
   } catch (saveError) {
     if (sequence !== metadataMutationSequence || !sameContext(current, context.value)) return;
-    metadataError.value = getErrorMessage(saveError, "Issue 元数据更新失败");
+    metadataError.value = getErrorMessage(saveError, t("issue.metadataSaveFailed"));
   } finally {
     if (sequence === metadataMutationSequence) metadataSaving.value = false;
   }
@@ -401,7 +405,7 @@ async function submitComment() {
     void refreshIssue(current);
   } catch (submitError) {
     if (sequence !== commentMutationSequence || !sameContext(current, context.value)) return;
-    commentSubmitError.value = getErrorMessage(submitError, "评论发表失败");
+    commentSubmitError.value = getErrorMessage(submitError, t("issue.commentFailed"));
   } finally {
     if (sequence === commentMutationSequence) commentSubmitting.value = false;
   }
@@ -446,11 +450,11 @@ onScopeDispose(() => {
     <template #header>
       <div class="issue-detail-header page-heading">
         <div>
-          <h2>Issue 详情</h2>
+          <h2>{{ t("issue.detailTitle") }}</h2>
           <p v-if="context">{{ platformLabel }} · {{ repositoryFullName }} #{{ context.number }}</p>
-          <p v-else>Issue 地址无效</p>
+          <p v-else>{{ t("issue.invalidAddress") }}</p>
         </div>
-        <router-link to="/issue" class="btn btn-sm">返回 Issue 列表</router-link>
+        <router-link to="/issue" class="btn btn-sm">{{ t("issue.backToList") }}</router-link>
       </div>
     </template>
 
@@ -477,7 +481,9 @@ onScopeDispose(() => {
         <line x1="12" y1="16" x2="12.01" y2="16" />
       </svg>
       <strong>{{ error }}</strong>
-      <button v-if="context" type="button" class="btn btn-sm" @click="loadIssue">重新加载</button>
+      <button v-if="context" type="button" class="btn btn-sm" @click="loadIssue">
+        {{ t("common.reload") }}
+      </button>
     </div>
 
     <article v-else-if="issue" class="issue-detail">
@@ -494,8 +500,8 @@ onScopeDispose(() => {
             <div class="issue-detail-meta">
               <span>#{{ issue.number }}</span>
               <span>{{ issue.author.login }}</span>
-              <span>创建于 {{ formatDate(issue.created_at) }}</span>
-              <span>更新于 {{ formatDate(issue.updated_at) }}</span>
+              <span>{{ t("issue.createdAt", { date: formatDate(issue.created_at) }) }}</span>
+              <span>{{ t("issue.updatedAt", { date: formatDate(issue.updated_at) }) }}</span>
             </div>
           </div>
           <div class="issue-detail-actions">
@@ -517,7 +523,7 @@ onScopeDispose(() => {
                 <path d="M12 20h9" />
                 <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" />
               </svg>
-              编辑
+              {{ t("issue.edit") }}
             </button>
             <button
               v-if="!editing && issue.state === 'open' && canChangeState"
@@ -526,7 +532,7 @@ onScopeDispose(() => {
               data-testid="open-close-issue"
               @click="beginClosing"
             >
-              关闭 Issue
+              {{ t("issue.close") }}
             </button>
           </div>
         </div>
@@ -534,7 +540,7 @@ onScopeDispose(() => {
         <div
           v-if="issue.labels.length && !editing"
           class="issue-detail-labels"
-          aria-label="Issue 标签"
+          :aria-label="t('issue.labelAria')"
         >
           <span
             v-for="label in issue.labels"
@@ -550,7 +556,7 @@ onScopeDispose(() => {
       <form v-if="editing" class="issue-metadata-editor" @submit.prevent="saveMetadata">
         <div class="issue-editor-grid">
           <label class="field issue-editor-title">
-            <span>标题</span>
+            <span>{{ t("issue.title") }}</span>
             <input
               v-model="editTitle"
               class="input"
@@ -560,18 +566,22 @@ onScopeDispose(() => {
             />
           </label>
           <label class="field">
-            <span>状态</span>
+            <span>{{ t("issue.state") }}</span>
             <AppSelect
               v-model="editState"
               :options="stateOptions"
               :disabled="!canChangeState"
-              aria-label="Issue 状态"
+              :aria-label="t('issue.stateAria')"
             />
           </label>
         </div>
 
         <div class="field">
-          <div class="issue-editor-tabs" role="tablist" aria-label="Issue 描述模式">
+          <div
+            class="issue-editor-tabs"
+            role="tablist"
+            :aria-label="t('issue.editDescriptionMode')"
+          >
             <button
               type="button"
               role="tab"
@@ -579,7 +589,7 @@ onScopeDispose(() => {
               :class="{ active: editDescriptionMode === 'edit' }"
               @click="editDescriptionMode = 'edit'"
             >
-              编辑
+              {{ t("issue.edit") }}
             </button>
             <button
               type="button"
@@ -588,7 +598,7 @@ onScopeDispose(() => {
               :class="{ active: editDescriptionMode === 'preview' }"
               @click="editDescriptionMode = 'preview'"
             >
-              预览
+              {{ t("issue.preview") }}
             </button>
           </div>
           <textarea
@@ -596,30 +606,30 @@ onScopeDispose(() => {
             v-model="editBody"
             class="input issue-editor-body"
             rows="10"
-            aria-label="Issue 描述"
+            :aria-label="t('issue.body')"
             :disabled="!canEditTitleBody"
           />
           <div v-else class="issue-editor-preview" role="tabpanel">
             <MarkdownRenderer v-if="editBody.trim()" :content="editBody" variant="document" />
-            <p v-else>暂无预览内容</p>
+            <p v-else>{{ t("issue.emptyPreview") }}</p>
           </div>
         </div>
 
         <div class="field">
-          <span>标签</span>
+          <span>{{ t("issue.labels") }}</span>
           <AppMultiSelect
             v-model="editLabels"
             :options="labelOptions"
             :disabled="labelsLoading || !canManageLabels"
-            :placeholder="labelsLoading ? '正在加载仓库标签…' : '选择仓库标签'"
-            search-placeholder="搜索仓库标签"
-            empty-text="目标仓库暂无可用标签"
-            empty-search-text="没有匹配的仓库标签"
-            aria-label="选择 Issue 标签"
+            :placeholder="labelsLoading ? t('issue.labelLoading') : t('issue.labelPlaceholder')"
+            :search-placeholder="t('issue.labelSearch')"
+            :empty-text="t('issue.labelEmpty')"
+            :empty-search-text="t('issue.labelNoMatch')"
+            :aria-label="t('issue.selectLabelsAria')"
           />
           <div v-if="labelsError" class="issue-inline-error">
             <span>{{ labelsError }}</span>
-            <button type="button" @click="loadLabelOptions">重新加载</button>
+            <button type="button" @click="loadLabelOptions">{{ t("common.reload") }}</button>
           </div>
         </div>
 
@@ -631,14 +641,14 @@ onScopeDispose(() => {
             :disabled="metadataSaving"
             @click="cancelEditing"
           >
-            取消
+            {{ t("common.cancel") }}
           </button>
           <button
             type="submit"
             class="btn btn-primary btn-sm"
             :disabled="metadataSaving || !metadataHasChanges || !editTitle.trim()"
           >
-            {{ metadataSaving ? "正在保存…" : "保存更改" }}
+            {{ metadataSaving ? t("issue.metadataSaving") : t("issue.metadataSave") }}
           </button>
         </div>
       </form>
@@ -652,14 +662,14 @@ onScopeDispose(() => {
           class="issue-markdown"
           variant="document"
         />
-        <p v-else class="issue-empty-body">该 Issue 暂无描述。</p>
+        <p v-else class="issue-empty-body">{{ t("issue.emptyBody") }}</p>
       </section>
 
       <section class="issue-comments" aria-labelledby="issue-comments-heading">
         <div class="issue-comments-heading">
           <div>
-            <h3 id="issue-comments-heading">评论</h3>
-            <span>{{ comments.length }} 条</span>
+            <h3 id="issue-comments-heading">{{ t("issue.comments") }}</h3>
+            <span>{{ t("issue.commentCount", { count: comments.length }) }}</span>
           </div>
           <button
             v-if="commentsError"
@@ -668,25 +678,31 @@ onScopeDispose(() => {
             :disabled="commentsLoading"
             @click="loadComments"
           >
-            重新加载
+            {{ t("common.reload") }}
           </button>
         </div>
 
-        <div v-if="commentsLoading" class="issue-comments-loading" aria-label="正在加载评论">
+        <div
+          v-if="commentsLoading"
+          class="issue-comments-loading"
+          :aria-label="t('issue.commentLoading')"
+        >
           <div class="skeleton" />
           <div class="skeleton" />
         </div>
         <p v-else-if="commentsError" class="issue-comments-message" role="alert">
           {{ commentsError }}
         </p>
-        <p v-else-if="comments.length === 0" class="issue-comments-message">暂无评论。</p>
+        <p v-else-if="comments.length === 0" class="issue-comments-message">
+          {{ t("issue.emptyComments") }}
+        </p>
         <div v-else class="issue-comment-list">
           <article v-for="comment in comments" :key="String(comment.id)" class="issue-comment">
             <header>
               <img
                 v-if="comment.author.avatar_url"
                 :src="comment.author.avatar_url"
-                :alt="`${comment.author.login} 的头像`"
+                :alt="t('issue.avatarAlt', { author: comment.author.login })"
                 referrerpolicy="no-referrer"
               />
               <span v-else class="issue-comment-avatar" aria-hidden="true">
@@ -704,13 +720,13 @@ onScopeDispose(() => {
         </div>
 
         <form class="issue-comment-composer" @submit.prevent="submitComment">
-          <label for="issue-comment-body">发表评论</label>
+          <label for="issue-comment-body">{{ t("issue.commentAdd") }}</label>
           <textarea
             id="issue-comment-body"
             v-model="commentBody"
             class="input"
             rows="5"
-            placeholder="输入评论，支持 Markdown"
+            :placeholder="t('issue.commentPlaceholder')"
           />
           <p v-if="commentSubmitError" class="issue-action-error" role="alert">
             {{ commentSubmitError }}
@@ -721,7 +737,7 @@ onScopeDispose(() => {
               class="btn btn-primary btn-sm"
               :disabled="commentSubmitting || !commentBody.trim()"
             >
-              {{ commentSubmitting ? "正在发表…" : "发表评论" }}
+              {{ commentSubmitting ? t("issue.commentSubmitting") : t("issue.commentAdd") }}
             </button>
           </div>
         </form>
@@ -731,12 +747,12 @@ onScopeDispose(() => {
     <CloseConfirmDialog
       v-if="issue && context"
       :open="closeConfirmOpen"
-      :title="`关闭 Issue #${issue.number}？`"
+      :title="t('issue.closeConfirmTitle', { number: issue.number })"
       :repository="repositoryFullName"
       :target="`#${issue.number} ${issue.title}`"
-      impact="关闭后，该 Issue 将从开启列表中移出；如需继续处理，可以重新打开。"
-      warning="此操作不会删除 Issue、评论或历史记录。"
-      confirm-label="关闭 Issue"
+      :impact="t('issue.closeConfirmImpact')"
+      :warning="t('issue.closeConfirmWarning')"
+      :confirm-label="t('issue.close')"
       :loading="closeSubmitting"
       :error="closeError"
       @cancel="cancelClosing"

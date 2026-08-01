@@ -4,6 +4,7 @@ pub mod capabilities;
 pub mod error_log;
 pub mod inbox;
 pub mod issue;
+pub mod native_menu;
 pub mod notification;
 pub mod pr;
 pub mod review;

@@ -4,6 +4,7 @@ import { listRepositoryLabels, prParticipantSuggestions } from "@/api";
 import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
 import { MAX_PR_TITLE_CHARS } from "@/constants/pr";
+import { currentLocale, useI18n } from "@/i18n";
 import type {
   Platform,
   PlatformCapabilities,
@@ -35,6 +36,8 @@ const emit = defineEmits<{
   "open-link": [href: string];
   "open-external": [href: string];
 }>();
+
+const { t } = useI18n();
 
 const editing = ref(false);
 const title = ref("");
@@ -88,22 +91,22 @@ const canManageMilestone = computed(() =>
 const isGitee = computed(() => props.capabilities?.platform === "gitee");
 const participantLabels = computed(() =>
   isGitee.value
-    ? { reviewers: "评审者", assignees: "测试者" }
-    : { reviewers: "Reviewers", assignees: "Assignees" },
+    ? { reviewers: t("metadata.reviewersGitee"), assignees: t("metadata.assigneesGitee") }
+    : { reviewers: t("metadata.reviewers"), assignees: t("metadata.assignees") },
 );
 const categoryLabels = computed(() =>
   isGitee.value
-    ? { labels: "标签", milestone: "里程碑" }
-    : { labels: "Labels", milestone: "Milestone" },
+    ? { labels: t("metadata.labelsGitee"), milestone: t("metadata.milestoneGitee") }
+    : { labels: t("metadata.labels"), milestone: t("metadata.milestone") },
 );
-const reviewStatusLabels: Record<PrReviewStatus, string> = {
-  pending: "待检视",
-  approved: "已批准",
-  changes_requested: "请求修改",
-  commented: "已评论",
-  dismissed: "已撤销",
-  unknown: "状态未知",
-};
+const reviewStatusLabels = computed<Record<PrReviewStatus, string>>(() => ({
+  pending: t("metadata.reviewPending"),
+  approved: t("metadata.reviewApproved"),
+  changes_requested: t("metadata.reviewChangesRequested"),
+  commented: t("metadata.reviewCommented"),
+  dismissed: t("metadata.reviewDismissed"),
+  unknown: t("metadata.reviewUnknown"),
+}));
 const reviewerEntries = computed(() => {
   if (props.detail.reviewer_statuses?.length) return props.detail.reviewer_statuses;
   return props.detail.reviewers.map((user) => ({
@@ -318,7 +321,7 @@ async function loadParticipantOptions(sequence: number): Promise<void> {
     });
   } catch (cause) {
     if (sequence === optionsSequence) {
-      participantsError.value = getErrorMessage(cause, "无法读取目标仓库成员");
+      participantsError.value = getErrorMessage(cause, t("metadata.participantsLoadFailed"));
     }
   } finally {
     if (sequence === optionsSequence) participantsLoading.value = false;
@@ -341,7 +344,7 @@ async function loadLabelOptions(sequence: number): Promise<void> {
     });
   } catch (cause) {
     if (sequence === optionsSequence) {
-      labelsError.value = getErrorMessage(cause, "无法读取目标仓库标签");
+      labelsError.value = getErrorMessage(cause, t("metadata.labelsLoadFailed"));
     }
   } finally {
     if (sequence === optionsSequence) labelsLoading.value = false;
@@ -384,11 +387,11 @@ function cancelEditing(): void {
 function submit(): void {
   const normalizedTitle = title.value.trim();
   if (!normalizedTitle) {
-    validationError.value = "PR 标题不能为空";
+    validationError.value = t("metadata.titleRequired");
     return;
   }
   if (Array.from(normalizedTitle).length > MAX_PR_TITLE_CHARS) {
-    validationError.value = `PR 标题不能超过 ${MAX_PR_TITLE_CHARS} 个字符`;
+    validationError.value = t("metadata.titleTooLong", { count: MAX_PR_TITLE_CHARS });
     return;
   }
   validationError.value = "";
@@ -421,32 +424,34 @@ onUnmounted(invalidateOptions);
   <section class="metadata-panel" aria-labelledby="pr-metadata-heading">
     <div class="metadata-heading-row">
       <div>
-        <p class="metadata-eyebrow">PR / MR 元数据</p>
-        <h3 id="pr-metadata-heading">参与者与分类</h3>
+        <p class="metadata-eyebrow">{{ t("metadata.eyebrow") }}</p>
+        <h3 id="pr-metadata-heading">{{ t("metadata.heading") }}</h3>
       </div>
       <button
         v-if="!editing"
         class="btn btn-sm btn-outline"
         type="button"
         :disabled="!hasEditableField || saving"
-        :title="hasEditableField ? '编辑 PR / MR 元数据' : '当前 Token 没有可用的元数据编辑权限'"
+        :title="hasEditableField ? t('metadata.editTitle') : t('metadata.editUnavailable')"
         data-testid="edit-pr-metadata"
         @click="startEditing"
       >
-        编辑元数据
+        {{ t("metadata.edit") }}
       </button>
     </div>
 
     <div v-if="!editing" class="metadata-summary">
       <div class="metadata-item">
-        <span class="metadata-label">状态</span>
+        <span class="metadata-label">{{ t("metadata.state") }}</span>
         <span class="metadata-value">{{
-          detail.draft == null ? "平台未提供" : detail.draft ? "Draft" : "Ready"
+          detail.draft == null ? t("metadata.unavailable") : detail.draft ? "Draft" : "Ready"
         }}</span>
       </div>
       <div class="metadata-item">
         <span class="metadata-label">{{ participantLabels.reviewers }}</span>
-        <span v-if="reviewerEntries.length === 0" class="metadata-value">未指定</span>
+        <span v-if="reviewerEntries.length === 0" class="metadata-value">{{
+          t("metadata.unassigned")
+        }}</span>
         <span v-else class="metadata-value metadata-reviewer-list">
           <template v-for="reviewer in reviewerEntries" :key="reviewer.user.login">
             <a
@@ -455,7 +460,7 @@ onUnmounted(invalidateOptions);
               :href="reviewer.web_url"
               target="_blank"
               rel="noopener noreferrer"
-              :title="`在浏览器中打开 ${reviewer.user.login} 的检视页面`"
+              :title="t('metadata.openReviewer', { login: reviewer.user.login })"
               data-testid="metadata-reviewer-link"
               @click.prevent="openReviewerPage(reviewer.web_url)"
             >
@@ -482,7 +487,11 @@ onUnmounted(invalidateOptions);
       <div v-if="capabilities?.supports_pr_assignee_management" class="metadata-item">
         <span class="metadata-label">{{ participantLabels.assignees }}</span>
         <span class="metadata-value">
-          {{ detail.assignees.map((user) => user.login).join("、") || "未指定" }}
+          {{
+            detail.assignees
+              .map((user) => user.login)
+              .join(currentLocale() === "zh-CN" ? "、" : ", ") || t("metadata.unassigned")
+          }}
         </span>
       </div>
       <div class="metadata-item">
@@ -496,22 +505,24 @@ onUnmounted(invalidateOptions);
           >
             {{ label }}
           </span>
-          <span v-if="detail.summary.labels.length === 0">未指定</span>
+          <span v-if="detail.summary.labels.length === 0">{{ t("metadata.unassigned") }}</span>
         </span>
       </div>
       <div class="metadata-item">
         <span class="metadata-label">{{ categoryLabels.milestone }}</span>
-        <span class="metadata-value">{{ detail.milestone?.title || "未指定" }}</span>
+        <span class="metadata-value">{{
+          detail.milestone?.title || t("metadata.unassigned")
+        }}</span>
       </div>
       <div v-if="linkedIssueNumbers.length > 0" class="metadata-item metadata-linked-issues">
-        <span class="metadata-label">关联 Issue</span>
+        <span class="metadata-label">{{ t("metadata.linkedIssues") }}</span>
         <span class="metadata-value metadata-linked-issue-list">
           <button
             v-for="issueNumber in linkedIssueNumbers"
             :key="issueNumber"
             class="metadata-linked-issue"
             type="button"
-            :aria-label="`打开 Issue #${issueNumber}`"
+            :aria-label="t('metadata.openIssue', { number: issueNumber })"
             @click="openIssue(issueNumber)"
           >
             #{{ issueNumber }}
@@ -527,12 +538,14 @@ onUnmounted(invalidateOptions);
         class="metadata-description metadata-markdown"
         @link-click="handleDescriptionLinkClick"
       />
-      <p v-else class="metadata-description metadata-description-empty">暂无描述</p>
+      <p v-else class="metadata-description metadata-description-empty">
+        {{ t("metadata.noDescription") }}
+      </p>
     </div>
 
     <form v-else class="metadata-form" @submit.prevent="submit">
       <label class="field field-wide">
-        <span>标题</span>
+        <span>{{ t("metadata.title") }}</span>
         <input
           v-model="title"
           data-testid="metadata-title"
@@ -543,8 +556,12 @@ onUnmounted(invalidateOptions);
       </label>
       <div class="field-wide metadata-description-field">
         <div class="metadata-description-toolbar">
-          <span id="metadata-description-label">描述</span>
-          <div class="metadata-description-tabs" role="tablist" aria-label="Markdown 描述模式">
+          <span id="metadata-description-label">{{ t("metadata.description") }}</span>
+          <div
+            class="metadata-description-tabs"
+            role="tablist"
+            :aria-label="t('metadata.descriptionMode')"
+          >
             <button
               id="metadata-description-edit-tab"
               type="button"
@@ -554,7 +571,7 @@ onUnmounted(invalidateOptions);
               :class="{ active: descriptionMode === 'edit' }"
               @click="descriptionMode = 'edit'"
             >
-              编辑
+              {{ t("metadata.descriptionEdit") }}
             </button>
             <button
               id="metadata-description-preview-tab"
@@ -565,7 +582,7 @@ onUnmounted(invalidateOptions);
               :class="{ active: descriptionMode === 'preview' }"
               @click="descriptionMode = 'preview'"
             >
-              预览
+              {{ t("metadata.descriptionPreview") }}
             </button>
           </div>
         </div>
@@ -599,7 +616,9 @@ onUnmounted(invalidateOptions);
             class="metadata-markdown"
             @link-click="handleDescriptionLinkClick"
           />
-          <p v-else class="metadata-description-preview-empty">暂无预览内容</p>
+          <p v-else class="metadata-description-preview-empty">
+            {{ t("metadata.noPreview") }}
+          </p>
         </div>
       </div>
       <label v-if="capabilities?.supports_pr_draft_toggle" class="draft-control">
@@ -609,17 +628,23 @@ onUnmounted(invalidateOptions);
           type="checkbox"
           :disabled="!canToggleDraft || saving"
         />
-        <span>标记为 Draft</span>
+        <span>{{ t("metadata.markDraft") }}</span>
       </label>
       <label v-if="capabilities?.supports_pr_reviewer_management" class="field">
         <span>{{ participantLabels.reviewers }}</span>
         <AppMultiSelect
           v-model="reviewers"
           :options="participantOptions"
-          :placeholder="participantsLoading ? '加载中…' : `选择${participantLabels.reviewers}`"
-          :search-placeholder="`搜索${participantLabels.reviewers}`"
-          empty-text="仓库暂无成员"
-          empty-search-text="没有匹配成员"
+          :placeholder="
+            participantsLoading
+              ? t('common.loadingMore')
+              : t('metadata.selectParticipant', { participant: participantLabels.reviewers })
+          "
+          :search-placeholder="
+            t('metadata.searchParticipant', { participant: participantLabels.reviewers })
+          "
+          :empty-text="t('metadata.noParticipants')"
+          :empty-search-text="t('metadata.noMatchingParticipants')"
           :aria-label="participantLabels.reviewers"
           :disabled="!canManageReviewers || saving || participantsLoading"
           data-testid="metadata-reviewers"
@@ -630,10 +655,16 @@ onUnmounted(invalidateOptions);
         <AppMultiSelect
           v-model="assignees"
           :options="participantOptions"
-          :placeholder="participantsLoading ? '加载中…' : `选择${participantLabels.assignees}`"
-          :search-placeholder="`搜索${participantLabels.assignees}`"
-          empty-text="仓库暂无成员"
-          empty-search-text="没有匹配成员"
+          :placeholder="
+            participantsLoading
+              ? t('common.loadingMore')
+              : t('metadata.selectParticipant', { participant: participantLabels.assignees })
+          "
+          :search-placeholder="
+            t('metadata.searchParticipant', { participant: participantLabels.assignees })
+          "
+          :empty-text="t('metadata.noParticipants')"
+          :empty-search-text="t('metadata.noMatchingParticipants')"
           :aria-label="participantLabels.assignees"
           :disabled="!canManageAssignees || saving || participantsLoading"
           data-testid="metadata-assignees"
@@ -644,10 +675,10 @@ onUnmounted(invalidateOptions);
         <AppMultiSelect
           v-model="labels"
           :options="labelOptions"
-          :placeholder="labelsLoading ? '加载中…' : '选择标签'"
-          search-placeholder="搜索标签"
-          empty-text="仓库暂无标签"
-          empty-search-text="没有匹配标签"
+          :placeholder="labelsLoading ? t('common.loadingMore') : t('metadata.selectLabels')"
+          :search-placeholder="t('metadata.searchLabels')"
+          :empty-text="t('metadata.noLabels')"
+          :empty-search-text="t('metadata.noMatchingLabels')"
           :aria-label="categoryLabels.labels"
           :disabled="!canManageLabels || saving || labelsLoading"
           data-testid="metadata-labels"
@@ -660,15 +691,19 @@ onUnmounted(invalidateOptions);
           data-testid="metadata-milestone"
           type="text"
           :disabled="!canManageMilestone || saving"
-          placeholder="留空表示移除 Milestone"
+          :placeholder="t('metadata.milestoneRemove')"
         />
       </label>
       <p v-if="hasUnknownPermission" class="permission-note">
-        部分权限无法预先确认；保存时会由平台 API 使用当前 Token 再次校验。
+        {{ t("metadata.permissionUnknown") }}
       </p>
       <div v-if="participantsError || labelsError" class="options-error" role="alert">
         <p class="error-msg">
-          {{ [participantsError, labelsError].filter(Boolean).join("；") }}
+          {{
+            [participantsError, labelsError]
+              .filter(Boolean)
+              .join(currentLocale() === "zh-CN" ? "；" : "; ")
+          }}
         </p>
         <button
           class="btn btn-sm btn-outline"
@@ -677,16 +712,16 @@ onUnmounted(invalidateOptions);
           data-testid="metadata-options-retry"
           @click="loadOptions"
         >
-          重新加载候选项
+          {{ t("metadata.reloadOptions") }}
         </button>
       </div>
       <p v-if="validationError" class="error-msg" role="alert">{{ validationError }}</p>
       <div class="metadata-form-actions">
         <button class="btn btn-sm" type="button" :disabled="saving" @click="cancelEditing">
-          取消
+          {{ t("common.cancel") }}
         </button>
         <button class="btn btn-sm btn-primary" type="submit" :disabled="saving">
-          {{ saving ? "正在保存…" : "保存元数据" }}
+          {{ saving ? t("metadata.saving") : t("metadata.save") }}
         </button>
       </div>
     </form>

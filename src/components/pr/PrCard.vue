@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import PrStatusSummary from "@/components/pr/PrStatusSummary.vue";
-import type { PrSummary } from "@/types";
+import type { PrState, PrSummary } from "@/types";
 import { labelTagColorClass } from "@/utils/labelColorClass";
+import { useI18n } from "@/i18n";
 
 defineProps<{
   pr: PrSummary;
@@ -10,6 +12,13 @@ defineProps<{
 defineEmits<{
   click: [];
 }>();
+const { locale, t } = useI18n();
+const stateLabels = computed<Record<PrState, string>>(() => ({
+  open: t("pr.open"),
+  closed: t("pr.closed"),
+  merged: t("pr.merged"),
+  all: t("pr.all"),
+}));
 </script>
 
 <template>
@@ -25,13 +34,13 @@ defineEmits<{
     <span class="pr-content">
       <div class="pr-card-top">
         <span class="pr-title">{{ pr.title }}</span>
-        <span class="badge" :class="`badge-${pr.state}`">{{ pr.state }}</span>
+        <span class="badge" :class="`badge-${pr.state}`">{{ stateLabels[pr.state] }}</span>
       </div>
       <PrStatusSummary v-if="pr.state === 'open' && pr.status" :status="pr.status" />
       <div class="pr-card-meta">
         <span class="pr-number">#{{ pr.number }}</span>
-        <span>由 {{ pr.author.login }} 更新</span>
-        <span>{{ new Date(pr.updated_at).toLocaleDateString("zh-CN") }}</span>
+        <span>{{ t("common.updatedBy", { author: pr.author.login }) }}</span>
+        <span>{{ new Date(pr.updated_at).toLocaleDateString(locale) }}</span>
         <span v-if="pr.labels.length" class="pr-labels">
           <span
             v-for="label in pr.labels"

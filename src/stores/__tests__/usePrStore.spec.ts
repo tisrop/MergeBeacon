@@ -6,6 +6,8 @@ import {
   prDetail,
   prDiff,
   prList,
+  prListStatuses,
+  prListStatusesCancel,
   prMerge,
   prMergeReadiness,
   prMetadataUpdate,
@@ -19,9 +21,12 @@ import type {
   PrSummary,
   PrMergeReadiness,
 } from "@/types";
+import { setAppLocale } from "@/i18n";
 
 vi.mock("@/api", () => ({
   prList: vi.fn(),
+  prListStatuses: vi.fn().mockResolvedValue([]),
+  prListStatusesCancel: vi.fn().mockResolvedValue(undefined),
   prDetail: vi.fn(),
   prDiff: vi.fn(),
   prCommits: vi.fn(),
@@ -59,7 +64,12 @@ describe("usePrStore", () => {
   });
 
   beforeEach(() => {
+    setAppLocale("zh-CN");
     setActivePinia(createPinia());
+    vi.mocked(prListStatuses).mockReset();
+    vi.mocked(prListStatuses).mockResolvedValue([]);
+    vi.mocked(prListStatusesCancel).mockReset();
+    vi.mocked(prListStatusesCancel).mockResolvedValue(undefined);
   });
 
   it("清空平台上下文后忽略迟到的列表响应", async () => {
@@ -110,6 +120,133 @@ describe("usePrStore", () => {
     store.clearContext();
     expect(store.listTruncated).toBe(false);
     expect(store.listTotalCount).toBe(0);
+  });
+
+  it("GitHub 基础列表返回后立即结束加载，并在后台回填状态", async () => {
+    const statusRequest =
+      deferred<Array<{ number: number; status: NonNullable<PrSummary["status"]> }>>();
+    vi.mocked(prList).mockResolvedValueOnce({
+      items: [
+        {
+          number: 42,
+          title: "快速显示基础列表",
+          author: { id: 1, login: "dev", name: "Dev", avatar_url: "" },
+          state: "open",
+          created_at: "",
+          updated_at: "",
+          labels: [],
+          status: {
+            status: "unknown",
+            draft: null,
+            has_conflicts: null,
+            checks_status: "unknown",
+            approvals_status: "unknown",
+            blocking_reasons: [],
+          },
+        },
+      ],
+      page: 1,
+      total_pages: 1,
+      total_count: 1,
+    });
+    vi.mocked(prListStatuses).mockReturnValueOnce(statusRequest.promise);
+    const store = usePrStore();
+
+    await store.fetchPrList("github", "owner", "repo");
+
+    expect(store.loading).toBe(false);
+    expect(store.list[0].status?.status).toBe("unknown");
+    expect(prListStatuses).toHaveBeenCalledWith(
+      expect.any(String),
+      "github",
+      "owner",
+      "repo",
+      [42],
+    );
+
+    statusRequest.resolve([
+      {
+        number: 42,
+        status: {
+          status: "ready",
+          draft: false,
+          has_conflicts: false,
+          checks_status: "ready",
+          approvals_status: "ready",
+          blocking_reasons: [],
+        },
+      },
+    ]);
+    await statusRequest.promise;
+    await Promise.resolve();
+
+    expect(store.list[0].status?.status).toBe("ready");
+  });
+
+  it("翻页时取消旧的 GitHub 状态补充并忽略迟到结果", async () => {
+    const oldStatusRequest =
+      deferred<Array<{ number: number; status: NonNullable<PrSummary["status"]> }>>();
+    vi.mocked(prList)
+      .mockResolvedValueOnce({
+        items: [
+          {
+            number: 1,
+            title: "第一页",
+            author: { id: 1, login: "dev", name: "Dev", avatar_url: "" },
+            state: "open",
+            created_at: "",
+            updated_at: "",
+            labels: [],
+          },
+        ],
+        page: 1,
+        total_pages: 2,
+        total_count: 2,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            number: 2,
+            title: "第二页",
+            author: { id: 1, login: "dev", name: "Dev", avatar_url: "" },
+            state: "open",
+            created_at: "",
+            updated_at: "",
+            labels: [],
+          },
+        ],
+        page: 2,
+        total_pages: 2,
+        total_count: 2,
+      });
+    vi.mocked(prListStatuses)
+      .mockReturnValueOnce(oldStatusRequest.promise)
+      .mockResolvedValueOnce([]);
+    const store = usePrStore();
+    await store.fetchPrList("github", "owner", "repo");
+    const oldRequestId = vi.mocked(prListStatuses).mock.calls[0][0];
+    store.setPage(2);
+    await store.fetchPrList("github", "owner", "repo");
+
+    expect(prListStatusesCancel).toHaveBeenCalledWith(oldRequestId);
+
+    oldStatusRequest.resolve([
+      {
+        number: 1,
+        status: {
+          status: "blocked",
+          draft: false,
+          has_conflicts: true,
+          checks_status: "blocked",
+          approvals_status: "unknown",
+          blocking_reasons: [],
+        },
+      },
+    ]);
+    await oldStatusRequest.promise;
+    await Promise.resolve();
+
+    expect(store.list.map((item) => item.number)).toEqual([2]);
   });
 
   it("仅允许跳转到总页数范围内的整数页", async () => {
@@ -236,6 +373,23 @@ describe("usePrStore", () => {
       sort: "updated_desc",
     });
     expect(store.hasListQuery).toBe(false);
+  });
+
+  it("后台加载 Diff 时不占用详情或列表的加载状态", async () => {
+    const pendingDiff = deferred<DiffResult>();
+    vi.mocked(prDiff).mockReturnValueOnce(pendingDiff.promise);
+    const store = usePrStore();
+
+    const request = store.fetchPrDiff("github", "owner", "repo", 42);
+
+    expect(store.diffLoading).toBe(true);
+    expect(store.detailLoading).toBe(false);
+    expect(store.loading).toBe(false);
+
+    pendingDiff.resolve({ diff: "", files: [], patch_schema_version: 1, patches: [] });
+    await request;
+
+    expect(store.diffLoading).toBe(false);
   });
 
   it("详情上下文变化且请求返回 404 时清除旧详情并显示明确提示", async () => {

@@ -7,6 +7,7 @@ import AppMultiSelect from "@/components/shared/AppMultiSelect.vue";
 import AppSelect from "@/components/shared/AppSelect.vue";
 import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
 import { MAX_PR_TITLE_CHARS } from "@/constants/pr";
+import { currentLocale, useI18n } from "@/i18n";
 import {
   aiPrDraft,
   aiPrDraftCancel,
@@ -46,6 +47,7 @@ const auth = useAuthStore();
 const repoStore = useRepoStore();
 const prStore = usePrStore();
 const capabilities = useCapabilityStore();
+const { t } = useI18n();
 
 const sourceFullName = ref("");
 const targetFullName = ref("");
@@ -145,11 +147,11 @@ const platformCapabilities = computed<PlatformCapabilities | null>(
 );
 const isGitee = computed(() => creationPlatform.value === "gitee");
 const requestType = computed(() => (creationPlatform.value === "gitlab" ? "MR" : "PR"));
-const createLabel = computed(() => "创建 " + requestType.value);
+const createLabel = computed(() => t("prNew.create", { type: requestType.value }));
 const participantLabels = computed(() =>
   isGitee.value
-    ? { reviewers: "评审者", assignees: "测试者" }
-    : { reviewers: "Reviewers", assignees: "Assignees" },
+    ? { reviewers: t("prNew.giteeReviewers"), assignees: t("prNew.giteeTesters") }
+    : { reviewers: t("prNew.reviewers"), assignees: t("prNew.assignees") },
 );
 
 function parseRepository(fullName: string): RepositoryRef | null {
@@ -264,10 +266,10 @@ const templateOptions = computed(() =>
     label: template.name,
   })),
 );
-const draftFillModeOptions = [
-  { value: "empty", label: "仅填空字段" },
-  { value: "overwrite", label: "覆盖全部" },
-];
+const draftFillModeOptions = computed(() => [
+  { value: "empty", label: t("prNew.fillEmpty") },
+  { value: "overwrite", label: t("prNew.fillOverwrite") },
+]);
 const selectedTemplate = computed(() =>
   templates.value.find((template) => template.source_path === selectedTemplatePath.value),
 );
@@ -288,10 +290,10 @@ const aiDraftDiffLimitNotice = computed(() => {
   const diff = preview.value?.diff.diff ?? "";
   const bytes = new TextEncoder().encode(diff).length;
   if (bytes > AI_DRAFT_REQUEST_DIFF_LIMIT_BYTES) {
-    return "当前 Diff 超过 1 MiB，发送前会先截断；AI 最终仅基于前 64 KiB 生成草稿。";
+    return t("prNew.aiDiffRequestLimit");
   }
   if (bytes > AI_DRAFT_MODEL_DIFF_LIMIT_BYTES) {
-    return "Diff 较长，AI 仅基于前 64 KiB 生成草稿。";
+    return t("prNew.aiDiffModelLimit");
   }
   return "";
 });
@@ -304,11 +306,11 @@ const previewDeletions = computed(() =>
 const diffCommitOptions = computed(() => [
   {
     value: "",
-    label: `全部提交 (${preview.value?.commits.length ?? 0})`,
+    label: t("prNew.allCommits", { count: preview.value?.commits.length ?? 0 }),
   },
   ...(preview.value?.commits.map((commit) => ({
     value: commit.sha,
-    label: `${shortCommitSha(commit.sha)} · ${commit.title || "无标题提交"}`,
+    label: `${shortCommitSha(commit.sha)} · ${commit.title || t("prNew.untitledCommit")}`,
   })) ?? []),
 ]);
 const displayedPreview = computed(() =>
@@ -325,12 +327,12 @@ const displayedPreviewIncomplete = computed(() => displayedPreview.value?.incomp
 const displayedPreviewWarning = computed(() => {
   const reasons = displayedPreview.value?.incomplete_reasons ?? [];
   if (reasons.includes("pagination_failed")) {
-    return `后续分页加载失败，当前仅展示已获取的 Commit 和 Diff，不影响创建 ${requestType.value}。`;
+    return t("prNew.previewPaginationFailed", { type: requestType.value });
   }
   if (reasons.includes("pagination_limit")) {
-    return `变更超过客户端分页安全上限，当前仅展示前 10,000 个 Commit，不影响创建 ${requestType.value}。`;
+    return t("prNew.previewPaginationLimit", { type: requestType.value });
   }
-  return `平台 API 仅返回了部分 Commit 或 Diff，不影响创建 ${requestType.value}。`;
+  return t("prNew.previewPlatformLimit", { type: requestType.value });
 });
 
 function normalizedBranches(options: PrBranchOptions): string[] {
@@ -360,7 +362,7 @@ function shortCommitSha(sha: string): string {
 function commitDate(value: string): string {
   if (!value) return "";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(currentLocale());
 }
 
 function truncateUtf8Input(value: string, maxBytes: number): string {
@@ -412,21 +414,21 @@ async function handleDescriptionPaste(event: ClipboardEvent): Promise<void> {
   event.preventDefault();
 
   if (descriptionImageUploading.value) {
-    descriptionImageError.value = "请等待当前图片上传完成后再粘贴下一张图片。";
+    descriptionImageError.value = t("prNew.imageUploadBusy");
     return;
   }
   const target = targetRepository.value;
   const file = imageItem.getAsFile();
   if (!target || !file) {
-    descriptionImageError.value = "无法读取剪贴板中的图片。";
+    descriptionImageError.value = t("prNew.imageReadFailed");
     return;
   }
   if (!SUPPORTED_DESCRIPTION_IMAGE_TYPES.has(file.type)) {
-    descriptionImageError.value = "仅支持 PNG、JPEG、GIF 或 WebP 图片。";
+    descriptionImageError.value = t("prNew.imageTypeUnsupported");
     return;
   }
   if (file.size <= 0 || file.size > MAX_DESCRIPTION_IMAGE_BYTES) {
-    descriptionImageError.value = "图片不能为空且单张不能超过 5 MiB。";
+    descriptionImageError.value = t("prNew.imageSizeInvalid");
     return;
   }
 
@@ -458,7 +460,7 @@ async function handleDescriptionPaste(event: ClipboardEvent): Promise<void> {
         }
         removeDescriptionImageMarker(marker);
         activeDescriptionImageMarker = "";
-        descriptionImageError.value = "平台能力加载失败，请重试后重新粘贴图片。";
+        descriptionImageError.value = t("prNew.imageCapabilityFailed");
         return;
       }
     }
@@ -473,7 +475,7 @@ async function handleDescriptionPaste(event: ClipboardEvent): Promise<void> {
     if (!uploadCapabilities.supports_pr_description_image_upload) {
       removeDescriptionImageMarker(marker);
       activeDescriptionImageMarker = "";
-      descriptionImageError.value = `当前平台公开 API 不支持从应用粘贴上传 ${requestType.value} 描述图片。`;
+      descriptionImageError.value = t("prNew.imageUnsupported", { type: requestType.value });
       return;
     }
 
@@ -504,7 +506,7 @@ async function handleDescriptionPaste(event: ClipboardEvent): Promise<void> {
     if (sequence !== descriptionImageSequence) return;
     removeDescriptionImageMarker(marker);
     activeDescriptionImageMarker = "";
-    descriptionImageError.value = getErrorMessage(cause, "图片上传失败");
+    descriptionImageError.value = getErrorMessage(cause, t("prNew.imageUploadFailed"));
   } finally {
     if (sequence === descriptionImageSequence) descriptionImageUploading.value = false;
   }
@@ -528,7 +530,7 @@ function invalidateAiDraft(): void {
 function cancelAiDraftByUser(): void {
   invalidateAiDraft();
   aiDraftError.value = "";
-  draftAssistantNotice.value = "已取消 AI 草稿生成。";
+  draftAssistantNotice.value = t("prNew.aiCancelled");
 }
 
 async function loadPreview(): Promise<void> {
@@ -570,7 +572,10 @@ async function loadPreview(): Promise<void> {
     preview.value = result;
   } catch (cause) {
     if (sequence !== previewSequence) return;
-    previewError.value = getErrorMessage(cause, "无法生成 " + requestType.value + " 预览");
+    previewError.value = getErrorMessage(
+      cause,
+      t("prNew.previewLoadFailed", { type: requestType.value }),
+    );
   } finally {
     if (sequence === previewSequence) previewLoading.value = false;
   }
@@ -613,20 +618,29 @@ async function loadTemplates(): Promise<void> {
     }
   } catch (cause) {
     if (sequence !== templatesSequence) return;
-    templatesError.value = getErrorMessage(cause, `无法读取仓库 ${requestType.value} 模板`);
+    templatesError.value = getErrorMessage(
+      cause,
+      t("prNew.templatesLoadFailed", { type: requestType.value }),
+    );
   } finally {
     if (sequence === templatesSequence) templatesLoading.value = false;
   }
 }
 
 function preservedDraftFieldsNotice(
-  source: string,
+  source: "template" | "ai",
   preserveTitle: boolean,
   preserveBody: boolean,
 ): string {
-  const fields = [preserveTitle ? "标题" : "", preserveBody ? "描述" : ""].filter(Boolean);
+  const fields = [
+    preserveTitle ? t("prNew.title") : "",
+    preserveBody ? t("prNew.description") : "",
+  ].filter(Boolean);
   if (fields.length === 0) return "";
-  return `${source}未覆盖已有${fields.join("和")}；如需替换，请选择“覆盖全部”。`;
+  return t("prNew.fieldsPreserved", {
+    source: source === "template" ? t("prNew.templateSource") : "AI",
+    fields: fields.join(t("prNew.fieldJoiner")),
+  });
 }
 
 function applyTemplate(): void {
@@ -641,7 +655,7 @@ function applyTemplate(): void {
     descriptionMode.value = "edit";
   }
   aiDraftError.value = "";
-  draftAssistantNotice.value = preservedDraftFieldsNotice("模板", preserveTitle, preserveBody);
+  draftAssistantNotice.value = preservedDraftFieldsNotice("template", preserveTitle, preserveBody);
 }
 
 async function fillWithAi(): Promise<void> {
@@ -660,7 +674,7 @@ async function fillWithAi(): Promise<void> {
   const preserveTitle = nextFillMode === "empty" && Boolean(currentTitle.trim());
   const preserveBody = nextFillMode === "empty" && Boolean(currentBody.trim());
   aiDraftError.value = "";
-  draftAssistantNotice.value = preservedDraftFieldsNotice("AI", preserveTitle, preserveBody);
+  draftAssistantNotice.value = preservedDraftFieldsNotice("ai", preserveTitle, preserveBody);
   if (preserveTitle && preserveBody) return;
 
   const sequence = ++aiDraftSequence;
@@ -696,10 +710,13 @@ async function fillWithAi(): Promise<void> {
       body.value = result.body;
       descriptionMode.value = "edit";
     }
-    draftAssistantNotice.value = preservedDraftFieldsNotice("AI", preserveTitle, preserveBody);
+    draftAssistantNotice.value = preservedDraftFieldsNotice("ai", preserveTitle, preserveBody);
   } catch (cause) {
     if (sequence !== aiDraftSequence) return;
-    aiDraftError.value = getErrorMessage(cause, `AI 生成 ${requestType.value} 草稿失败`);
+    aiDraftError.value = getErrorMessage(
+      cause,
+      t("prNew.aiDraftFailed", { type: requestType.value }),
+    );
   } finally {
     if (activeAiDraftRequestId === requestId) activeAiDraftRequestId = null;
     if (sequence === aiDraftSequence) aiDraftLoading.value = false;
@@ -733,7 +750,7 @@ async function loadCommitPreview(): Promise<void> {
     commitPreview.value = result;
   } catch (cause) {
     if (sequence !== commitPreviewSequence) return;
-    commitPreviewError.value = getErrorMessage(cause, "无法读取该提交的 Diff");
+    commitPreviewError.value = getErrorMessage(cause, t("prNew.commitDiffFailed"));
   } finally {
     if (sequence === commitPreviewSequence) commitPreviewLoading.value = false;
   }
@@ -774,7 +791,7 @@ async function loadBranches(preserveExisting = false): Promise<void> {
       sourceBranches.value = [];
       targetBranches.value = [];
     }
-    branchError.value = getErrorMessage(cause, "无法读取仓库分支");
+    branchError.value = getErrorMessage(cause, t("prNew.branchesLoadFailed"));
   } finally {
     if (sequence === branchSequence) branchesLoading.value = false;
   }
@@ -810,7 +827,7 @@ async function loadLabels(): Promise<void> {
     });
   } catch (cause) {
     if (sequence !== labelsSequence) return;
-    labelsError.value = getErrorMessage(cause, "无法读取目标仓库标签");
+    labelsError.value = getErrorMessage(cause, t("prNew.labelsLoadFailed"));
   } finally {
     if (sequence === labelsSequence) labelsLoading.value = false;
   }
@@ -847,7 +864,7 @@ async function loadParticipantSuggestions(): Promise<void> {
     });
   } catch (cause) {
     if (sequence !== participantsSequence) return;
-    participantsError.value = getErrorMessage(cause, "无法读取目标仓库成员");
+    participantsError.value = getErrorMessage(cause, t("prNew.participantsLoadFailed"));
   } finally {
     if (sequence === participantsSequence) participantsLoading.value = false;
   }
@@ -959,7 +976,7 @@ async function handleSubmit(): Promise<void> {
       query: createWarnings.length > 0 ? { [PR_CREATE_WARNING_QUERY]: "1" } : undefined,
     });
   } catch (cause) {
-    error.value = getErrorMessage(cause, "创建 " + requestType.value + " 失败");
+    error.value = getErrorMessage(cause, t("prNew.createFailed", { type: requestType.value }));
   } finally {
     submitting.value = false;
   }
@@ -1059,10 +1076,12 @@ onUnmounted(() => {
       <div class="pr-new-header page-heading">
         <div>
           <h2>{{ createLabel }}</h2>
-          <p v-if="targetRepository">目标仓库：{{ targetRepository.fullName }}</p>
-          <p v-else>请先选择目标仓库</p>
+          <p v-if="targetRepository">
+            {{ t("prNew.targetRepositoryValue", { repository: targetRepository.fullName }) }}
+          </p>
+          <p v-else>{{ t("prNew.selectTargetFirst") }}</p>
         </div>
-        <RouterLink class="btn btn-sm" to="/pr">返回列表</RouterLink>
+        <RouterLink class="btn btn-sm" to="/pr">{{ t("prNew.back") }}</RouterLink>
       </div>
     </template>
 
@@ -1070,73 +1089,81 @@ onUnmounted(() => {
       <section class="card form-section">
         <div class="section-heading source-section-heading">
           <div>
-            <h3>选择变更来源</h3>
-            <p>源仓库可以选择当前仓库或已加载的 Fork。</p>
+            <h3>{{ t("prNew.sourceHeading") }}</h3>
+            <p>{{ t("prNew.sourceHint") }}</p>
           </div>
           <button
             class="btn btn-sm"
             type="button"
             :disabled="branchesLoading || !sourceRepository || !targetRepository"
-            :aria-label="branchesLoading ? '正在刷新分支' : '刷新分支'"
+            :aria-label="
+              branchesLoading ? t('prNew.refreshingBranches') : t('prNew.refreshBranches')
+            "
             @click="refreshBranches"
           >
-            {{ branchesLoading ? "正在刷新…" : "刷新分支" }}
+            {{ branchesLoading ? t("prNew.refreshingBranchesShort") : t("prNew.refreshBranches") }}
           </button>
         </div>
         <div v-if="isGlobalCreation" class="target-repository-field field">
-          <span>目标仓库</span>
+          <span>{{ t("prNew.targetRepository") }}</span>
           <AppSelect
             v-model="targetFullName"
             :options="targetRepositoryOptions"
             :placeholder="
               repositoriesLoading
-                ? '加载中…'
+                ? t('common.loadingMore')
                 : targetRepositories.length
-                  ? '选择目标仓库'
-                  : '暂无可用仓库'
+                  ? t('prNew.selectTargetRepository')
+                  : t('prNew.noRepositories')
             "
             searchable
-            search-placeholder="搜索目标仓库"
-            aria-label="目标仓库"
+            :search-placeholder="t('prNew.searchTargetRepository')"
+            :aria-label="t('prNew.targetRepository')"
             :has-more="hasMoreRepositories"
             :loading-more="repositoriesLoadingMore"
-            :load-more-text="repositoryError ? '重试加载仓库' : '加载更多仓库'"
+            :load-more-text="
+              repositoryError ? t('prNew.retryRepositories') : t('prNew.loadMoreRepositories')
+            "
             @load-more="loadMoreRepositories"
           />
           <p v-if="repositoryError" class="error-msg" role="alert">{{ repositoryError }}</p>
         </div>
         <div class="branch-grid">
           <div class="field">
-            <span>源仓库</span>
+            <span>{{ t("prNew.sourceRepository") }}</span>
             <AppSelect
               v-model="sourceFullName"
               :options="sourceRepositoryOptions"
               searchable
-              search-placeholder="搜索仓库"
-              aria-label="源仓库"
+              :search-placeholder="t('prNew.searchRepository')"
+              :aria-label="t('prNew.sourceRepository')"
             />
           </div>
           <div class="field">
-            <span>源分支</span>
+            <span>{{ t("prNew.sourceBranch") }}</span>
             <AppSelect
               v-model="sourceBranch"
               :options="sourceBranchOptions"
-              :placeholder="branchesLoading ? '加载中…' : '选择源分支'"
+              :placeholder="
+                branchesLoading ? t('common.loadingMore') : t('prNew.selectSourceBranch')
+              "
               searchable
-              search-placeholder="搜索源分支"
-              aria-label="源分支"
+              :search-placeholder="t('prNew.searchSourceBranch')"
+              :aria-label="t('prNew.sourceBranch')"
             />
           </div>
           <div class="branch-arrow" aria-hidden="true">→</div>
           <div class="field">
-            <span>目标分支</span>
+            <span>{{ t("prNew.targetBranch") }}</span>
             <AppSelect
               v-model="targetBranch"
               :options="targetBranchOptions"
-              :placeholder="branchesLoading ? '加载中…' : '选择目标分支'"
+              :placeholder="
+                branchesLoading ? t('common.loadingMore') : t('prNew.selectTargetBranch')
+              "
               searchable
-              search-placeholder="搜索目标分支"
-              aria-label="目标分支"
+              :search-placeholder="t('prNew.searchTargetBranch')"
+              :aria-label="t('prNew.targetBranch')"
             />
           </div>
         </div>
@@ -1148,7 +1175,7 @@ onUnmounted(() => {
           "
           class="validation-note"
         >
-          同一仓库的源分支与目标分支必须不同。
+          {{ t("prNew.sameBranch") }}
         </p>
       </section>
 
@@ -1165,26 +1192,26 @@ onUnmounted(() => {
       >
         <div class="section-heading preview-heading">
           <div>
-            <h3>变更预览</h3>
+            <h3>{{ t("prNew.previewHeading") }}</h3>
             <p>
               {{ sourceRepository?.fullName }}:{{ sourceBranch }} →
               {{ targetRepository?.fullName }}:{{ targetBranch }}
             </p>
           </div>
-          <div v-if="preview" class="preview-summary" aria-label="变更统计">
-            <span>{{ preview.commits.length }} 个提交</span>
-            <span>{{ preview.diff.files.length }} 个文件</span>
+          <div v-if="preview" class="preview-summary" :aria-label="t('prNew.changeStats')">
+            <span>{{ t("prNew.commitCount", { count: preview.commits.length }) }}</span>
+            <span>{{ t("prNew.fileCount", { count: preview.diff.files.length }) }}</span>
             <strong class="additions">+{{ previewAdditions }}</strong>
             <strong class="deletions">-{{ previewDeletions }}</strong>
           </div>
         </div>
 
         <div v-if="displayedPreviewIncomplete" class="preview-warning" role="alert">
-          <strong>预览不完整</strong>
+          <strong>{{ t("prNew.previewIncomplete") }}</strong>
           <span>{{ displayedPreviewWarning }}</span>
         </div>
 
-        <div class="preview-tabs" role="tablist" aria-label="创建预览">
+        <div class="preview-tabs" role="tablist" :aria-label="t('prNew.createPreview')">
           <button
             type="button"
             role="tab"
@@ -1205,47 +1232,55 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <div v-if="previewLoading" class="preview-loading" role="status">正在比较分支…</div>
+        <div v-if="previewLoading" class="preview-loading" role="status">
+          {{ t("prNew.comparingBranches") }}
+        </div>
         <div v-else-if="previewError" class="preview-error" role="alert">
           <span>{{ previewError }}</span>
-          <button class="btn btn-sm" type="button" @click="loadPreview">重试</button>
+          <button class="btn btn-sm" type="button" @click="loadPreview">
+            {{ t("common.retry") }}
+          </button>
         </div>
         <template v-else-if="preview">
           <ol v-if="previewTab === 'commits'" class="commit-list">
             <li v-for="commit in preview.commits" :key="commit.sha" class="commit-row">
               <code>{{ shortCommitSha(commit.sha) }}</code>
               <div>
-                <strong>{{ commit.title || "无标题提交" }}</strong>
+                <strong>{{ commit.title || t("prNew.untitledCommit") }}</strong>
                 <span>
-                  {{ commit.author_name || "未知作者" }}
+                  {{ commit.author_name || t("common.unknownAuthor") }}
                   <time v-if="commit.authored_at" :datetime="commit.authored_at">
                     {{ commitDate(commit.authored_at) }}
                   </time>
                 </span>
               </div>
             </li>
-            <li v-if="preview.commits.length === 0" class="preview-empty">没有待合并提交</li>
+            <li v-if="preview.commits.length === 0" class="preview-empty">
+              {{ t("prNew.noCommits") }}
+            </li>
           </ol>
           <div v-else class="diff-preview-panel">
             <div class="diff-preview-toolbar">
-              <span>Diff 范围</span>
+              <span>{{ t("prNew.diffRange") }}</span>
               <AppSelect
                 v-model="selectedDiffCommitSha"
                 :options="diffCommitOptions"
                 size="sm"
-                aria-label="Diff 范围"
+                :aria-label="t('prNew.diffRange')"
               />
             </div>
             <div v-if="commitPreviewLoading" class="preview-loading" role="status">
-              正在读取提交 Diff…
+              {{ t("prNew.loadingCommitDiff") }}
             </div>
             <div v-else-if="commitPreviewError" class="preview-error" role="alert">
               <span>{{ commitPreviewError }}</span>
-              <button class="btn btn-sm" type="button" @click="loadCommitPreview">重试</button>
+              <button class="btn btn-sm" type="button" @click="loadCommitPreview">
+                {{ t("common.retry") }}
+              </button>
             </div>
             <template v-else-if="displayedDiff">
               <p v-if="isCommitWithoutBase" class="preview-scope-note">
-                该提交没有可用的父提交，仅显示变更后图片。
+                {{ t("prNew.rootCommitNote") }}
               </p>
               <DiffViewer
                 :diff="displayedDiff"
@@ -1268,35 +1303,35 @@ onUnmounted(() => {
       <section class="card form-section">
         <div class="section-heading">
           <div>
-            <h3>说明变更内容</h3>
-            <p>可应用仓库模板，或让 AI 根据当前提交和 Diff 生成草稿。</p>
+            <h3>{{ t("prNew.descriptionHeading") }}</h3>
+            <p>{{ t("prNew.descriptionHint") }}</p>
           </div>
         </div>
         <div class="draft-assistant">
           <div class="template-picker field">
-            <span>{{ requestType }} 模板</span>
+            <span>{{ t("prNew.templateLabel", { type: requestType }) }}</span>
             <AppSelect
               v-model="selectedTemplatePath"
               :options="templateOptions"
               :placeholder="
                 templatesLoading && templates.length === 0
-                  ? '加载模板中…'
+                  ? t('prNew.loadingTemplates')
                   : templates.length
-                    ? '选择仓库模板'
-                    : '仓库暂无模板'
+                    ? t('prNew.selectTemplate')
+                    : t('prNew.noTemplates')
               "
               searchable
-              search-placeholder="搜索模板"
-              :aria-label="`${requestType} 模板`"
+              :search-placeholder="t('prNew.searchTemplates')"
+              :aria-label="t('prNew.templateLabel', { type: requestType })"
             />
           </div>
           <div class="draft-fill-mode field">
-            <span>写入方式</span>
+            <span>{{ t("prNew.fillMode") }}</span>
             <AppSelect
               v-model="draftFillMode"
               :options="draftFillModeOptions"
               size="sm"
-              aria-label="草稿写入方式"
+              :aria-label="t('prNew.fillModeAria')"
             />
           </div>
           <div class="draft-assistant-actions">
@@ -1306,7 +1341,7 @@ onUnmounted(() => {
               :disabled="!selectedTemplate"
               @click="applyTemplate"
             >
-              应用模板
+              {{ t("prNew.applyTemplate") }}
             </button>
             <button
               class="btn btn-sm"
@@ -1314,7 +1349,7 @@ onUnmounted(() => {
               :disabled="templatesLoading || !targetRepository"
               @click="loadTemplates"
             >
-              {{ templatesLoading ? "正在加载…" : "重新加载" }}
+              {{ templatesLoading ? t("prNew.loading") : t("common.reload") }}
             </button>
             <button
               class="btn btn-sm ai-draft-button"
@@ -1322,7 +1357,7 @@ onUnmounted(() => {
               :disabled="!canFillWithAi"
               @click="fillWithAi"
             >
-              {{ aiDraftLoading ? "AI 生成中…" : "AI 填充" }}
+              {{ aiDraftLoading ? t("prNew.aiGenerating") : t("prNew.aiFill") }}
             </button>
             <button
               v-if="aiDraftLoading"
@@ -1330,7 +1365,7 @@ onUnmounted(() => {
               type="button"
               @click="cancelAiDraftByUser"
             >
-              取消生成
+              {{ t("prNew.cancelGeneration") }}
             </button>
           </div>
         </div>
@@ -1343,25 +1378,22 @@ onUnmounted(() => {
           {{ draftAssistantNotice }}
         </p>
         <p class="draft-assistant-help">
-          默认仅填充空白字段；选择“覆盖全部”后，允许模板或 AI 替换已有内容。AI 填充复用 AI
-          服务设置中的模型与凭证，仅使用当前预览中的提交和
-          Diff；选择模板后会保留模板结构，不会自动创建
-          {{ requestType }}。
+          {{ t("prNew.assistantHelp", { type: requestType }) }}
         </p>
         <label class="field field-wide">
-          <span>标题</span>
+          <span>{{ t("prNew.title") }}</span>
           <input
             v-model="title"
             class="input"
             type="text"
             :maxlength="MAX_PR_TITLE_CHARS"
-            placeholder="简要说明这次变更"
+            :placeholder="t('prNew.titlePlaceholder')"
           />
         </label>
         <div class="field field-wide description-field">
           <div class="description-toolbar">
-            <span>描述</span>
-            <div class="description-tabs" role="tablist" aria-label="Markdown 描述模式">
+            <span>{{ t("prNew.description") }}</span>
+            <div class="description-tabs" role="tablist" :aria-label="t('prNew.markdownMode')">
               <button
                 type="button"
                 role="tab"
@@ -1369,7 +1401,7 @@ onUnmounted(() => {
                 :class="{ active: descriptionMode === 'edit' }"
                 @click="descriptionMode = 'edit'"
               >
-                编辑
+                {{ t("prNew.edit") }}
               </button>
               <button
                 type="button"
@@ -1378,7 +1410,7 @@ onUnmounted(() => {
                 :class="{ active: descriptionMode === 'preview' }"
                 @click="descriptionMode = 'preview'"
               >
-                预览
+                {{ t("prNew.preview") }}
               </button>
             </div>
           </div>
@@ -1388,13 +1420,13 @@ onUnmounted(() => {
               v-model="body"
               class="input"
               rows="10"
-              aria-label="Markdown 描述"
-              placeholder="说明背景、实现方式和验证结果…"
+              :aria-label="t('prNew.markdownDescription')"
+              :placeholder="t('prNew.descriptionPlaceholder')"
               @paste="handleDescriptionPaste"
             />
             <p v-if="descriptionImageUploading" class="description-upload-status" role="status">
-              <template v-if="platformCapabilities">图片上传中，请稍候…</template>
-              <template v-else>正在加载平台能力，完成后将继续上传…</template>
+              <template v-if="platformCapabilities">{{ t("prNew.imageUploading") }}</template>
+              <template v-else>{{ t("prNew.imageCapabilityLoading") }}</template>
             </p>
             <p v-if="descriptionImageError" class="error-msg" role="alert">
               {{ descriptionImageError }}
@@ -1402,28 +1434,28 @@ onUnmounted(() => {
             <p class="description-upload-help">
               <template v-if="!platformCapabilities">
                 <template v-if="capabilities.errors[creationPlatform]">
-                  支持 Markdown；平台能力加载失败，粘贴图片时可重试加载。
+                  {{ t("prNew.imageHelpCapabilityFailed") }}
                 </template>
-                <template v-else>支持 Markdown；正在加载当前平台的图片上传能力。</template>
+                <template v-else>{{ t("prNew.imageHelpCapabilityLoading") }}</template>
               </template>
               <template v-else-if="platformCapabilities.supports_pr_description_image_upload">
-                支持 Markdown，可直接粘贴 PNG、JPEG、GIF 或 WebP 图片，单张不超过 5 MiB。
+                {{ t("prNew.imageHelpSupported") }}
               </template>
               <template v-else>
-                支持 Markdown；当前平台公开 API 不支持从应用粘贴上传图片。
+                {{ t("prNew.imageHelpUnsupported") }}
               </template>
             </p>
           </template>
           <div v-else class="description-preview" role="tabpanel">
             <MarkdownRenderer v-if="body.trim()" :content="descriptionPreviewBody" />
-            <p v-else class="description-preview-empty">暂无预览内容</p>
+            <p v-else class="description-preview-empty">{{ t("prNew.noPreviewContent") }}</p>
           </div>
         </div>
         <label v-if="platformCapabilities?.supports_pr_draft_toggle" class="draft-option">
           <input v-model="draft" type="checkbox" />
           <span>
-            <strong>创建为 Draft</strong>
-            <small>尚未准备好正式评审时使用。</small>
+            <strong>{{ t("prNew.createDraft") }}</strong>
+            <small>{{ t("prNew.createDraftHint") }}</small>
           </span>
         </label>
       </section>
@@ -1431,8 +1463,8 @@ onUnmounted(() => {
       <section class="card form-section">
         <div class="section-heading">
           <div>
-            <h3>参与者与分类</h3>
-            <p>参与者和标签候选均从目标仓库加载。</p>
+            <h3>{{ t("prNew.metadataHeading") }}</h3>
+            <p>{{ t("prNew.metadataHint") }}</p>
           </div>
         </div>
         <div class="metadata-grid">
@@ -1441,10 +1473,16 @@ onUnmounted(() => {
             <AppMultiSelect
               v-model="reviewers"
               :options="participantOptions"
-              :placeholder="participantsLoading ? '加载中…' : `选择${participantLabels.reviewers}`"
-              :search-placeholder="`搜索${participantLabels.reviewers}`"
-              empty-text="仓库暂无成员"
-              empty-search-text="没有匹配成员"
+              :placeholder="
+                participantsLoading
+                  ? t('common.loadingMore')
+                  : t('prNew.selectParticipant', { role: participantLabels.reviewers })
+              "
+              :search-placeholder="
+                t('prNew.searchParticipant', { role: participantLabels.reviewers })
+              "
+              :empty-text="t('prNew.noMembers')"
+              :empty-search-text="t('prNew.noMatchingMembers')"
               :aria-label="participantLabels.reviewers"
               :disabled="participantsLoading || Boolean(participantsError)"
             />
@@ -1454,24 +1492,30 @@ onUnmounted(() => {
             <AppMultiSelect
               v-model="assignees"
               :options="participantOptions"
-              :placeholder="participantsLoading ? '加载中…' : `选择${participantLabels.assignees}`"
-              :search-placeholder="`搜索${participantLabels.assignees}`"
-              empty-text="仓库暂无成员"
-              empty-search-text="没有匹配成员"
+              :placeholder="
+                participantsLoading
+                  ? t('common.loadingMore')
+                  : t('prNew.selectParticipant', { role: participantLabels.assignees })
+              "
+              :search-placeholder="
+                t('prNew.searchParticipant', { role: participantLabels.assignees })
+              "
+              :empty-text="t('prNew.noMembers')"
+              :empty-search-text="t('prNew.noMatchingMembers')"
               :aria-label="participantLabels.assignees"
               :disabled="participantsLoading || Boolean(participantsError)"
             />
           </label>
           <label v-if="platformCapabilities?.supports_pr_label_management" class="field">
-            <span>标签</span>
+            <span>{{ t("prNew.labels") }}</span>
             <AppMultiSelect
               v-model="labels"
               :options="labelOptions"
-              :placeholder="labelsLoading ? '加载中…' : '选择标签'"
-              search-placeholder="搜索标签"
-              empty-text="仓库暂无标签"
-              empty-search-text="没有匹配标签"
-              aria-label="标签"
+              :placeholder="labelsLoading ? t('common.loadingMore') : t('prNew.selectLabels')"
+              :search-placeholder="t('prNew.searchLabels')"
+              :empty-text="t('prNew.noLabels')"
+              :empty-search-text="t('prNew.noMatchingLabels')"
+              :aria-label="t('prNew.labels')"
               :disabled="labelsLoading || Boolean(labelsError)"
             />
           </label>
@@ -1489,12 +1533,12 @@ onUnmounted(() => {
         class="validation-note"
         role="status"
       >
-        当前平台不支持创建 {{ requestType }}。
+        {{ t("prNew.unsupported", { type: requestType }) }}
       </p>
       <div class="form-actions">
-        <span>不会执行本地 checkout、commit 或 push。</span>
+        <span>{{ t("prNew.localSafety") }}</span>
         <button class="btn btn-primary" type="submit" :disabled="!canSubmit">
-          {{ submitting ? "正在创建…" : createLabel }}
+          {{ submitting ? t("prNew.creating") : createLabel }}
         </button>
       </div>
     </form>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onUnmounted, ref, watch } from "vue";
+import { useI18n } from "@/i18n";
 
 const props = defineProps<{
   open: boolean;
@@ -18,6 +19,7 @@ const emit = defineEmits<{
   cancel: [];
   confirm: [];
 }>();
+const { t } = useI18n();
 
 const dialogRef = ref<HTMLElement | null>(null);
 const cancelButtonRef = ref<HTMLButtonElement | null>(null);
@@ -100,7 +102,7 @@ onUnmounted(() => {
         <header class="close-confirm-dialog-header">
           <span class="close-confirm-dialog-icon" aria-hidden="true">!</span>
           <div>
-            <span class="close-confirm-dialog-eyebrow">安全确认</span>
+            <span class="close-confirm-dialog-eyebrow">{{ t("common.securityConfirmation") }}</span>
             <h2 id="close-confirm-dialog-title">{{ title }}</h2>
           </div>
         </header>
@@ -126,7 +128,7 @@ onUnmounted(() => {
             data-testid="cancel-close"
             @click="cancel"
           >
-            取消
+            {{ t("common.cancel") }}
           </button>
           <button
             type="button"
@@ -135,7 +137,7 @@ onUnmounted(() => {
             data-testid="confirm-close"
             @click="confirm"
           >
-            {{ loading ? (loadingLabel ?? "正在关闭…") : confirmLabel }}
+            {{ loading ? (loadingLabel ?? t("dialog.closing")) : confirmLabel }}
           </button>
         </footer>
       </section>

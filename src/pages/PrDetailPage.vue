@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, watch, nextTick } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
@@ -8,6 +8,7 @@ import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import { issueDetail, openExternalUrl, reviewCommentAdd } from "@/api";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import { getErrorMessage } from "@/utils/error";
+import { currentLocale, useI18n } from "@/i18n";
 import { extractDiffHunk, findStandardPatch } from "@/utils/diffHunk";
 import { resolvePrContentLink, type PrContentRouteTarget } from "@/utils/prContentLinks";
 import {
@@ -17,14 +18,10 @@ import {
 } from "@/utils/prCreateWarnings";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import DiffCommitSelector from "@/components/diff/DiffCommitSelector.vue";
-import DiffViewer from "@/components/diff/DiffViewer.vue";
 import ReviewForm from "@/components/review/ReviewForm.vue";
 import ReviewList from "@/components/review/ReviewList.vue";
-import AiReviewPanel from "@/components/ai/AiReviewPanel.vue";
 import MergeReadinessPanel from "@/components/pr/MergeReadinessPanel.vue";
 import PrMetadataPanel from "@/components/pr/PrMetadataPanel.vue";
-import PrDependenciesPanel from "@/components/pr/PrDependenciesPanel.vue";
-import PrMergeQueuePanel from "@/components/pr/PrMergeQueuePanel.vue";
 import CloseConfirmDialog from "@/components/shared/CloseConfirmDialog.vue";
 import { APP_COMMAND_EVENT, type AppCommandDetail } from "@/types/commands";
 import type {
@@ -39,6 +36,19 @@ import type {
 } from "@/types";
 import type { CommitRangeSelection } from "@/utils/commitRange";
 
+const DiffViewer = defineAsyncComponent(() => import("@/components/diff/DiffViewer.vue"));
+const AiReviewPanel = defineAsyncComponent(() => import("@/components/ai/AiReviewPanel.vue"));
+const PrDependenciesPanel = defineAsyncComponent(
+  () => import("@/components/pr/PrDependenciesPanel.vue"),
+);
+const PrMergeQueuePanel = defineAsyncComponent(
+  () => import("@/components/pr/PrMergeQueuePanel.vue"),
+);
+
+interface AiReviewPanelHandle {
+  startReview: () => Promise<void> | void;
+}
+
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
@@ -46,6 +56,7 @@ const pr = usePrStore();
 const reviewInbox = useReviewInboxStore();
 const capabilityStore = useCapabilityStore();
 const uiSettings = useUiSettingsStore();
+const { t } = useI18n();
 
 const platform = route.params.platform as Platform;
 const owner = route.params.owner as string;
@@ -85,6 +96,20 @@ const locatingAiSuggestion = ref(false);
 const tabsRef = ref<HTMLElement | null>(null);
 const isMergeContextVisible = computed(() => uiSettings.isPrDependenciesVisible);
 let aiReviewScrollTop: number | null = null;
+let commitsRequested = false;
+
+function ensurePrCommits(): void {
+  if (
+    commitsRequested ||
+    pr.commitsLoading ||
+    pr.commits.length > 0 ||
+    pr.currentPr?.summary.number !== number
+  ) {
+    return;
+  }
+  commitsRequested = true;
+  void pr.fetchPrCommits(platform, owner, repo, number);
+}
 
 function contentScrollContainer(): HTMLElement | null {
   return tabsRef.value?.closest<HTMLElement>(".content-body") ?? null;
@@ -103,6 +128,7 @@ function selectTab(tab: PrDetailTab) {
   if (tab === "dependencies" && !isMergeContextVisible.value) return;
   const returningToAiSuggestion = tab === "ai" && locatingAiSuggestion.value;
   activeTab.value = tab;
+  if (tab === "diff") ensurePrCommits();
   if (tab === "dependencies") dependencyPanelMounted.value = true;
   if (tab === "ai") {
     aiPanelMounted.value = true;
@@ -151,6 +177,7 @@ function handleCommitRangeChange(selection: CommitRangeSelection | null): void {
 }
 
 function reloadPrCommits(): void {
+  commitsRequested = true;
   void pr.fetchPrCommits(platform, owner, repo, number);
 }
 
@@ -172,7 +199,7 @@ function handleAiSuggestionLocate(suggestion: AiSuggestion): void {
 
 function handleDiffLocationResult(result: DiffLocationResult): void {
   if (result.id !== diffLocationRequest.value?.id) return;
-  diffLocationError.value = result.success ? "" : (result.message ?? "无法定位该 AI 建议");
+  diffLocationError.value = result.success ? "" : (result.message ?? t("prDetail.aiLocateFailed"));
 }
 
 function handleReviewCommentLocate(path: string, line: number | null, side: DiffSide | null): void {
@@ -191,7 +218,8 @@ function handleReviewCommentLocate(path: string, line: number | null, side: Diff
 
 const reviewListRef = ref<InstanceType<typeof ReviewList> | null>(null);
 const reviewFormRef = ref<InstanceType<typeof ReviewForm> | null>(null);
-const aiPanelRef = ref<InstanceType<typeof AiReviewPanel> | null>(null);
+const aiPanelRef = ref<AiReviewPanelHandle | null>(null);
+let pendingAiReviewStart = false;
 const reviewThreadSummary = ref<ReviewThreadSummary | null>(null);
 const unviewedFileCount = ref(0);
 const commentError = ref("");
@@ -209,6 +237,20 @@ const metadataSaving = ref(false);
 const metadataStatus = ref("");
 const metadataError = ref("");
 const titleLinkError = ref("");
+
+function flushPendingAiReviewStart(): void {
+  if (
+    !pendingAiReviewStart ||
+    !aiPanelRef.value ||
+    typeof aiPanelRef.value.startReview !== "function"
+  ) {
+    return;
+  }
+  pendingAiReviewStart = false;
+  void aiPanelRef.value.startReview();
+}
+
+watch(aiPanelRef, flushPendingAiReviewStart);
 
 const defaultCommitMessage = computed(
   () => `Merge pull request #${number} from ${pr.currentPr?.source_branch ?? ""}`,
@@ -230,7 +272,7 @@ const availableStrategies = computed(() =>
 
 const mergeButtonLabel = computed(() => {
   const s = availableStrategies.value.find((s) => s.value === selectedStrategy.value);
-  return s ? s.label : "Merge";
+  return s ? s.label : t("prDetail.merge");
 });
 
 watch(
@@ -283,13 +325,13 @@ const hasClosePermission = computed(
 );
 const canClose = computed(() => isOpen.value && hasClosePermission.value);
 const closeDisabledReason = computed(() => {
-  if (operating.value) return "正在执行其他 PR 操作";
-  if (!isOpen.value) return "只有打开状态的 PR 可以关闭";
+  if (operating.value) return t("prDetail.operationInProgress");
+  if (!isOpen.value) return t("prDetail.closeOnlyOpen");
   if (hasClosePermission.value) return "";
-  if (pr.readinessLoading) return "正在确认关闭权限";
-  if (pr.readinessError) return "关闭权限检查失败，请重新检查合并就绪状态";
-  if (pr.mergeReadiness?.has_merge_permission == null) return "平台未返回当前账号的关闭权限";
-  return "只有 PR 作者或具备仓库写入权限的成员才能关闭 PR";
+  if (pr.readinessLoading) return t("prDetail.closePermissionLoading");
+  if (pr.readinessError) return t("prDetail.closePermissionFailed");
+  if (pr.mergeReadiness?.has_merge_permission == null) return t("prDetail.closePermissionUnknown");
+  return t("prDetail.closePermissionRequired");
 });
 const canReopen = computed(() => isClosed.value && !isMerged.value);
 
@@ -298,7 +340,7 @@ async function handleOpenInBrowser(url: string): Promise<void> {
   try {
     await openExternalUrl(url);
   } catch (error) {
-    titleLinkError.value = getErrorMessage(error, "打开链接失败，请稍后重试");
+    titleLinkError.value = getErrorMessage(error, t("prDetail.openLinkFailed"));
   }
 }
 
@@ -310,7 +352,7 @@ async function handleOpenIssueTarget(target: PrContentRouteTarget): Promise<void
       params: { platform, owner: target.owner, repo: target.repo, number: target.number },
     });
   } catch (error) {
-    titleLinkError.value = getErrorMessage(error, "打开 Issue 详情失败，请稍后重试");
+    titleLinkError.value = getErrorMessage(error, t("prDetail.openIssueFailed"));
   }
 }
 
@@ -326,7 +368,7 @@ async function handleOpenPrDetail(target: PrContentRouteTarget): Promise<void> {
       params: { platform, owner: target.owner, repo: target.repo, number: target.number },
     });
   } catch (error) {
-    titleLinkError.value = getErrorMessage(error, "打开 PR 详情失败，请稍后重试");
+    titleLinkError.value = getErrorMessage(error, t("prDetail.openPrFailed"));
   }
 }
 
@@ -354,7 +396,7 @@ async function handlePrContentLink(href: string): Promise<void> {
       if (referenced.is_pull_request) await handleOpenPrDetail(target);
       else await handleOpenIssueTarget(target);
     } catch (error) {
-      titleLinkError.value = getErrorMessage(error, "无法识别仓库引用，请稍后重试");
+      titleLinkError.value = getErrorMessage(error, t("prDetail.referenceFailed"));
     }
     return;
   }
@@ -378,14 +420,15 @@ async function handleMetadataSave(update: PrMetadataUpdate): Promise<void> {
       reviewInbox.applyPrSummary(platform, owner, repo, outcome.detail.summary);
     }
     if (outcome.failures.length > 0) {
-      metadataError.value = outcome.failures.map((failure) => failure.message).join("；");
-      metadataStatus.value =
-        outcome.updated_fields.length > 0 ? "部分元数据已更新，请检查失败项。" : "";
+      metadataError.value = outcome.failures
+        .map((failure) => failure.message)
+        .join(currentLocale() === "zh-CN" ? "；" : "; ");
+      metadataStatus.value = outcome.updated_fields.length > 0 ? t("prDetail.metadataPartial") : "";
     } else {
-      metadataStatus.value = "元数据已更新";
+      metadataStatus.value = t("prDetail.metadataUpdated");
     }
   } catch (error) {
-    metadataError.value = getErrorMessage(error, "保存 PR / MR 元数据失败");
+    metadataError.value = getErrorMessage(error, t("prDetail.metadataSaveFailed"));
   } finally {
     metadataSaving.value = false;
   }
@@ -394,7 +437,7 @@ async function handleMetadataSave(update: PrMetadataUpdate): Promise<void> {
 async function handleMerge() {
   if (!pr.currentPr || !canMerge.value) return;
   operating.value = true;
-  statusMsg.value = "正在合并 PR...";
+  statusMsg.value = t("prDetail.merging");
   try {
     const outcome = await pr.mergePr(
       platform,
@@ -409,7 +452,9 @@ async function handleMerge() {
     const failedIssues = outcome.issue_close_failures.map((failure) => `#${failure.number}`);
     mergeWarning.value =
       failedIssues.length > 0
-        ? `PR 已合并，但以下关联 Issue 关闭失败：${failedIssues.join("、")}`
+        ? t("prDetail.mergeIssueCloseFailed", {
+            issues: failedIssues.join(currentLocale() === "zh-CN" ? "、" : ", "),
+          })
         : "";
     statusMsg.value = "";
   } catch (e) {
@@ -433,7 +478,7 @@ function cancelClose(): void {
 async function handleClose() {
   if (!pr.currentPr || !canClose.value || operating.value) return;
   operating.value = true;
-  statusMsg.value = "正在关闭 PR...";
+  statusMsg.value = t("prDetail.closing");
   closeError.value = "";
   try {
     await pr.closePr(platform, owner, repo, number);
@@ -441,7 +486,7 @@ async function handleClose() {
     closeConfirmOpen.value = false;
   } catch (error) {
     statusMsg.value = "";
-    closeError.value = getErrorMessage(error, "关闭 PR 失败，请稍后重试");
+    closeError.value = getErrorMessage(error, t("prDetail.closeFailed"));
   } finally {
     operating.value = false;
   }
@@ -450,7 +495,7 @@ async function handleClose() {
 async function handleReopen() {
   if (!pr.currentPr) return;
   operating.value = true;
-  statusMsg.value = "正在重新打开 PR...";
+  statusMsg.value = t("prDetail.reopening");
   try {
     await pr.reopenPr(platform, owner, repo, number);
     statusMsg.value = "";
@@ -470,7 +515,7 @@ async function handleAddComment(
 ) {
   if (!body?.trim()) return;
   if (!pr.currentPr?.head_sha) {
-    commentError.value = "当前 GitLab MR 缺少提交版本，请刷新页面后重试";
+    commentError.value = t("prDetail.missingHeadSha");
     return;
   }
   commentError.value = "";
@@ -501,7 +546,7 @@ async function handleAddComment(
       reviewListRef.value.refresh();
     }
   } catch (e) {
-    commentError.value = getErrorMessage(e, "提交行内评论失败");
+    commentError.value = getErrorMessage(e, t("prDetail.inlineCommentFailed"));
   }
 }
 
@@ -519,10 +564,9 @@ function handleAppCommand(event: Event): void {
     selectTab("diff");
     void nextTick(scrollTabBarIntoView);
   } else if (detail.type === "start_ai_review") {
+    pendingAiReviewStart = true;
     selectTab("ai");
-    void nextTick(() => {
-      if (typeof aiPanelRef.value?.startReview === "function") void aiPanelRef.value.startReview();
-    });
+    flushPendingAiReviewStart();
   } else if (detail.type === "prepare_review") {
     selectTab("diff");
     void nextTick(() => {
@@ -537,11 +581,11 @@ onMounted(async () => {
   window.addEventListener(APP_COMMAND_EVENT, handleAppCommand);
   if (route.query[PR_CREATE_WARNING_QUERY] === "1") {
     const createWarnings = readPrCreateWarnings(platform, owner, repo, number);
-    metadataStatus.value = "PR / MR 已创建，但部分后续操作失败。";
+    metadataStatus.value = t("prDetail.createPartial");
     metadataError.value =
       createWarnings.length > 0
-        ? createWarnings.join("；")
-        : "部分参与者或标签可能未能写入，请检查当前元数据后重试。";
+        ? createWarnings.join(currentLocale() === "zh-CN" ? "；" : "; ")
+        : t("prDetail.createPartialFallback");
     const nextQuery = { ...route.query };
     delete nextQuery[PR_CREATE_WARNING_QUERY];
     void Promise.resolve(router.replace({ query: nextQuery })).then(() => {
@@ -551,16 +595,18 @@ onMounted(async () => {
   const capabilityRequest = capabilityStore.load(platform).catch(() => null);
   await pr.fetchPrDetail(platform, owner, repo, number);
   if (pr.currentPr?.summary.number === number) {
-    await Promise.all([
+    await nextTick();
+    void Promise.allSettled([
       pr.fetchPrDiff(platform, owner, repo, number),
-      pr.fetchPrCommits(platform, owner, repo, number),
       pr.fetchMergeReadiness(platform, owner, repo, number),
     ]);
+    if (activeTab.value === "diff") ensurePrCommits();
   }
-  await capabilityRequest;
-  if (!platformCapabilities.value?.merge_strategies.includes(selectedStrategy.value)) {
-    selectedStrategy.value = platformCapabilities.value?.merge_strategies[0] ?? "merge";
-  }
+  void capabilityRequest.then(() => {
+    if (!platformCapabilities.value?.merge_strategies.includes(selectedStrategy.value)) {
+      selectedStrategy.value = platformCapabilities.value?.merge_strategies[0] ?? "merge";
+    }
+  });
 });
 onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand));
 </script>
@@ -573,8 +619,8 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
           <button
             class="pr-back-button"
             type="button"
-            title="返回 PR 列表"
-            aria-label="返回 PR 列表"
+            :title="t('prDetail.back')"
+            :aria-label="t('prDetail.back')"
             data-testid="back-to-pr-list"
             @click="router.push({ name: 'pr-list' })"
           >
@@ -591,15 +637,15 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             >
               <path d="m15 18-6-6 6-6" />
             </svg>
-            <span>PR 列表</span>
+            <span>{{ t("prDetail.backLabel") }}</span>
           </button>
           <h2 v-if="pr.currentPr">
             <button
               v-if="pr.currentPr.web_url"
               class="pr-title-link"
               type="button"
-              title="在浏览器中打开"
-              :aria-label="`在浏览器中打开：${pr.currentPr.summary.title}`"
+              :title="t('prDetail.openBrowser')"
+              :aria-label="t('prDetail.openBrowserTitle', { title: pr.currentPr.summary.title })"
               data-testid="pr-title-link"
               @click="handleOpenInBrowser(pr.currentPr.web_url)"
             >
@@ -634,12 +680,17 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             </svg>
             {{ pr.currentPr.source_branch }} → {{ pr.currentPr.target_branch }}
           </span>
-          <span class="author">by {{ pr.currentPr.summary.author.login }}</span>
+          <span class="author">{{
+            t("prDetail.byAuthor", { author: pr.currentPr.summary.author.login })
+          }}</span>
           <span :class="['pr-state-badge', pr.currentPr.summary.state]">
             {{
-              { open: "Open", closed: "Closed", merged: "Merged", all: "" }[
-                pr.currentPr.summary.state
-              ]
+              {
+                open: t("pr.open"),
+                closed: t("pr.closed"),
+                merged: t("pr.merged"),
+                all: "",
+              }[pr.currentPr.summary.state]
             }}
           </span>
         </div>
@@ -717,10 +768,14 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
               class="close-issues-checkbox"
             >
               <input v-model="closeRelatedIssues" type="checkbox" :disabled="operating" />
-              合并后关闭关联 Issue
+              {{ t("prDetail.closeIssuesAfterMerge") }}
             </label>
             <p v-if="capabilityStore.errors[platform]" class="error-msg">
-              {{ capabilityStore.errors[platform] }}，合并与评审操作暂不可用
+              {{
+                t("prDetail.capabilityUnavailable", {
+                  message: capabilityStore.errors[platform],
+                })
+              }}
             </p>
           </div>
 
@@ -729,16 +784,16 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
               class="btn btn-outline btn-danger"
               data-testid="close-pr-button"
               :disabled="!canClose || operating"
-              :title="closeDisabledReason || '关闭 PR'"
+              :title="closeDisabledReason || t('prDetail.close')"
               @click="requestClose"
             >
-              关闭 PR
+              {{ t("prDetail.close") }}
             </button>
           </div>
 
           <div v-if="canReopen" class="close-btn-wrapper">
             <button class="btn btn-outline btn-reopen" :disabled="operating" @click="handleReopen">
-              Reopen
+              {{ t("prDetail.reopen") }}
             </button>
           </div>
 
@@ -761,7 +816,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
               <line x1="15" y1="9" x2="9" y2="15" />
               <line x1="9" y1="9" x2="15" y2="15" />
             </svg>
-            操作失败
+            {{ t("prDetail.operationFailed") }}
           </p>
           <p class="error-msg">{{ pr.error }}</p>
         </div>
@@ -771,7 +826,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
       </div>
     </template>
 
-    <div v-if="pr.loading" class="loading-state">
+    <div v-if="pr.detailLoading" class="loading-state">
       <div class="skeleton skeleton-tabs" />
       <div class="skeleton skeleton-content" />
     </div>
@@ -791,7 +846,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
           >
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
-          评审意见
+          {{ t("prDetail.reviews") }}
         </button>
         <button
           v-if="isMergeContextVisible"
@@ -814,7 +869,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             <path d="M18 16V8" />
             <circle cx="18" cy="6" r="2" />
           </svg>
-          依赖关系
+          {{ t("prDetail.dependencies") }}
         </button>
         <button :class="{ active: activeTab === 'diff' }" @click="selectTab('diff')">
           <svg
@@ -845,7 +900,11 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             <path d="M12 2a4 4 0 0 1 4 4c0 2-2 4-4 4s-4-2-4-4a4 4 0 0 1 4-4z" />
             <path d="M12 14c-4.42 0-8 1.79-8 4v2h16v-2c0-2.21-3.58-4-8-4z" />
           </svg>
-          {{ locatingAiSuggestion && activeTab === "diff" ? "返回 AI 评审" : "AI 评审" }}
+          {{
+            locatingAiSuggestion && activeTab === "diff"
+              ? t("prDetail.backToAi")
+              : t("prDetail.aiReview")
+          }}
         </button>
       </div>
 
@@ -854,58 +913,71 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
           <p v-if="diffLocationError" class="error-msg diff-location-error" role="alert">
             {{ diffLocationError }}
           </p>
-          <DiffViewer
-            :diff="displayedDiff"
-            :platform="platform"
-            :owner="owner"
-            :repo="repo"
-            :pr-number="number"
-            :base-sha="displayedBaseSha"
-            :head-sha="displayedHeadSha"
-            :base-owner="displayedBaseRepository.owner"
-            :base-repo="displayedBaseRepository.repo"
-            :head-owner="headRepository?.owner"
-            :head-repo="headRepository?.repo"
-            :location-request="diffLocationRequest"
-            :thread-summary="isCommitRangeView ? null : reviewThreadSummary"
-            :can-sync-viewed-files="
-              !isCommitRangeView &&
-              (platformCapabilities?.supports_remote_file_viewed_state ?? false)
-            "
-            :read-only="isCommitRangeView"
-            @add-comment="handleAddComment"
-            @location-result="handleDiffLocationResult"
-            @review-progress="unviewedFileCount = $event"
+          <div
+            v-if="pr.diffLoading && !displayedDiff"
+            class="loading-state"
+            role="status"
+            aria-live="polite"
+            data-testid="diff-loading-state"
           >
-            <template #scope>
-              <DiffCommitSelector
-                :commits="pr.commits"
-                :truncated-end="pr.commitsTruncatedEnd"
-                :commits-loading="pr.commitsLoading"
-                :commits-error="pr.commitsError"
-                :selection="pr.commitRange"
-                :range-loading="pr.rangeDiffLoading"
-                :range-error="pr.rangeDiffError"
-                @update:selection="handleCommitRangeChange"
-                @retry="reloadPrCommits"
-              />
-              <p v-if="isCommitRangeView" class="commit-range-note" role="note">
-                当前只显示所选提交的变更。行内评论和「已查看」需要基于整体 Diff 的行号，
-                已在此视图下停用；返回「所有变更」后即可继续评审。
-              </p>
-            </template>
-          </DiffViewer>
-          <p v-if="commentError" class="error-msg">{{ commentError }}</p>
-          <p v-if="commentSuccess" class="success-msg">✓ 行内评论已提交</p>
-          <ReviewForm
-            ref="reviewFormRef"
-            :platform="platform"
-            :owner="owner"
-            :repo="repo"
-            :pr-number="number"
-            :unviewed-file-count="unviewedFileCount"
-            :unresolved-thread-count="reviewThreadSummary?.unresolved ?? 0"
-          />
+            <p class="text-secondary">{{ t("prDetail.loadingDiff") }}</p>
+            <div class="skeleton skeleton-content" />
+          </div>
+          <template v-else>
+            <DiffViewer
+              :diff="displayedDiff"
+              :platform="platform"
+              :owner="owner"
+              :repo="repo"
+              :pr-number="number"
+              :base-sha="displayedBaseSha"
+              :head-sha="displayedHeadSha"
+              :base-owner="displayedBaseRepository.owner"
+              :base-repo="displayedBaseRepository.repo"
+              :head-owner="headRepository?.owner"
+              :head-repo="headRepository?.repo"
+              :location-request="diffLocationRequest"
+              :thread-summary="isCommitRangeView ? null : reviewThreadSummary"
+              :can-sync-viewed-files="
+                !isCommitRangeView &&
+                (platformCapabilities?.supports_remote_file_viewed_state ?? false)
+              "
+              :read-only="isCommitRangeView"
+              @add-comment="handleAddComment"
+              @location-result="handleDiffLocationResult"
+              @review-progress="unviewedFileCount = $event"
+            >
+              <template #scope>
+                <DiffCommitSelector
+                  :commits="pr.commits"
+                  :truncated-end="pr.commitsTruncatedEnd"
+                  :commits-loading="pr.commitsLoading"
+                  :commits-error="pr.commitsError"
+                  :selection="pr.commitRange"
+                  :range-loading="pr.rangeDiffLoading"
+                  :range-error="pr.rangeDiffError"
+                  @update:selection="handleCommitRangeChange"
+                  @retry="reloadPrCommits"
+                />
+                <p v-if="isCommitRangeView" class="commit-range-note" role="note">
+                  {{ t("prDetail.commitRangeNote") }}
+                </p>
+              </template>
+            </DiffViewer>
+            <p v-if="commentError" class="error-msg">{{ commentError }}</p>
+            <p v-if="commentSuccess" class="success-msg">
+              {{ t("prDetail.inlineCommentSubmitted") }}
+            </p>
+            <ReviewForm
+              ref="reviewFormRef"
+              :platform="platform"
+              :owner="owner"
+              :repo="repo"
+              :pr-number="number"
+              :unviewed-file-count="unviewedFileCount"
+              :unresolved-thread-count="reviewThreadSummary?.unresolved ?? 0"
+            />
+          </template>
         </div>
         <div
           v-if="isMergeContextVisible && dependencyPanelMounted"
@@ -980,12 +1052,12 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
     </div>
     <CloseConfirmDialog
       :open="closeConfirmOpen"
-      :title="`关闭 PR #${number}？`"
+      :title="t('prDetail.closeTitle', { number })"
       :repository="`${owner}/${repo}`"
       :target="`#${number} ${pr.currentPr?.summary.title ?? ''}`"
-      impact="关闭后，该 PR 将无法合并并从打开列表中移出；如需继续推进，必须先重新打开。"
-      warning="此操作不会删除分支或提交。请确认当前改动不再需要合并。"
-      confirm-label="关闭 PR"
+      :impact="t('prDetail.closeImpact')"
+      :warning="t('prDetail.closeWarning')"
+      :confirm-label="t('prDetail.close')"
       :loading="operating"
       :error="closeError"
       @cancel="cancelClose"

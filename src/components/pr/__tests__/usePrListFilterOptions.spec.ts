@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listRepositoryLabels, prParticipantSuggestions } from "@/api";
 import {
   labelFilterOptions,
@@ -6,6 +6,7 @@ import {
   usePrListFilterOptions,
 } from "@/components/pr/usePrListFilterOptions";
 import type { PrLabel, User } from "@/types";
+import { setAppLocale } from "@/i18n";
 
 vi.mock("@/api", () => ({
   listRepositoryLabels: vi.fn(),
@@ -21,6 +22,8 @@ function deferred<T>() {
 }
 
 describe("usePrListFilterOptions", () => {
+  beforeEach(() => setAppLocale("zh-CN"));
+
   it("去重、排序并保留当前选中的用户和标签", () => {
     const users: User[] = [
       { id: 2, login: "zoe", name: "Zoe", avatar_url: "" },
@@ -82,5 +85,16 @@ describe("usePrListFilterOptions", () => {
     await options.load("github", "team", "repo", true);
     expect(options.participants.value.map((user) => user.login)).toEqual(["dev"]);
     expect(options.error.value).toBeNull();
+  });
+
+  it("使用当前界面语言报告部分选项加载失败", async () => {
+    setAppLocale("en-US");
+    vi.mocked(prParticipantSuggestions).mockRejectedValueOnce(null);
+    vi.mocked(listRepositoryLabels).mockResolvedValueOnce([]);
+    const options = usePrListFilterOptions();
+
+    await options.load("github", "team", "repo");
+
+    expect(options.error.value).toBe("Some filter options failed to load");
   });
 });

@@ -2,6 +2,7 @@
 import type { ComponentPublicInstance } from "vue";
 import type { DiffSide } from "@/types";
 import type { CodeSearchOption, CodeSearchState } from "./useDiffCodeSearch";
+import { useI18n } from "@/i18n";
 
 const { registerInput } = defineProps<{
   visibleSides: DiffSide[];
@@ -17,6 +18,17 @@ const emit = defineEmits<{
   toggleOption: [side: DiffSide, option: CodeSearchOption];
   updateQuery: [side: DiffSide, query: string];
 }>();
+const { t } = useI18n();
+
+function sideLabel(side: DiffSide): string {
+  return t(side === "left" ? "diff.sideLeft" : "diff.sideRight");
+}
+
+function optionLabel(option: CodeSearchOption): string {
+  if (option === "caseSensitive") return t("diff.findCaseSensitive");
+  if (option === "wholeWord") return t("diff.findWholeWord");
+  return t("diff.findRegex");
+}
 
 function setInputRef(side: DiffSide, element: Element | ComponentPublicInstance | null): void {
   registerInput(side, element instanceof HTMLInputElement ? element : null);
@@ -28,7 +40,7 @@ function updateQuery(side: DiffSide, event: Event): void {
 </script>
 
 <template>
-  <div class="diff-search-bar" role="search" aria-label="代码查找">
+  <div class="diff-search-bar" role="search" :aria-label="t('diff.find')">
     <div v-for="side in visibleSides" :key="side" class="code-search-pane" :data-side="side">
       <div class="diff-search-field">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -43,7 +55,7 @@ function updateQuery(side: DiffSide, event: Event): void {
           autocomplete="off"
           spellcheck="false"
           :data-search-side="side"
-          :aria-label="side === 'left' ? '在左侧代码中查找' : '在右侧代码中查找'"
+          :aria-label="t('diff.findInSide', { side: sideLabel(side) })"
           :aria-invalid="states[side].error ? 'true' : undefined"
           @input="updateQuery(side, $event)"
           @keydown="emit('keydown', $event, side)"
@@ -52,8 +64,8 @@ function updateQuery(side: DiffSide, event: Event): void {
           v-if="states[side].query"
           type="button"
           class="code-search-clear"
-          :title="side === 'left' ? '清空左侧查找' : '清空右侧查找'"
-          :aria-label="side === 'left' ? '清空左侧查找' : '清空右侧查找'"
+          :title="t('diff.findClear', { side: sideLabel(side) })"
+          :aria-label="t('diff.findClear', { side: sideLabel(side) })"
           @pointerdown.prevent
           @click="emit('clearQuery', side)"
         >
@@ -65,7 +77,7 @@ function updateQuery(side: DiffSide, event: Event): void {
       <div
         class="code-search-options"
         role="group"
-        :aria-label="side === 'left' ? '左侧查找选项' : '右侧查找选项'"
+        :aria-label="t('diff.findOptions', { side: sideLabel(side) })"
       >
         <button
           v-for="option in ['caseSensitive', 'wholeWord', 'regex'] as const"
@@ -73,18 +85,8 @@ function updateQuery(side: DiffSide, event: Event): void {
           type="button"
           class="code-search-option"
           :aria-pressed="states[side][option]"
-          :title="
-            option === 'caseSensitive'
-              ? '区分大小写'
-              : option === 'wholeWord'
-                ? '全词匹配'
-                : '使用正则表达式'
-          "
-          :aria-label="
-            side === 'left'
-              ? `左侧${option === 'caseSensitive' ? '区分大小写' : option === 'wholeWord' ? '全词匹配' : '使用正则表达式'}`
-              : `右侧${option === 'caseSensitive' ? '区分大小写' : option === 'wholeWord' ? '全词匹配' : '使用正则表达式'}`
-          "
+          :title="optionLabel(option)"
+          :aria-label="`${sideLabel(side)} ${optionLabel(option)}`"
           @click="emit('toggleOption', side, option)"
         >
           {{ option === "caseSensitive" ? "Aa" : option === "wholeWord" ? "ab" : ".*" }}
@@ -103,7 +105,7 @@ function updateQuery(side: DiffSide, event: Event): void {
             : states[side].query
               ? states[side].matchCount
                 ? `${states[side].activeMatchIndex + 1}/${states[side].matchCount}`
-                : "无结果"
+                : t("diff.findNoResults")
               : ""
         }}
       </span>
@@ -111,8 +113,8 @@ function updateQuery(side: DiffSide, event: Event): void {
         type="button"
         class="code-search-action"
         :disabled="states[side].matchCount === 0"
-        title="上一个匹配项"
-        :aria-label="side === 'left' ? '左侧上一个匹配项' : '右侧上一个匹配项'"
+        :title="t('diff.findPrevious', { side: sideLabel(side) })"
+        :aria-label="t('diff.findPrevious', { side: sideLabel(side) })"
         @click="emit('navigate', side, -1)"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -123,8 +125,8 @@ function updateQuery(side: DiffSide, event: Event): void {
         type="button"
         class="code-search-action"
         :disabled="states[side].matchCount === 0"
-        title="下一个匹配项"
-        :aria-label="side === 'left' ? '左侧下一个匹配项' : '右侧下一个匹配项'"
+        :title="t('diff.findNext', { side: sideLabel(side) })"
+        :aria-label="t('diff.findNext', { side: sideLabel(side) })"
         @click="emit('navigate', side, 1)"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -134,8 +136,8 @@ function updateQuery(side: DiffSide, event: Event): void {
       <button
         type="button"
         class="code-search-action"
-        :title="side === 'left' ? '关闭左侧查找' : '关闭右侧查找'"
-        :aria-label="side === 'left' ? '关闭左侧查找' : '关闭右侧查找'"
+        :title="t('diff.findClose', { side: sideLabel(side) })"
+        :aria-label="t('diff.findClose', { side: sideLabel(side) })"
         @click="emit('closeSide', side)"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">

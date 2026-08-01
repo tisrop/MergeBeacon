@@ -80,6 +80,7 @@ function isHistoryEntry(value: unknown): value is AiReviewHistoryEntry {
     typeof entry.head_sha === "string" &&
     typeof entry.model === "string" &&
     typeof entry.truncated === "boolean" &&
+    (entry.language === undefined || entry.language === "zh-CN" || entry.language === "en-US") &&
     (entry.mode === "full" || entry.mode === "incremental") &&
     ["all", "security", "performance", "logic", "code_style"].includes(String(entry.focus)) &&
     !!entry.result &&
@@ -117,6 +118,7 @@ export function loadAiReviewHistory(reference: AiReviewRef): AiReviewHistoryEntr
   if (!Array.isArray(stored)) return [];
   return stored
     .filter(isHistoryEntry)
+    .map((entry) => ({ ...entry, language: entry.language ?? "zh-CN" }))
     .sort((left, right) => right.created_at - left.created_at)
     .slice(0, MAX_HISTORY_ENTRIES);
 }

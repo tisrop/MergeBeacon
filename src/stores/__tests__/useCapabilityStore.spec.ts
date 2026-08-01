@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPlatformCapabilities } from "@/api";
 import { useCapabilityStore } from "@/stores/useCapabilityStore";
 import type { PlatformCapabilities } from "@/types";
+import { setAppLocale } from "@/i18n";
 
 vi.mock("@/api", () => ({ getPlatformCapabilities: vi.fn() }));
 
@@ -28,6 +29,7 @@ const github: PlatformCapabilities = {
 
 describe("useCapabilityStore", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     setActivePinia(createPinia());
     vi.clearAllMocks();
   });
@@ -41,5 +43,15 @@ describe("useCapabilityStore", () => {
     expect(second).toEqual(github);
     expect(getPlatformCapabilities).toHaveBeenCalledTimes(1);
     expect(store.values.github?.review_events).toContain("approve");
+  });
+
+  it("按错误发生时的界面语言生成本地回退", async () => {
+    setAppLocale("en-US");
+    vi.mocked(getPlatformCapabilities).mockRejectedValueOnce(null);
+    const store = useCapabilityStore();
+
+    await store.load("github").catch(() => undefined);
+
+    expect(store.errors.github).toBe("Failed to load platform capabilities");
   });
 });

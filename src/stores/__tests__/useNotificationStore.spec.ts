@@ -4,6 +4,7 @@ import { reviewInboxList } from "@/api";
 import { ApiError } from "@/api/errors";
 import { useNotificationStore } from "@/stores/useNotificationStore";
 import type { Paginated, Platform, ReviewInboxItem, ReviewInboxStatusSummary } from "@/types";
+import { setAppLocale } from "@/i18n";
 
 const storage = new Map<string, string>();
 const SNAPSHOTS_STORAGE_KEY = "mergebeacon:notification-snapshots:v1";
@@ -69,9 +70,19 @@ const readyStatus: ReviewInboxStatusSummary = {
 
 describe("useNotificationStore", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     storage.clear();
     setActivePinia(createPinia());
     vi.mocked(reviewInboxList).mockReset();
+  });
+
+  it("切换语言后使用本地化的平台错误格式", () => {
+    setAppLocale("en-US");
+    const store = useNotificationStore();
+    store.setEnabled(true);
+    store.errors.github = "HTTP 429 rate limit";
+
+    expect(store.notificationError).toBe("GitHub: HTTP 429 rate limit");
   });
 
   it("首次轮询只建立基线，后续识别评审请求和 PR 活动", async () => {

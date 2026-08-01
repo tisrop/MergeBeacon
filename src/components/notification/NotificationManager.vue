@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter } from "vue-router";
+import { useI18n } from "@/i18n";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePrStore } from "@/stores/usePrStore";
 import { useRepoStore } from "@/stores/useRepoStore";
@@ -15,6 +16,7 @@ import {
   showInboxNotification,
   type NotificationTarget,
 } from "@/services/desktopNotifications";
+import { getDesktopNotificationErrorMessage } from "@/services/desktopNotificationErrors";
 import type { Platform } from "@/types";
 import { getErrorMessage } from "@/utils/error";
 
@@ -23,6 +25,7 @@ const auth = useAuthStore();
 const pr = usePrStore();
 const repo = useRepoStore();
 const notifications = useNotificationStore();
+const { t } = useI18n();
 
 const availablePlatforms = computed<Platform[]>(() =>
   (["github", "gitlab", "gitee"] as Platform[]).filter(
@@ -55,7 +58,7 @@ async function pollAndNotify(): Promise<void> {
     return;
   }
   if (navigator.onLine === false) {
-    notifications.setManagerError("network", "桌面通知暂停：当前网络不可用");
+    notifications.setManagerError("network", () => t("notification.managerNetworkOffline"));
     return;
   }
   notifications.clearManagerError("network");
@@ -64,15 +67,16 @@ async function pollAndNotify(): Promise<void> {
   try {
     permissionGranted = await notificationPermissionGranted();
   } catch (error) {
-    notifications.setManagerError(
-      "permission",
-      `检查桌面通知权限失败：${getErrorMessage(error, "系统通知服务暂不可用")}`,
+    notifications.setManagerError("permission", () =>
+      t("notification.checkPermissionFailed", {
+        message: getDesktopNotificationErrorMessage(error, t("notification.systemUnavailable")),
+      }),
     );
     return;
   }
   if (!permissionGranted) {
     notifications.setEnabled(false);
-    notifications.setManagerError("permission", "桌面通知权限不可用或已被撤销，请前往设置重新授权");
+    notifications.setManagerError("permission", () => t("notification.managerPermissionRevoked"));
     return;
   }
   notifications.clearManagerError("permission");
@@ -82,9 +86,10 @@ async function pollAndNotify(): Promise<void> {
     events = await notifications.poll(availablePlatforms.value);
     notifications.clearManagerError("poll");
   } catch (error) {
-    notifications.setManagerError(
-      "poll",
-      `桌面通知轮询失败：${getErrorMessage(error, "请稍后重试")}`,
+    notifications.setManagerError("poll", () =>
+      t("notification.managerPollFailed", {
+        message: getErrorMessage(error, t("notification.retryLater")),
+      }),
     );
     return;
   }
@@ -101,9 +106,10 @@ async function pollAndNotify(): Promise<void> {
       await showInboxNotification(event, revealDetails);
     } catch (error) {
       deliveryFailed = true;
-      notifications.setManagerError(
-        "delivery",
-        `桌面通知发送失败：${getErrorMessage(error, "系统通知服务暂不可用")}`,
+      notifications.setManagerError("delivery", () =>
+        t("notification.deliveryFailed", {
+          message: getDesktopNotificationErrorMessage(error, t("notification.systemUnavailable")),
+        }),
       );
     }
   }
@@ -131,9 +137,10 @@ onMounted(() => {
     })
     .catch((error) => {
       if (disposed) return;
-      notifications.setManagerError(
-        "actions",
-        `桌面通知点击操作初始化失败：${getErrorMessage(error, "无法监听通知操作")}`,
+      notifications.setManagerError("actions", () =>
+        t("notification.managerActionInitFailed", {
+          message: getErrorMessage(error, t("notification.actionListenUnavailable")),
+        }),
       );
     });
 });
@@ -150,9 +157,10 @@ onUnmounted(() => {
   window.removeEventListener("online", pollAndNotify);
   if (removeActionListener) {
     void removeActionListener().catch((error) => {
-      notifications.setManagerError(
-        "actions",
-        `桌面通知点击监听清理失败：${getErrorMessage(error, "无法停止监听通知操作")}`,
+      notifications.setManagerError("actions", () =>
+        t("notification.managerActionCleanupFailed", {
+          message: getErrorMessage(error, t("notification.actionStopUnavailable")),
+        }),
       );
     });
   }

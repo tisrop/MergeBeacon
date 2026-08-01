@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AiSettings from "../AiSettings.vue";
 import { aiListModels } from "@/api";
+import { setAppLocale } from "@/i18n";
 
 vi.mock("@/api", () => ({
   aiGetConfig: vi.fn().mockRejectedValue(new Error("no config")),
@@ -13,7 +14,52 @@ vi.mock("@/api", () => ({
 
 describe("AiSettings", () => {
   beforeEach(() => {
+    setAppLocale("zh-CN");
     vi.mocked(aiListModels).mockResolvedValue([`gpt<img src=x onerror="alert(1)">model`]);
+  });
+
+  it("uses the current OpenAI endpoint and default model", () => {
+    const wrapper = mount(AiSettings);
+
+    expect(
+      (
+        wrapper.get('.field input[placeholder="https://api.openai.com/v1"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("https://api.openai.com/v1");
+    expect((wrapper.get(".model-input-wrap input").element as HTMLInputElement).value).toBe(
+      "gpt-5.6",
+    );
+  });
+
+  it("applies the DeepSeek v4 Flash preset", async () => {
+    const wrapper = mount(AiSettings);
+    const preset = wrapper.findAll("button").find((button) => button.text() === "DeepSeek");
+
+    expect(preset).toBeDefined();
+    await preset!.trigger("click");
+
+    expect(
+      (
+        wrapper.get('.field input[placeholder="https://api.openai.com/v1"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("https://api.deepseek.com/v1");
+    expect((wrapper.get(".model-input-wrap input").element as HTMLInputElement).value).toBe(
+      "deepseek-v4-flash",
+    );
+  });
+
+  it("切换界面语言后立即更新设置文案", async () => {
+    const wrapper = mount(AiSettings);
+
+    setAppLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain("Presets");
+    expect(wrapper.text()).toContain("Local Ollama");
+    expect(wrapper.text()).toContain("Fetch models");
+    expect(wrapper.text()).not.toContain("预设配置");
   });
 
   it("将恶意模型 ID 作为纯文本渲染", async () => {

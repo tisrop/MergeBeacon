@@ -5,6 +5,20 @@ use crate::error::AppError;
 use crate::models::AiConfig;
 
 const CONFIG_FILE: &str = "ai_config.json";
+const DEFAULT_AI_ENDPOINT: &str = "https://api.openai.com/v1";
+const DEFAULT_AI_MODEL: &str = "gpt-5.6";
+
+fn default_ai_config() -> AiConfig {
+    AiConfig {
+        endpoint: DEFAULT_AI_ENDPOINT.to_string(),
+        model: DEFAULT_AI_MODEL.to_string(),
+        api_key_configured: false,
+        api_key_encrypted: None,
+        system_prompt: None,
+        temperature: Some(0.3),
+        max_tokens: Some(8192),
+    }
+}
 
 pub struct AiConfigManager {
     config_dir: PathBuf,
@@ -63,15 +77,7 @@ impl AiConfigManager {
             let config: AiConfig = serde_json::from_str(&content)?;
             Ok(config)
         } else {
-            Ok(AiConfig {
-                endpoint: "https://api.openai.com/v1".to_string(),
-                model: "gpt-4o".to_string(),
-                api_key_configured: false,
-                api_key_encrypted: None,
-                system_prompt: None,
-                temperature: Some(0.3),
-                max_tokens: Some(8192),
-            })
+            Ok(default_ai_config())
         }
     }
 
@@ -115,5 +121,18 @@ impl AiConfigManager {
         config.api_key_configured = false;
         self.save_config(&config)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_uses_current_openai_defaults() {
+        let config = default_ai_config();
+
+        assert_eq!(config.endpoint, "https://api.openai.com/v1");
+        assert_eq!(config.model, "gpt-5.6");
     }
 }

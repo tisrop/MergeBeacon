@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, onUnmounted, watch } from "vue";
+import { storeToRefs } from "pinia";
 import type {
   Platform,
   AiReviewFocus,
   AiReviewHistoryEntry,
   AiReviewMode,
+  AiReviewLanguage,
+  AiReviewLanguagePreference,
   AiReviewResult,
   AiSuggestion,
   PrContext,
@@ -38,6 +41,8 @@ import {
   updateAiReviewHistoryResult,
 } from "@/services/aiReviewPersistence";
 import { useReviewDraftStore, type UnifiedReviewDraft } from "@/stores/useReviewDraftStore";
+import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
+import { useI18n } from "@/i18n";
 
 const props = defineProps<{
   platform: Platform;
@@ -54,12 +59,37 @@ const emit = defineEmits<{
   locateSuggestion: [suggestion: AiSuggestion];
 }>();
 
+const { locale, t } = useI18n();
+const uiSettings = useUiSettingsStore();
+const { aiReviewLanguagePreference } = storeToRefs(uiSettings);
+const reviewLanguageChanged = ref(false);
+const reviewLanguagePreference = computed<AiReviewLanguagePreference>({
+  get: () => aiReviewLanguagePreference.value,
+  set: (value) => {
+    if (value === aiReviewLanguagePreference.value) return;
+    uiSettings.setAiReviewLanguagePreference(value);
+    reviewLanguageChanged.value = true;
+  },
+});
+const effectiveReviewLanguage = computed<AiReviewLanguage>(() =>
+  reviewLanguagePreference.value === "auto" ? locale.value : reviewLanguagePreference.value,
+);
+const reviewLanguages = computed(() => [
+  { value: "auto", label: t("language.followInterface") },
+  { value: "zh-CN", label: t("language.chinese") },
+  { value: "en-US", label: t("language.english") },
+]);
+function languageLabel(language: AiReviewLanguage): string {
+  return t(language === "zh-CN" ? "language.chinese" : "language.english");
+}
+
 const focus = ref<AiReviewFocus>("all");
 const reviewMode = ref<AiReviewMode>("full");
 const useStreaming = ref(true);
 const loading = ref(false);
 const error = ref("");
 const errorDetails = ref<ApiError | null>(null);
+const reviewStatus = ref("");
 const result = ref<AiReviewResult | null>(null);
 const resultHeadSha = ref("");
 const resultFocus = ref<AiReviewFocus | null>(null);
@@ -67,6 +97,7 @@ const resultMode = ref<AiReviewMode>("full");
 const resultBaseSha = ref("");
 const resultModel = ref("");
 const resultTruncated = ref(false);
+const resultLanguage = ref<AiReviewLanguage>(effectiveReviewLanguage.value);
 const currentHistoryId = ref("");
 const isResultOutdated = computed(
   () => !!result.value && !!resultHeadSha.value && resultHeadSha.value !== props.headSha,
@@ -106,9 +137,9 @@ const hasIncrementalBase = computed(
     lastSuccessfulHeadSha.value !== props.headSha,
 );
 const incrementalDisabledReason = computed(() => {
-  if (!props.supportsCompareDiff) return "当前平台不提供可靠的提交比较接口";
-  if (!lastSuccessfulHeadSha.value) return "完成一次成功的完整评审后可用";
-  if (lastSuccessfulHeadSha.value === props.headSha) return "当前版本没有新增提交";
+  if (!props.supportsCompareDiff) return t("ai.compareUnavailable");
+  if (!lastSuccessfulHeadSha.value) return t("ai.incrementalNoBase");
+  if (lastSuccessfulHeadSha.value === props.headSha) return t("ai.incrementalNoChanges");
   return "";
 });
 const canStartReview = computed(
@@ -151,7 +182,7 @@ const draftError = ref("");
 
 const streamReceivedData = ref(false);
 const streamStatusText = computed(() =>
-  streamReceivedData.value ? "正在整理评审摘要和代码建议…" : "正在连接 AI 评审服务…",
+  streamReceivedData.value ? t("ai.streamingSummary") : t("ai.connecting"),
 );
 let unlistenChunk: UnlistenFn | null = null;
 let unlistenDone: UnlistenFn | null = null;
@@ -163,8 +194,9 @@ let activeReviewDiff = "";
 let activeReviewContext: PrContext | null = null;
 let activeReviewMode: AiReviewMode = "full";
 let activeReviewBaseSha = "";
-let activeReviewModel = "未知模型";
+let activeReviewModel = t("common.unknownModel");
 let activeReviewTruncated = false;
+let activeReviewLanguage: AiReviewLanguage = effectiveReviewLanguage.value;
 let activeReviewStorageKey = "";
 let historySequence = 0;
 let reviewSequence = 0;
@@ -172,19 +204,19 @@ let disposed = false;
 let resultPersistenceTimer: ReturnType<typeof setTimeout> | null = null;
 let rulesRequestSequence = 0;
 
-const foci: { value: AiReviewFocus; label: string }[] = [
-  { value: "all", label: "全部" },
-  { value: "security", label: "安全" },
-  { value: "performance", label: "性能" },
-  { value: "logic", label: "逻辑" },
-  { value: "code_style", label: "代码风格" },
-];
+const foci = computed<{ value: AiReviewFocus; label: string }[]>(() => [
+  { value: "all", label: t("ai.focusAll") },
+  { value: "security", label: t("ai.focusSecurity") },
+  { value: "performance", label: t("ai.focusPerformance") },
+  { value: "logic", label: t("ai.focusLogic") },
+  { value: "code_style", label: t("ai.focusStyle") },
+]);
 
 const reviewModes = computed(() => [
-  { value: "full", label: "完整变更" },
+  { value: "full", label: t("ai.reviewFull") },
   {
     value: "incremental",
-    label: "仅新增改动",
+    label: t("ai.incremental"),
     disabled: !hasIncrementalBase.value,
   },
 ]);
@@ -217,7 +249,9 @@ watch(
       if (sequence === rulesRequestSequence && !disposed) discoveredRules.value = discovered;
     } catch (cause) {
       if (sequence === rulesRequestSequence && !disposed) {
-        rulesStatus.value = `自动读取仓库规则失败：${getErrorMessage(cause, "未知错误")}`;
+        rulesStatus.value = t("ai.repositoryRulesAutoFailed", {
+          message: getErrorMessage(cause, t("common.unknownError")),
+        });
       }
     }
   },
@@ -226,15 +260,19 @@ watch(
 
 function saveRules(): void {
   repositoryRules.value = saveRepositoryRules(reviewReference.value, repositoryRules.value);
-  rulesStatus.value = repositoryRules.value ? "仓库级规则已保存" : "仓库级规则已清除";
+  rulesStatus.value = repositoryRules.value
+    ? t("ai.repositoryRulesSaved")
+    : t("ai.repositoryRulesCleared");
 }
 
 function reviewContextWithRules(context: PrContext | null): PrContext | null {
   const rules = [
     discoveredRules.value
-      ? `仓库规则文件（${discoveredRules.value.path}）：\n${discoveredRules.value.content}`
+      ? `${t("ai.rulesRepositoryLabel", { path: discoveredRules.value.path })}\n${discoveredRules.value.content}`
       : "",
-    repositoryRules.value.trim() ? `本地评审规则：\n${repositoryRules.value.trim()}` : "",
+    repositoryRules.value.trim()
+      ? `${t("ai.rulesLocalLabel")}\n${repositoryRules.value.trim()}`
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -250,17 +288,31 @@ function cloneResult(reviewResult: AiReviewResult): AiReviewResult {
   return JSON.parse(JSON.stringify(reviewResult)) as AiReviewResult;
 }
 
-function recordSuccessfulReview(reviewResult: AiReviewResult): void {
+interface ReviewResultMetadata {
+  headSha: string;
+  baseSha: string;
+  focus: AiReviewFocus | null;
+  mode: AiReviewMode;
+  model: string;
+  truncated: boolean;
+  language: AiReviewLanguage;
+}
+
+function recordSuccessfulReview(
+  reviewResult: AiReviewResult,
+  metadata: ReviewResultMetadata,
+): void {
   const createdAt = Date.now();
   const entry: AiReviewHistoryEntry = {
-    id: `${activeReviewHeadSha}:${createdAt}:${historySequence++}`,
+    id: `${metadata.headSha}:${createdAt}:${historySequence++}`,
     created_at: createdAt,
-    head_sha: activeReviewHeadSha,
-    base_sha: activeReviewBaseSha || null,
-    focus: activeReviewFocus ?? "all",
-    mode: activeReviewMode,
-    model: activeReviewModel,
-    truncated: activeReviewTruncated,
+    head_sha: metadata.headSha,
+    base_sha: metadata.baseSha || null,
+    focus: metadata.focus ?? "all",
+    mode: metadata.mode,
+    model: metadata.model,
+    truncated: metadata.truncated,
+    language: metadata.language,
     result: cloneResult(reviewResult),
   };
   history.value = appendAiReviewHistory(reviewReference.value, entry);
@@ -287,7 +339,7 @@ function scheduleCurrentResultPersistence(): void {
 function loadHistoryEntry(entry: AiReviewHistoryEntry): void {
   const draftHistoryIds = new Set(drafts.value.map((draft) => draft.historyId).filter(Boolean));
   if (drafts.value.length > 0 && !draftHistoryIds.has(entry.id)) {
-    draftError.value = "请先提交或移除当前草稿，再切换历史评审";
+    draftError.value = t("ai.draftCannotSwitchHistory");
     return;
   }
   result.value = cloneResult(entry.result);
@@ -297,6 +349,7 @@ function loadHistoryEntry(entry: AiReviewHistoryEntry): void {
   resultBaseSha.value = entry.base_sha ?? "";
   resultModel.value = entry.model;
   resultTruncated.value = entry.truncated;
+  resultLanguage.value = entry.language;
   currentHistoryId.value = entry.id;
   draftError.value = "";
 }
@@ -312,21 +365,22 @@ restoreDraftHistory();
 
 async function startReview() {
   if (drafts.value.length > 0) {
-    draftError.value = "已有未提交的评审草稿，请先提交或移除后再重新评审";
+    draftError.value = t("ai.draftExisting");
     return;
   }
   if (!props.diff) {
-    error.value = "没有 diff 数据";
+    error.value = t("ai.noDiff");
     return;
   }
   if (!props.headSha) {
-    error.value = "当前 PR 缺少提交版本，无法开始 AI 评审";
+    error.value = t("ai.noRevision");
     return;
   }
   if (reviewMode.value === "incremental" && !hasIncrementalBase.value) {
-    error.value = incrementalDisabledReason.value || "当前无法生成增量评审 Diff";
+    error.value = incrementalDisabledReason.value || t("ai.incrementalUnavailable");
     return;
   }
+  reviewLanguageChanged.value = false;
 
   const sequence = ++reviewSequence;
   const reviewPlatform = props.platform;
@@ -336,6 +390,7 @@ async function startReview() {
   const reviewHeadSha = props.headSha;
   const reviewDiff = props.diff;
   const reviewContext = reviewContextWithRules(props.context);
+  const reviewLanguage = effectiveReviewLanguage.value;
 
   await cancelActiveReview();
   if (disposed || sequence !== reviewSequence) return;
@@ -343,6 +398,7 @@ async function startReview() {
   loading.value = true;
   error.value = "";
   errorDetails.value = null;
+  reviewStatus.value = "";
   draftError.value = "";
   streamReceivedData.value = false;
   activeReviewHeadSha = reviewHeadSha;
@@ -351,9 +407,10 @@ async function startReview() {
   activeReviewContext = reviewContext;
   activeReviewMode = reviewMode.value;
   activeReviewBaseSha = reviewMode.value === "incremental" ? lastSuccessfulHeadSha.value : "";
-  activeReviewModel = "未知模型";
+  activeReviewLanguage = reviewLanguage;
+  activeReviewModel = t("common.unknownModel");
   try {
-    activeReviewModel = (await aiGetConfig()).model || "未知模型";
+    activeReviewModel = (await aiGetConfig()).model || t("common.unknownModel");
   } catch {
     // Model metadata is informative and must not block a configured review request.
   }
@@ -369,7 +426,7 @@ async function startReview() {
         activeReviewHeadSha,
       );
       if (!compared.diff.trim()) {
-        throw new Error("平台未返回可评审的新增文本 Diff，未自动改用完整评审");
+        throw new Error(t("ai.incrementalEmpty"));
       }
       activeReviewDiff = compared.diff;
     } else {
@@ -378,12 +435,11 @@ async function startReview() {
   } catch (e) {
     if (disposed || sequence !== reviewSequence) return;
     loading.value = false;
-    error.value = getErrorMessage(e, "获取增量评审 Diff 失败");
+    error.value = getErrorMessage(e, t("ai.incrementalCompareFailed"));
     return;
   }
   if (disposed || sequence !== reviewSequence) return;
   activeReviewTruncated = new TextEncoder().encode(activeReviewDiff).length > 65_536;
-
   result.value = null;
   resultHeadSha.value = "";
   resultFocus.value = null;
@@ -391,53 +447,81 @@ async function startReview() {
   resultBaseSha.value = activeReviewBaseSha;
   resultModel.value = activeReviewModel;
   resultTruncated.value = activeReviewTruncated;
+  resultLanguage.value = activeReviewLanguage;
   currentHistoryId.value = "";
 
   if (useStreaming.value) {
-    await startStreamingReview();
+    await startStreamingReview(sequence);
   } else {
-    await startNonStreamingReview();
+    await startNonStreamingReview(sequence);
   }
 }
 
 defineExpose({ startReview });
 
-async function startNonStreamingReview() {
+async function startNonStreamingReview(sequence: number) {
+  const requestId = crypto.randomUUID();
+  activeRequestId = requestId;
+  const metadata: ReviewResultMetadata = {
+    headSha: activeReviewHeadSha,
+    baseSha: activeReviewBaseSha,
+    focus: activeReviewFocus,
+    mode: activeReviewMode,
+    model: activeReviewModel,
+    truncated: activeReviewTruncated,
+    language: activeReviewLanguage,
+  };
+  const storageKey = activeReviewStorageKey;
+  const diff = activeReviewDiff;
+  const context = activeReviewContext;
   try {
-    const reviewHeadSha = activeReviewHeadSha;
-    const reviewFocus = activeReviewFocus;
-    result.value = await aiReview({
-      diff: activeReviewDiff,
-      context: activeReviewContext,
+    const reviewResult = await aiReview(requestId, {
+      diff,
+      context,
       file_filter: null,
-      focus: reviewFocus,
+      focus: metadata.focus,
+      language: metadata.language,
     });
-    resultHeadSha.value = reviewHeadSha;
-    resultFocus.value = reviewFocus;
-    resultMode.value = activeReviewMode;
-    resultBaseSha.value = activeReviewBaseSha;
-    resultModel.value = activeReviewModel;
-    resultTruncated.value = activeReviewTruncated;
-    saveLastSuccessfulHeadSha(reviewHeadSha, activeReviewStorageKey);
-    recordSuccessfulReview(result.value);
+    if (!reviewResult || disposed || sequence !== reviewSequence || activeRequestId !== requestId) {
+      return;
+    }
+    result.value = reviewResult;
+    resultHeadSha.value = metadata.headSha;
+    resultFocus.value = metadata.focus;
+    resultMode.value = metadata.mode;
+    resultBaseSha.value = metadata.baseSha;
+    resultModel.value = metadata.model;
+    resultTruncated.value = metadata.truncated;
+    resultLanguage.value = metadata.language;
+    saveLastSuccessfulHeadSha(metadata.headSha, storageKey);
+    recordSuccessfulReview(result.value, metadata);
   } catch (e) {
+    if (disposed || sequence !== reviewSequence || activeRequestId !== requestId) return;
     errorDetails.value = normalizeApiError(e);
-    error.value = getErrorMessage(errorDetails.value, "AI 评审失败");
+    error.value = getErrorMessage(errorDetails.value, t("ai.reviewFailed"));
   } finally {
-    loading.value = false;
+    if (sequence === reviewSequence && activeRequestId === requestId) {
+      activeRequestId = null;
+      loading.value = false;
+    }
   }
 }
 
-async function startStreamingReview() {
+async function startStreamingReview(sequence: number) {
   const requestId = crypto.randomUUID();
   activeRequestId = requestId;
   try {
-    unlistenChunk = await listen<AiStreamEvent<string>>("ai-review-chunk", (event) => {
+    const chunkUnlisten = await listen<AiStreamEvent<string>>("ai-review-chunk", (event) => {
       if (event.payload.request_id !== activeRequestId) return;
       streamReceivedData.value = true;
     });
+    if (disposed || sequence !== reviewSequence || activeRequestId !== requestId) {
+      chunkUnlisten();
+      return;
+    }
+    unlistenChunk = chunkUnlisten;
 
-    unlistenDone = await listen<AiStreamEvent<AiReviewResult>>("ai-review-done", (event) => {
+    const doneUnlisten = await listen<AiStreamEvent<AiReviewResult>>("ai-review-done", (event) => {
       if (event.payload.request_id !== activeRequestId) return;
       result.value = event.payload.payload;
       resultHeadSha.value = activeReviewHeadSha;
@@ -446,14 +530,28 @@ async function startStreamingReview() {
       resultBaseSha.value = activeReviewBaseSha;
       resultModel.value = activeReviewModel;
       resultTruncated.value = activeReviewTruncated;
+      resultLanguage.value = activeReviewLanguage;
       saveLastSuccessfulHeadSha(activeReviewHeadSha, activeReviewStorageKey);
-      recordSuccessfulReview(result.value);
+      recordSuccessfulReview(result.value, {
+        headSha: activeReviewHeadSha,
+        baseSha: activeReviewBaseSha,
+        focus: activeReviewFocus,
+        mode: activeReviewMode,
+        model: activeReviewModel,
+        truncated: activeReviewTruncated,
+        language: activeReviewLanguage,
+      });
       activeRequestId = null;
       loading.value = false;
       cleanupListeners();
     });
+    if (disposed || sequence !== reviewSequence || activeRequestId !== requestId) {
+      doneUnlisten();
+      return;
+    }
+    unlistenDone = doneUnlisten;
 
-    unlistenError = await listen<AiStreamEvent<CommandErrorPayload | string>>(
+    const errorUnlisten = await listen<AiStreamEvent<CommandErrorPayload | string>>(
       "ai-review-error",
       (event) => {
         if (event.payload.request_id !== activeRequestId) return;
@@ -464,18 +562,24 @@ async function startStreamingReview() {
         cleanupListeners();
       },
     );
+    if (disposed || sequence !== reviewSequence || activeRequestId !== requestId) {
+      errorUnlisten();
+      return;
+    }
+    unlistenError = errorUnlisten;
 
     await aiReviewStream(requestId, {
       diff: activeReviewDiff,
       context: activeReviewContext,
       file_filter: null,
       focus: activeReviewFocus,
+      language: activeReviewLanguage,
     });
   } catch (e) {
     if (activeRequestId === requestId) {
       activeRequestId = null;
       errorDetails.value = normalizeApiError(e);
-      error.value = getErrorMessage(errorDetails.value, "AI 流式评审启动失败");
+      error.value = getErrorMessage(errorDetails.value, t("ai.streamStartFailed"));
       loading.value = false;
       cleanupListeners();
     }
@@ -484,6 +588,7 @@ async function startStreamingReview() {
 
 async function cancelActiveReview() {
   const requestId = activeRequestId;
+  // Invalidate late events immediately; backend cancellation is best-effort and is not retried.
   activeRequestId = null;
   if (!requestId) return;
   try {
@@ -491,6 +596,19 @@ async function cancelActiveReview() {
   } catch {
     // Cancellation is best-effort and must not be presented as an AI review error.
   }
+}
+
+async function interruptReview() {
+  if (!loading.value) return;
+  reviewSequence += 1;
+  loading.value = false;
+  streamReceivedData.value = false;
+  error.value = "";
+  errorDetails.value = null;
+  reviewStatus.value = t("ai.reviewInterrupted");
+  const cancellation = cancelActiveReview();
+  cleanupListeners();
+  await cancellation;
 }
 
 function cleanupListeners() {
@@ -518,7 +636,7 @@ function draftBody(index: number): string {
   const suggestion = result.value?.suggestions[index];
   if (!suggestion) return "";
   return suggestion.suggestion
-    ? `${suggestion.description}\n\n建议修改：\n${suggestion.suggestion}`
+    ? `${suggestion.description}\n\n${t("ai.draftSuggestion")}\n${suggestion.suggestion}`
     : suggestion.description;
 }
 
@@ -576,7 +694,7 @@ async function validateDraftsAgainstCurrentRevision(): Promise<boolean> {
       latestDetail.head_sha !== props.headSha ||
       drafts.value.some((draft) => draft.headSha !== latestDetail.head_sha)
     ) {
-      draftError.value = "PR 已有新提交，草稿版本校验失败，请刷新 Diff 并重新评审";
+      draftError.value = t("ai.draftRevisionFailed");
       return false;
     }
     const inlineDrafts = drafts.value.filter((draft) => draft.path && draft.endLine);
@@ -586,12 +704,16 @@ async function validateDraftsAgainstCurrentRevision(): Promise<boolean> {
       (draft) => !draftPositionIsCurrent(draft, latestDiff.patches),
     );
     if (invalidDraft) {
-      draftError.value = `草稿位置已失效：${invalidDraft.path}:${invalidDraft.endLine}，请刷新 Diff 后重新定位`;
+      draftError.value = t("ai.draftInvalidPosition", {
+        position: `${invalidDraft.path}:${invalidDraft.endLine}`,
+      });
       return false;
     }
     return true;
   } catch (cause) {
-    draftError.value = `提交前校验失败：${getErrorMessage(cause, "无法读取最新 PR 版本和 Diff")}`;
+    draftError.value = t("ai.draftValidationFailed", {
+      message: getErrorMessage(cause, t("ai.draftLatestUnavailable")),
+    });
     return false;
   }
 }
@@ -599,11 +721,11 @@ async function validateDraftsAgainstCurrentRevision(): Promise<boolean> {
 async function submitDrafts() {
   if (submittingDrafts.value || drafts.value.length === 0) return;
   if (drafts.value.some((draft) => draft.headSha !== props.headSha)) {
-    draftError.value = "PR 已有新提交，旧版本评审草稿不能提交，请重新评审后确认";
+    draftError.value = t("ai.draftOutdated");
     return;
   }
   if (drafts.value.some((draft) => !draft.body.trim())) {
-    draftError.value = "评审草稿内容不能为空";
+    draftError.value = t("ai.draftEmpty");
     return;
   }
   if (!(await validateDraftsAgainstCurrentRevision())) return;
@@ -645,7 +767,7 @@ async function submitDrafts() {
       submittedSuggestionIndexes.push(draft.suggestionIndex);
     } catch (cause) {
       failed.push(draft);
-      if (!firstError) firstError = getErrorMessage(cause, "提交失败");
+      if (!firstError) firstError = getErrorMessage(cause, t("ai.draftSubmitFailed"));
     }
   }
   drafts.value = failed;
@@ -657,9 +779,13 @@ async function submitDrafts() {
   persistCurrentResult();
   submittingDrafts.value = false;
   if (failed.length > 0) {
-    draftError.value = `已提交 ${submitted} 条，${failed.length} 条失败：${firstError}`;
+    draftError.value = t("ai.draftPartialFailure", {
+      submitted,
+      failed: failed.length,
+      message: firstError,
+    });
   } else {
-    draftStatus.value = `已提交 ${submitted} 条评审意见`;
+    draftStatus.value = t("ai.draftSubmitSuccess", { count: submitted });
   }
 }
 </script>
@@ -668,7 +794,7 @@ async function submitDrafts() {
   <div class="ai-panel">
     <div class="ai-toolbar">
       <div class="review-mode-select">
-        <label for="ai-review-mode">范围:</label>
+        <label for="ai-review-mode">{{ t("ai.range") }}:</label>
         <div class="review-mode-control">
           <AppSelect
             id="ai-review-mode"
@@ -680,10 +806,10 @@ async function submitDrafts() {
         </div>
       </div>
       <div v-if="!hasIncrementalBase" class="incremental-hint" role="status">
-        增量评审：{{ incrementalDisabledReason }}
+        {{ t("ai.incrementalHint", { reason: incrementalDisabledReason }) }}
       </div>
       <div class="focus-select">
-        <label for="ai-review-focus">聚焦:</label>
+        <label for="ai-review-focus">{{ t("ai.category") }}:</label>
         <div class="focus-control">
           <AppSelect
             id="ai-review-focus"
@@ -695,38 +821,80 @@ async function submitDrafts() {
         </div>
       </div>
 
-      <label class="stream-toggle" title="边生成边接收评审结果，不展示原始 JSON">
-        <input type="checkbox" v-model="useStreaming" />
-        实时生成
+      <div class="focus-select review-language-select">
+        <label for="ai-review-language">{{ t("language.review") }}:</label>
+        <div class="focus-control review-language-control">
+          <AppSelect
+            id="ai-review-language"
+            v-model="reviewLanguagePreference"
+            class="toolbar-select"
+            size="sm"
+            :options="reviewLanguages"
+          />
+        </div>
+        <span
+          v-if="reviewLanguageChanged"
+          class="review-language-status"
+          role="status"
+          aria-live="polite"
+        >
+          {{ t("ai.reviewLanguageChanged") }}
+        </span>
+      </div>
+
+      <label class="stream-toggle" :title="t('ai.streamingHint')">
+        <input type="checkbox" v-model="useStreaming" :disabled="loading" />
+        {{ t("ai.streaming") }}
       </label>
 
-      <button
-        class="btn btn-primary"
-        :disabled="(loading && !useStreaming) || !canStartReview"
-        @click="startReview"
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+      <div class="review-actions">
+        <button
+          class="btn btn-primary"
+          :disabled="(loading && !useStreaming) || !canStartReview"
+          @click="startReview"
         >
-          <polygon points="5 3 19 12 5 21 5 3" />
-        </svg>
-        {{ loading ? (useStreaming ? "重新评审" : "评审中...") : "开始 AI 评审" }}
-      </button>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+          {{
+            loading
+              ? useStreaming
+                ? t("ai.reviewRestart")
+                : t("ai.reviewing")
+              : t("ai.reviewStart")
+          }}
+        </button>
+        <button
+          v-if="loading"
+          type="button"
+          class="btn ai-interrupt-button"
+          data-testid="interrupt-ai-review"
+          @click="interruptReview"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="5" y="5" width="14" height="14" rx="1" />
+          </svg>
+          {{ t("ai.reviewInterrupt") }}
+        </button>
+      </div>
     </div>
 
     <div class="ai-context-tools">
       <details class="repository-rules">
-        <summary>仓库级 AI 规则</summary>
-        <p>本地规则按平台和仓库保存在本机；仓库规则文件按当前提交版本自动读取。</p>
+        <summary>{{ t("ai.repositoryRules") }}</summary>
+        <p>{{ t("ai.repositoryRulesDescription") }}</p>
         <div v-if="discoveredRules" class="discovered-rules" role="status">
-          <span>已发现规则文件：</span>
+          <span>{{ t("ai.discoveredRules") }}</span>
           <code>{{ discoveredRules.path }}</code>
           <pre>{{ discoveredRules.content }}</pre>
         </div>
@@ -735,18 +903,20 @@ async function submitDrafts() {
           class="input"
           rows="4"
           maxlength="12000"
-          placeholder="例如：重点检查异步生命周期；禁止建议引入新的 UI 框架。"
-          aria-label="仓库级 AI 评审规则"
+          :placeholder="t('ai.repositoryRulesPlaceholder')"
+          :aria-label="t('ai.repositoryRulesAria')"
           @input="rulesStatus = ''"
         />
         <div class="rules-actions">
-          <button class="btn btn-sm" type="button" @click="saveRules">保存规则</button>
+          <button class="btn btn-sm" type="button" @click="saveRules">
+            {{ t("ai.saveRules") }}
+          </button>
           <span v-if="rulesStatus" role="status">{{ rulesStatus }}</span>
         </div>
       </details>
 
       <details v-if="history.length > 0" class="review-history">
-        <summary>评审历史（{{ history.length }}）</summary>
+        <summary>{{ t("ai.history", { count: history.length }) }}</summary>
         <div class="history-list">
           <button
             v-for="entry in history"
@@ -757,7 +927,8 @@ async function submitDrafts() {
             @click="loadHistoryEntry(entry)"
           >
             <span
-              ><code>{{ entry.head_sha.slice(0, 12) }}</code> · {{ entry.model }}</span
+              ><code>{{ entry.head_sha.slice(0, 12) }}</code> · {{ entry.model }} ·
+              {{ languageLabel(entry.language) }}</span
             >
             <small>{{ new Date(entry.created_at).toLocaleString() }}</small>
           </button>
@@ -774,42 +945,51 @@ async function submitDrafts() {
       <div class="stream-progress" aria-hidden="true">
         <span :class="{ active: streamReceivedData }" />
       </div>
-      <p class="stream-hint">评审完成后将显示结构化摘要和代码建议</p>
+      <p class="stream-hint">{{ t("ai.progressHint") }}</p>
     </div>
 
     <!-- Non-streaming loading -->
     <div v-if="loading && !useStreaming" class="loading-state">
       <div class="spinner" />
-      <p>AI 正在分析代码变更，请稍候...</p>
+      <p>{{ t("ai.loading") }}</p>
     </div>
 
     <div v-if="error" class="error-box">
       {{ error }}
     </div>
 
+    <p v-if="reviewStatus" class="review-status" role="status" aria-live="polite">
+      {{ reviewStatus }}
+    </p>
+
     <div v-if="result" class="ai-result">
       <div v-if="isResultOutdated" class="outdated-warning" role="alert">
-        当前 PR 已有新提交，此 AI 评审基于旧版本，建议重新评审后再处理建议。
+        {{ t("ai.outdated") }}
       </div>
       <div class="review-metadata">
         <span
-          >评审版本：<code>{{ resultHeadSha.slice(0, 12) }}</code></span
+          >{{ t("ai.resultVersion") }}<code>{{ resultHeadSha.slice(0, 12) }}</code></span
         >
-        <span
-          >评审范围：{{
-            resultMode === "incremental" ? "上次成功评审后的新增改动" : "完整变更"
-          }}</span
-        >
+        <span>{{
+          t("ai.resultRange", {
+            range: t(resultMode === "incremental" ? "ai.fullAfterIncremental" : "ai.reviewFull"),
+          })
+        }}</span>
         <span v-if="resultBaseSha"
-          >基线版本：<code>{{ resultBaseSha.slice(0, 12) }}</code></span
+          >{{ t("ai.versionBase") }} <code>{{ resultBaseSha.slice(0, 12) }}</code></span
         >
-        <span v-if="resultFocus"
-          >聚焦范围：{{ foci.find((item) => item.value === resultFocus)?.label }}</span
-        >
-        <span
-          >模型：<code>{{ resultModel || "未知模型" }}</code></span
-        >
-        <span>输入状态：{{ resultTruncated ? "Diff 已截断至 64 KiB" : "完整 Diff" }}</span>
+        <span v-if="resultFocus">{{
+          t("ai.focusMetadata", {
+            focus: foci.find((item) => item.value === resultFocus)?.label ?? "",
+          })
+        }}</span>
+        <span>{{ t("ai.model", { model: resultModel || t("common.unknownModel") }) }}</span>
+        <span>{{ t("ai.resultLanguage", { language: languageLabel(resultLanguage) }) }}</span>
+        <span>{{
+          t("ai.inputState", {
+            state: t(resultTruncated ? "ai.diffTruncated" : "ai.diffComplete"),
+          })
+        }}</span>
       </div>
       <div class="summary-card">
         <h4>
@@ -826,13 +1006,13 @@ async function submitDrafts() {
             <path d="M12 2a4 4 0 0 1 4 4c0 2-2 4-4 4s-4-2-4-4a4 4 0 0 1 4-4z" />
             <path d="M12 14c-4.42 0-8 1.79-8 4v2h16v-2c0-2.21-3.58-4-8-4z" />
           </svg>
-          AI 评审总览
+          {{ t("ai.resultOverview") }}
         </h4>
         <p>{{ result.summary }}</p>
       </div>
 
       <div v-if="result.suggestions.length > 0" class="suggestions">
-        <h4>发现 {{ result.suggestions.length }} 个问题</h4>
+        <h4>{{ t("ai.suggestionCount", { count: result.suggestions.length }) }}</h4>
         <AiSuggestionCard
           v-for="(s, idx) in result.suggestions"
           :key="idx"
@@ -846,15 +1026,19 @@ async function submitDrafts() {
       <section v-if="drafts.length > 0" class="draft-panel">
         <div class="draft-header">
           <div>
-            <h4>评审草稿</h4>
-            <p>确认并编辑后统一提交到 {{ platform }}，提交前不会写入远端。</p>
+            <h4>{{ t("ai.draftPanel") }}</h4>
+            <p>{{ t("ai.draftIntro", { platform }) }}</p>
           </div>
           <button
             class="btn btn-primary"
             :disabled="submittingDrafts || isResultOutdated"
             @click="submitDrafts"
           >
-            {{ submittingDrafts ? "提交中..." : `提交 ${drafts.length} 条草稿` }}
+            {{
+              submittingDrafts
+                ? t("ai.draftSubmitting")
+                : t("ai.draftSubmit", { count: drafts.length })
+            }}
           </button>
         </div>
         <article v-for="(draft, index) in drafts" :key="draft.id" class="draft-item">
@@ -868,16 +1052,16 @@ async function submitDrafts() {
                 ></template
               >
             </span>
-            <span v-else>整体评审意见</span>
+            <span v-else>{{ t("ai.draftGlobal") }}</span>
             <button class="btn btn-sm" :disabled="submittingDrafts" @click="removeDraft(index)">
-              移除
+              {{ t("common.remove") }}
             </button>
           </div>
           <textarea
             v-model="draft.body"
             class="input"
             rows="5"
-            aria-label="评审草稿内容"
+            :aria-label="t('ai.draftBody')"
             @input="recordDraftEdit(draft)"
           />
         </article>
@@ -900,7 +1084,7 @@ async function submitDrafts() {
           <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
           <polyline points="22 4 12 14.01 9 11.01" />
         </svg>
-        <p>AI 未发现明显问题</p>
+        <p>{{ t("ai.noIssues") }}</p>
       </div>
     </div>
   </div>
