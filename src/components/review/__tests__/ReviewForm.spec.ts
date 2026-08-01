@@ -81,6 +81,7 @@ describe("ReviewForm", () => {
       state: "commented",
       author: { id: 1, login: "user", name: "User", avatar_url: "" },
       submitted_at: "",
+      kind: "overall_review",
     });
     const wrapper = await mountForm("github");
     await wrapper.findAll(".event-select button")[1].trigger("click");
@@ -108,6 +109,7 @@ describe("ReviewForm", () => {
       state: "commented",
       author: { id: 1, login: "user", name: "User", avatar_url: "" },
       submitted_at: "",
+      kind: "overall_review",
     });
     const wrapper = mount(ReviewForm, {
       props: {

@@ -2056,6 +2056,7 @@ impl GitPlatform for GiteeAdapter {
             state: "commented".to_string(),
             author: Self::map_user(&json["user"]),
             submitted_at: json["created_at"].as_str().unwrap_or("").to_string(),
+            kind: ReviewKind::OverallReview,
         })
     }
 
@@ -2207,8 +2208,8 @@ impl GitPlatform for GiteeAdapter {
     }
 
     async fn list_reviews(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<Review>, AppError> {
-        let url = format!("{}/repos/{}/{}/pulls/{}/comments?per_page=100", self.base_url, owner, repo, pr_number);
-        let items: Vec<Value> = self.get_json(&url).await?;
+        let endpoint = format!("{}/repos/{}/{}/pulls/{}/comments", self.base_url, owner, repo, pr_number);
+        let items = super::collect_json_pages(self, &endpoint).await?;
 
         let reviews = items
             .iter()
@@ -2222,6 +2223,7 @@ impl GitPlatform for GiteeAdapter {
                 state: "commented".to_string(),
                 author: Self::map_user(&c["user"]),
                 submitted_at: c["created_at"].as_str().unwrap_or("").to_string(),
+                kind: ReviewKind::OverallReview,
             })
             .collect();
 

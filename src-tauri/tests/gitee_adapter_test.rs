@@ -1025,6 +1025,95 @@ async fn test_gitee_list_pr_comments_reports_rate_limit_errors() {
 }
 
 #[tokio::test]
+async fn test_gitee_list_reviews_excludes_inline_comments() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "id": 102,
+                "body": "LGTM",
+                "path": "",
+                "user": { "id": 3, "login": "dev3", "name": "Dev Three", "avatar_url": "" },
+                "created_at": "2025-01-04T02:00:00Z"
+            },
+            {
+                "id": 100,
+                "body": "Nice fix!",
+                "path": "src/main.rs",
+                "position": 15,
+                "new_line": 15,
+                "commit_id": "abc123",
+                "user": { "id": 1, "login": "dev1", "name": "Dev One", "avatar_url": "" },
+                "created_at": "2025-01-04T00:00:00Z"
+            }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let reviews = adapter.list_reviews("octocat", "hello-world", 42).await.expect("should list comment-only reviews");
+
+    assert_eq!(reviews.len(), 1);
+    assert_eq!(reviews[0].id, serde_json::json!(102));
+    assert_eq!(reviews[0].kind, mergebeacon_lib::models::ReviewKind::OverallReview);
+}
+
+#[tokio::test]
+async fn test_gitee_list_reviews_fetches_the_page_after_a_full_boundary() {
+    let mock_server = MockServer::start().await;
+    let first_page: Vec<_> = (1..=100)
+        .map(|id| {
+            serde_json::json!({
+                "id": id,
+                "body": format!("general-{id}"),
+                "path": "",
+                "user": { "id": 1, "login": "dev1", "name": "Dev One", "avatar_url": "" },
+                "created_at": "2025-01-04T00:00:00Z"
+            })
+        })
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "1"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(first_page))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls/42/comments"))
+        .and(query_param("per_page", "100"))
+        .and(query_param("page", "2"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 101,
+            "body": "general-101",
+            "path": "",
+            "user": { "id": 1, "login": "dev1", "name": "Dev One", "avatar_url": "" },
+            "created_at": "2025-01-04T00:00:00Z"
+        }])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let reviews = adapter.list_reviews("octocat", "hello-world", 42).await.expect("should fetch every comment page");
+
+    assert_eq!(reviews.len(), 101);
+    assert_eq!(reviews.first().map(|review| &review.id), Some(&serde_json::json!(1)));
+    assert_eq!(reviews.last().map(|review| &review.id), Some(&serde_json::json!(101)));
+    assert!(reviews.iter().all(|review| review.kind == mergebeacon_lib::models::ReviewKind::OverallReview));
+}
+
+#[tokio::test]
 async fn test_gitee_get_pr_diff() {
     let mock_server = MockServer::start().await;
 
@@ -1679,6 +1768,33 @@ async fn test_gitee_list_repos_prefers_pagination_headers() {
 
     assert_eq!(result.total_pages, 4);
     assert_eq!(result.total_count, 321);
+}
+
+#[tokio::test]
+async fn test_gitee_creates_comment_only_overall_review() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/repos/owner/repo/pulls/1/comments"))
+        .and(query_param("access_token", "test-token"))
+        .and(body_json(serde_json::json!({ "body": "review summary" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "id": 60,
+            "body": "review summary",
+            "user": { "id": 1, "login": "reviewer", "name": "Reviewer", "avatar_url": "" },
+            "created_at": "2026-07-15T10:00:00Z"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".to_string())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+    let review = adapter
+        .create_review("owner", "repo", 1, "review summary", &mergebeacon_lib::models::ReviewEvent::Comment, &[])
+        .await
+        .expect("should create comment-only review");
+
+    assert_eq!(review.kind, mergebeacon_lib::models::ReviewKind::OverallReview);
 }
 
 #[tokio::test]

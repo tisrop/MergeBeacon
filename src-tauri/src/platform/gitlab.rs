@@ -377,7 +377,7 @@ impl GitLabAdapter {
     }
 
     async fn metadata_permissions(&self, owner: &str, repo: &str, author_login: &str) -> PrMetadataPermissions {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let user_url = format!("{}/user", self.base_url);
         let project_url = format!("{}/projects/{}", self.base_url, project_id);
         let (user, project) = tokio::join!(self.get_json::<Value>(&user_url), self.get_json::<Value>(&project_url));
@@ -431,7 +431,7 @@ impl GitLabAdapter {
     }
 
     async fn resolve_milestone_id(&self, owner: &str, repo: &str, title: &str) -> Result<u64, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let encoded = urlencoding::encode(title);
         let url = format!("{}/projects/{}/milestones?state=all&title={}", self.base_url, project_id, encoded);
         let milestones = self.get_json::<Value>(&url).await?;
@@ -1033,7 +1033,7 @@ impl GitPlatform for GitLabAdapter {
         page: u32,
         per_page: u32,
     ) -> Result<Paginated<PrSummary>, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let state_param = match state {
             PrState::All => "all",
             PrState::Merged => "merged",
@@ -1092,7 +1092,7 @@ impl GitPlatform for GitLabAdapter {
             return self.list_pull_requests(owner, repo, state, page, per_page).await;
         }
 
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{project_id}/merge_requests", self.base_url);
         let page = page.max(1);
         let per_page = per_page.clamp(1, 100);
@@ -1233,7 +1233,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn get_pull_request(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrDetail, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/merge_requests/{}", self.base_url, project_id, pr_number);
         let json = self.get_json::<Value>(&url).await?;
 
@@ -1341,7 +1341,7 @@ impl GitPlatform for GitLabAdapter {
         repo: &str,
         pr_number: u64,
     ) -> Result<PrDependencyCandidates, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let fallback_repository = format!("{owner}/{repo}");
         let map_candidate = |mr: &Value| {
             let number = mr["iid"].as_u64()?;
@@ -1404,7 +1404,7 @@ impl GitPlatform for GitLabAdapter {
         const PAGE_SIZE: usize = 100;
         const MAX_PAGES: u32 = 1_000;
 
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let merge_request_url = format!("{}/projects/{project_id}/merge_requests/{pr_number}", self.base_url);
         let merge_request = self.get_json::<Value>(&merge_request_url).await?;
         let target_branch = merge_request["target_branch"]
@@ -1513,7 +1513,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn list_branches(&self, owner: &str, repo: &str) -> Result<PrBranchOptions, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let endpoint = format!("{}/projects/{}/repository/branches", self.base_url, project_id);
         let items = super::collect_json_pages(self, &endpoint).await?;
         let branches = items.iter().filter_map(|branch| branch["name"].as_str().map(str::to_string)).collect();
@@ -1524,7 +1524,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn list_labels(&self, owner: &str, repo: &str) -> Result<Vec<PrLabel>, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let endpoint = format!("{}/projects/{}/labels", self.base_url, project_id);
         let items = super::collect_json_pages(self, &endpoint).await?;
         Ok(items
@@ -1540,7 +1540,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn list_issue_templates(&self, owner: &str, repo: &str) -> Result<Vec<IssueTemplate>, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let list_url = format!("{}/projects/{}/templates/issues", self.base_url, project_id);
         let items =
             self.get_json_optional(&list_url).await?.and_then(|value| value.as_array().cloned()).unwrap_or_default();
@@ -1567,7 +1567,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn list_pr_templates(&self, owner: &str, repo: &str) -> Result<Vec<PrTemplate>, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let list_url = format!("{}/projects/{}/templates/merge_requests", self.base_url, project_id);
         let items =
             self.get_json_optional(&list_url).await?.and_then(|value| value.as_array().cloned()).unwrap_or_default();
@@ -1605,7 +1605,7 @@ impl GitPlatform for GitLabAdapter {
         content_type: &str,
         content: Vec<u8>,
     ) -> Result<PrDescriptionImageUpload, AppError> {
-        let project = urlencoding(owner, repo);
+        let project = encode_project_id(owner, repo);
         let url = format!("{}/projects/{project}/uploads", self.base_url);
         let part = reqwest::multipart::Part::bytes(content)
             .file_name(file_name.to_string())
@@ -1651,19 +1651,19 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn list_pr_participant_suggestions(&self, owner: &str, repo: &str) -> Result<Vec<User>, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let endpoint = format!("{}/projects/{}/members/all", self.base_url, project_id);
         let items = super::collect_json_pages(self, &endpoint).await?;
         Ok(items.iter().map(Self::map_user).filter(|user| !user.login.is_empty()).collect())
     }
 
     async fn create_pull_request(&self, owner: &str, repo: &str, request: &PrCreateRequest) -> Result<u64, AppError> {
-        let target_project_path = urlencoding(owner, repo);
+        let target_project_path = encode_project_id(owner, repo);
         let source_is_target = request.source_owner == owner && request.source_repo == repo;
         let endpoint_project_path = if source_is_target {
             target_project_path.clone()
         } else {
-            urlencoding(&request.source_owner, &request.source_repo)
+            encode_project_id(&request.source_owner, &request.source_repo)
         };
         let url = format!("{}/projects/{}/merge_requests", self.base_url, endpoint_project_path);
         let mut payload = serde_json::json!({
@@ -1689,7 +1689,7 @@ impl GitPlatform for GitLabAdapter {
         repo: &str,
         request: &PrCreatePreviewRequest,
     ) -> Result<PrCreatePreviewData, AppError> {
-        let source_project = urlencoding(&request.source_owner, &request.source_repo);
+        let source_project = encode_project_id(&request.source_owner, &request.source_repo);
         if let Some(commit_sha) = request.commit_sha.as_deref() {
             let sha = urlencoding::encode(commit_sha);
             let commit_url = format!("{}/projects/{}/repository/commits/{}", self.base_url, source_project, sha);
@@ -1739,7 +1739,7 @@ impl GitPlatform for GitLabAdapter {
             self.base_url, source_project, from, to
         );
         if request.source_owner != owner || request.source_repo != repo {
-            let target_project = urlencoding(owner, repo);
+            let target_project = encode_project_id(owner, repo);
             let target_url = format!("{}/projects/{}", self.base_url, target_project);
             let target = self.get_json::<Value>(&target_url).await?;
             let target_id =
@@ -1880,7 +1880,7 @@ impl GitPlatform for GitLabAdapter {
         if payload.is_empty() {
             return Ok(result);
         }
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/merge_requests/{}", self.base_url, project_id, pr_number);
         match self.put_json(&url, &Value::Object(payload)).await {
             Ok(_) => {
@@ -1935,7 +1935,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn get_merge_readiness(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrMergeReadiness, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let mr_url = format!("{}/projects/{}/merge_requests/{}", self.base_url, project_id, pr_number);
         let mr = self.get_json::<Value>(&mr_url).await?;
         let head_sha = mr["sha"].as_str().or_else(|| mr["diff_refs"]["head_sha"].as_str()).unwrap_or("").to_string();
@@ -2126,7 +2126,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn get_pr_diff(&self, owner: &str, repo: &str, pr_number: u64) -> Result<(String, Vec<PrFile>), AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/merge_requests/{}/changes", self.base_url, project_id, pr_number);
         let json = self.get_json::<Value>(&url).await?;
 
@@ -2164,7 +2164,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn list_pr_commits(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrCommitList, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let endpoint = format!("{}/projects/{}/merge_requests/{}/commits", self.base_url, project_id, pr_number);
         let (items, page_limit_reached) =
             super::collect_json_pages_limited(self, &endpoint, super::MAX_PR_COMMIT_PAGES).await?;
@@ -2189,7 +2189,7 @@ impl GitPlatform for GitLabAdapter {
         base_sha: &str,
         head_sha: &str,
     ) -> Result<(String, Vec<PrFile>), AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let from = urlencoding::encode(base_sha);
         let to = urlencoding::encode(head_sha);
         let url = format!(
@@ -2236,7 +2236,7 @@ impl GitPlatform for GitLabAdapter {
         maximum_content_bytes: u64,
     ) -> Result<PrFileContent, AppError> {
         crate::file_content::validate_request(path, revision)?;
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let encoded_path = urlencoding::encode(path);
         let encoded_revision = urlencoding::encode(revision);
         let url = format!(
@@ -2259,7 +2259,7 @@ impl GitPlatform for GitLabAdapter {
         if !matches!(event, ReviewEvent::Comment) {
             return Err(AppError::NotImplemented("该平台仅支持评论评审".to_string()));
         }
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
 
         // GitLab uses notes for reviews; approval API is separate
         let url = format!("{}/projects/{}/merge_requests/{}/notes", self.base_url, project_id, pr_number);
@@ -2275,6 +2275,7 @@ impl GitPlatform for GitLabAdapter {
             state: "commented".to_string(),
             author: Self::map_user(&json["author"]),
             submitted_at: json["created_at"].as_str().unwrap_or("").to_string(),
+            kind: ReviewKind::OverallReview,
         })
     }
 
@@ -2298,7 +2299,7 @@ impl GitPlatform for GitLabAdapter {
         }
         let (old_line, new_line, line_type) = Self::line_position(side, line)?;
 
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let merge_request_url = format!("{}/projects/{project_id}/merge_requests/{pr_number}", self.base_url);
         let merge_request: Value = self.get_json(&merge_request_url).await?;
         let diff_refs = &merge_request["diff_refs"];
@@ -2360,7 +2361,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn list_pr_comments(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<PrComment>, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let endpoint = format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions", self.base_url);
         let discussions = super::collect_json_pages(self, &endpoint).await?;
         let mut comments = Vec::new();
@@ -2399,7 +2400,7 @@ impl GitPlatform for GitLabAdapter {
         _reply_to_id: &str,
         body: &str,
     ) -> Result<(), AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url =
             format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}/notes", self.base_url);
         self.post_json(&url, &serde_json::json!({ "body": body })).await?;
@@ -2415,7 +2416,7 @@ impl GitPlatform for GitLabAdapter {
         comment_id: &str,
         body: &str,
     ) -> Result<(), AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!(
             "{}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}/notes/{comment_id}",
             self.base_url
@@ -2432,7 +2433,7 @@ impl GitPlatform for GitLabAdapter {
         thread_id: &str,
         comment_id: &str,
     ) -> Result<(), AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!(
             "{}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}/notes/{comment_id}",
             self.base_url
@@ -2451,16 +2452,16 @@ impl GitPlatform for GitLabAdapter {
         if thread_id.trim().is_empty() {
             return Err(AppError::Api("GitLab Discussion ID 不能为空".into()));
         }
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}", self.base_url);
         self.put_json(&url, &serde_json::json!({ "resolved": resolved })).await?;
         Ok(())
     }
 
     async fn list_reviews(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<Review>, AppError> {
-        let project_id = urlencoding(owner, repo);
-        let url = format!("{}/projects/{}/merge_requests/{}/notes?per_page=100", self.base_url, project_id, pr_number);
-        let items: Vec<Value> = self.get_json(&url).await?;
+        let project_id = encode_project_id(owner, repo);
+        let endpoint = format!("{}/projects/{}/merge_requests/{}/notes", self.base_url, project_id, pr_number);
+        let items = super::collect_json_pages(self, &endpoint).await?;
 
         let reviews = items
             .iter()
@@ -2472,6 +2473,7 @@ impl GitPlatform for GitLabAdapter {
                 state: "commented".to_string(),
                 author: Self::map_user(&n["author"]),
                 submitted_at: n["created_at"].as_str().unwrap_or("").to_string(),
+                kind: ReviewKind::OverallReview,
             })
             .collect();
 
@@ -2485,7 +2487,7 @@ impl GitPlatform for GitLabAdapter {
         state: &IssueState,
         page: u32,
     ) -> Result<Paginated<IssueSummary>, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let state_param = state.as_str();
         let url = format!(
             "{}/projects/{}/issues?state={}&per_page=100&page={}",
@@ -2516,7 +2518,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn get_issue(&self, owner: &str, repo: &str, issue_number: u64) -> Result<Issue, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/issues/{}", self.base_url, project_id, issue_number);
         let json: Value = self.get_json(&url).await?;
         let author = Self::map_user(&json["author"]);
@@ -2555,7 +2557,7 @@ impl GitPlatform for GitLabAdapter {
         body: &str,
         labels: &[String],
     ) -> Result<Issue, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/issues", self.base_url, project_id);
         let payload = serde_json::json!({
             "title": title,
@@ -2594,7 +2596,7 @@ impl GitPlatform for GitLabAdapter {
         current: &Issue,
         update: &IssueMetadataUpdate,
     ) -> Result<Issue, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/issues/{}", self.base_url, project_id, issue_number);
         let mut payload = serde_json::json!({});
         if current.title != update.title {
@@ -2639,7 +2641,7 @@ impl GitPlatform for GitLabAdapter {
         repo: &str,
         issue_number: u64,
     ) -> Result<Vec<IssueComment>, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let endpoint = format!("{}/projects/{}/issues/{}/notes", self.base_url, project_id, issue_number);
         let items = super::collect_json_pages(self, &endpoint).await?;
         Ok(items
@@ -2662,7 +2664,7 @@ impl GitPlatform for GitLabAdapter {
         issue_number: u64,
         body: &str,
     ) -> Result<IssueComment, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/issues/{}/notes", self.base_url, project_id, issue_number);
         let note = self.post_json(&url, &serde_json::json!({ "body": body })).await?;
         Ok(IssueComment {
@@ -2684,7 +2686,7 @@ impl GitPlatform for GitLabAdapter {
         commit_message: Option<String>,
         sha: &str,
     ) -> Result<PrMergeResult, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/merge_requests/{}/merge", self.base_url, project_id, pr_number);
         let squash = matches!(strategy, MergeStrategy::Squash);
         let mut payload = serde_json::json!({
@@ -2699,7 +2701,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn close_pull_request(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrState, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/merge_requests/{}", self.base_url, project_id, pr_number);
         let payload = serde_json::json!({ "state_event": "close" });
         self.put_json(&url, &payload).await?;
@@ -2707,7 +2709,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn reopen_pull_request(&self, owner: &str, repo: &str, pr_number: u64) -> Result<PrState, AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/merge_requests/{}", self.base_url, project_id, pr_number);
         let payload = serde_json::json!({ "state_event": "reopen" });
         self.put_json(&url, &payload).await?;
@@ -2715,7 +2717,7 @@ impl GitPlatform for GitLabAdapter {
     }
 
     async fn close_issue(&self, owner: &str, repo: &str, issue_number: u64) -> Result<(), AppError> {
-        let project_id = urlencoding(owner, repo);
+        let project_id = encode_project_id(owner, repo);
         let url = format!("{}/projects/{}/issues/{}", self.base_url, project_id, issue_number);
         let payload = serde_json::json!({ "state_event": "close" });
         self.put_json(&url, &payload).await?;
@@ -2723,7 +2725,7 @@ impl GitPlatform for GitLabAdapter {
     }
 }
 
-fn urlencoding(owner: &str, repo: &str) -> String {
+fn encode_project_id(owner: &str, repo: &str) -> String {
     urlencoding::encode(&format!("{owner}/{repo}")).into_owned()
 }
 

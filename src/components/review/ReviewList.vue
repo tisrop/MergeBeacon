@@ -109,6 +109,12 @@ const filteredThreads = computed(() => {
   return threads.value;
 });
 
+const overallReviewCount = computed(
+  () => generalItems.value.filter((item) => item.kind === "overall_review").length,
+);
+const generalCommentCount = computed(
+  () => generalItems.value.filter((item) => item.kind === "general_comment").length,
+);
 const resolvedCount = computed(
   () => threads.value.filter((thread) => thread.resolved === true).length,
 );
@@ -149,7 +155,7 @@ function threadIsOutdated(thread: ReviewThread): boolean {
 }
 
 function reviewKind(review: Review): GeneralReviewItem["kind"] {
-  return props.platform === "github" ? "overall_review" : "general_comment";
+  return review.kind;
 }
 
 function reviewContextKey(): string {
@@ -412,7 +418,7 @@ async function loadReviews(): Promise<void> {
     generalItems.value = reviews
       .filter((review) => review.body.trim().length > 0)
       .map((review) => ({
-        id: `review-${String(review.id)}`,
+        id: `review-${review.kind}-${String(review.id)}`,
         author: review.author,
         body: review.body,
         time: review.submitted_at,
@@ -550,9 +556,10 @@ defineExpose({ refresh: loadReviews });
         <p>
           {{
             t("review.progressSummary", {
-              reviews: generalItems.length,
+              overallReviews: overallReviewCount,
+              generalComments: generalCommentCount,
               threads: threads.length,
-              comments: threads.reduce((total, thread) => total + thread.comments.length, 0),
+              lineComments: threads.reduce((total, thread) => total + thread.comments.length, 0),
             })
           }}
         </p>
@@ -574,36 +581,40 @@ defineExpose({ refresh: loadReviews });
         aria-labelledby="general-review-title"
       >
         <h5 id="general-review-title">{{ t("review.generalSection") }}</h5>
-        <article v-for="item in generalItems" :key="item.id" class="general-review-item">
-          <header class="comment-header">
-            <img
-              :src="item.author.avatar_url"
-              :alt="t('review.avatarAlt', { login: item.author.login })"
-              class="avatar"
-            />
-            <strong>{{ item.author.login }}</strong>
-            <span class="kind-badge">
-              {{
-                item.kind === "overall_review"
-                  ? t("review.overallReview")
-                  : t("review.generalComment")
-              }}
-            </span>
-            <span v-if="item.kind === 'overall_review' && item.state" class="review-state">{{
-              item.state
-            }}</span>
-            <time :datetime="item.time">{{
-              new Date(item.time).toLocaleString(currentLocale())
-            }}</time>
-          </header>
-          <MarkdownRenderer
-            :content="item.body"
-            link-mode="emit"
-            repository-references
-            class="comment-body comment-markdown"
-            @link-click="handleLinkClick"
-          />
-        </article>
+        <ol class="general-review-timeline">
+          <li v-for="item in generalItems" :key="item.id" class="general-review-timeline-item">
+            <article class="general-review-item">
+              <header class="comment-header">
+                <img
+                  :src="item.author.avatar_url"
+                  :alt="t('review.avatarAlt', { login: item.author.login })"
+                  class="avatar"
+                />
+                <strong>{{ item.author.login }}</strong>
+                <span class="kind-badge">
+                  {{
+                    item.kind === "overall_review"
+                      ? t("review.overallReview")
+                      : t("review.generalComment")
+                  }}
+                </span>
+                <span v-if="item.kind === 'overall_review' && item.state" class="review-state">{{
+                  item.state
+                }}</span>
+                <time :datetime="item.time">{{
+                  new Date(item.time).toLocaleString(currentLocale())
+                }}</time>
+              </header>
+              <MarkdownRenderer
+                :content="item.body"
+                link-mode="emit"
+                repository-references
+                class="comment-body comment-markdown"
+                @link-click="handleLinkClick"
+              />
+            </article>
+          </li>
+        </ol>
       </section>
 
       <section class="review-section" aria-labelledby="thread-list-title">

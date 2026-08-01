@@ -2363,6 +2363,7 @@ impl GitPlatform for GitHubAdapter {
             state: json["state"].as_str().unwrap_or("").to_string(),
             author: Self::map_user(&json["user"]),
             submitted_at: json["submitted_at"].as_str().unwrap_or("").to_string(),
+            kind: ReviewKind::OverallReview,
         })
     }
 
@@ -2708,10 +2709,14 @@ impl GitPlatform for GitHubAdapter {
     }
 
     async fn list_reviews(&self, owner: &str, repo: &str, pr_number: u64) -> Result<Vec<Review>, AppError> {
-        let url = format!("{}/repos/{}/{}/pulls/{}/reviews", self.base_url, owner, repo, pr_number);
-        let items: Vec<Value> = self.get_json(&url).await?;
+        let reviews_endpoint = format!("{}/repos/{}/{}/pulls/{}/reviews", self.base_url, owner, repo, pr_number);
+        let comments_endpoint = format!("{}/repos/{}/{}/issues/{}/comments", self.base_url, owner, repo, pr_number);
+        let (review_items, comment_items) = tokio::try_join!(
+            super::collect_json_pages(self, &reviews_endpoint),
+            super::collect_json_pages(self, &comments_endpoint),
+        )?;
 
-        let reviews = items
+        let mut reviews: Vec<Review> = review_items
             .iter()
             .map(|r| Review {
                 id: r["id"].clone(),
@@ -2719,8 +2724,21 @@ impl GitPlatform for GitHubAdapter {
                 state: r["state"].as_str().unwrap_or("").to_string(),
                 author: Self::map_user(&r["user"]),
                 submitted_at: r["submitted_at"].as_str().unwrap_or("").to_string(),
+                kind: ReviewKind::OverallReview,
             })
             .collect();
+        // Pull request reviews and issue conversation comments are disjoint GitHub
+        // object types. Do not deduplicate by ID or content: IDs can overlap across
+        // types, and identical text can represent two intentional timeline events.
+        reviews.extend(comment_items.iter().map(|comment| Review {
+            id: comment["id"].clone(),
+            body: comment["body"].as_str().unwrap_or("").to_string(),
+            state: "commented".to_string(),
+            author: Self::map_user(&comment["user"]),
+            submitted_at: comment["created_at"].as_str().unwrap_or("").to_string(),
+            kind: ReviewKind::GeneralComment,
+        }));
+        reviews.sort_by(|left, right| left.submitted_at.cmp(&right.submitted_at));
 
         Ok(reviews)
     }

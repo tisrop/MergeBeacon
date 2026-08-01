@@ -1135,7 +1135,8 @@ export const zhCN = {
   "review.previousUnresolvedTitle": "上一个未解决线程",
   "review.processing": "处理中...",
   "review.progress": "评审进度",
-  "review.progressSummary": "整体评审 {reviews} · 行级线程 {threads} · 评论 {comments}",
+  "review.progressSummary":
+    "整体评审 {overallReviews} · 普通评论 {generalComments} · 行级线程 {threads} · 行级评论 {lineComments}",
   "review.refresh": "刷新",
   "review.refreshing": "刷新中...",
   "review.reopenThread": "重新打开",
@@ -2398,7 +2399,7 @@ export const enUS: Record<MessageKey, string> = {
   "review.processing": "Processing...",
   "review.progress": "Review progress",
   "review.progressSummary":
-    "Overall reviews {reviews} · Line threads {threads} · Comments {comments}",
+    "Overall reviews {overallReviews} · General comments {generalComments} · Line threads {threads} · Line comments {lineComments}",
   "review.refresh": "Refresh",
   "review.refreshing": "Refreshing...",
   "review.reopenThread": "Reopen",
