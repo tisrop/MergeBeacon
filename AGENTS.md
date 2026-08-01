@@ -42,24 +42,25 @@ cd src-tauri && cargo test github_adapter -- --nocapture
 src/                 # Vue 3 前端（Composition API, <script setup lang="ts">）
   api/index.ts       # 唯一 IPC 入口
   types/index.ts     # 前端 TS 类型
-  stores/            # Pinia（Auth / Capability / PR / Issue / Repo / Inbox / Notification / Review / UI / Update）
+  stores/            # 11 个 Pinia store（Auth / Capability / Repo / PR / Issue / Notification / 评审状态 / UI / Update）
   router/index.ts    # 11 条路由记录与登录恢复守卫
   pages/             # 9 个页面组件（含 PR/MR 创建/详情页和 Issue 创建/详情页）
   components/        # ai/ command/ diff/ inbox/ issue/ layout/ notification/ pr/ review/ shared/
   main.ts            # 挂载 Pinia + Router；HMR 时阻止恢复到 /settings
 src-tauri/
-  src/lib.rs         # Tauri Builder：注册 67 个 IPC 命令，设置原生菜单与桌面插件
-  src/state.rs       # AppState + 可取消的 AI 任务注册表
+  src/lib.rs         # Tauri Builder：注册 70 个 IPC 命令，设置原生菜单与桌面插件
+  src/state.rs       # AppState + 更新协调与 AI/PR 状态可取消任务注册表
   src/vault.rs       # TokenVault：Keyring 优先、AES-256-GCM 文件降级
   src/local_store.rs # SQLite 评论快照缓存
   src/error_log.rs   # 脱敏错误日志、大小限制与安全轮转
   src/patch.rs       # 跨平台 patch 标准化
-  src/file_content.rs # Diff 上下文文件内容处理
+  src/file_content.rs # Diff 上下文与受限图片/视频媒体内容处理
+  src/native_menu.rs # 本地化原生菜单与桌面入口
   src/single_instance.rs # 单实例窗口激活协调
   src/window_state.rs # 窗口位置、尺寸和最大化状态安全恢复
   src/platform/      # GitPlatform trait + GitHub/GitLab/Gitee adapter
   src/ai/            # OpenAI 兼容客户端、标准 SSE、Prompt、配置
-  src/commands/      # auth / support / error_log / update / capabilities / notification / inbox / pr / review / issue / ai
+  src/commands/      # auth / support / error_log / update / capabilities / native_menu / notification / inbox / pr / review / issue / ai
   tests/             # GitHub/GitLab/Gitee WireMock 集成测试
 ```
 
@@ -93,15 +94,20 @@ src-tauri/
   与远端更新时间。权限未知时不得开放编辑，旧详情不得覆盖远端新值。
 - 收件箱条目必须保留具体 `relationships`：GitHub/GitLab 区分 Reviewer、Assignee，Gitee 区分
   评审人、测试人；“我创建的”使用 Author。重复条目合并时不得丢失关系来源。
+- 三个平台的 PR / MR 搜索、筛选和排序必须统一使用 `PrListQuery`；标题、作者、标签、评审状态、
+  负责人/测试者及排序语义由 adapter 映射到服务端查询。筛选、排序或仓库上下文变化时必须重置并
+  隔离分页，迟到响应不得覆盖新结果。
 - 普通 Open PR / MR 列表和收件箱必须复用统一状态摘要语义，区分总体合并状态、审批、CI/测试、
-  Draft、冲突和具体阻塞原因；未知字段不得推断为可合并。GitHub 只批量补充当前页 Open PR 状态，
-  GitLab/Gitee 优先使用列表字段；状态补充失败时必须保留基础条目并回退为未知，禁止退化为逐条
-  `pr_merge_readiness` 请求。
+  Draft、冲突和具体阻塞原因；未知字段不得推断为可合并。需要补充的当前页状态统一通过
+  `pr_list_statuses` 批量获取，每个批次使用 `request_id` 注册到 `AppState.pr_list_status_tasks`；新筛选、
+  翻页、切换仓库或卸载时必须调用 `pr_list_statuses_cancel` 取消旧批次。GitLab/Gitee 优先使用列表字段；
+  状态补充失败时必须保留基础条目并回退为未知，禁止退化为逐条 `pr_merge_readiness` 请求。
 - Closed / Merged 列表不得继续请求实时审批和 CI/测试状态；详情页 `pr_merge_readiness` 仍是合并前
   的权威检查，列表摘要不得替代最终校验。
 - `pr_merge_readiness` 汇总平台可提供的检查、审批、冲突、分支和权限状态；未知状态不得伪装成可合并。
 - `pr_compare_diff` 的 base/head 必须通过提交版本格式校验且不得相同；`pr_file_content` 用于 Diff
-  上下文展开，返回内容必须保留二进制与截断边界。
+  上下文展开和受限媒体预览，返回内容必须保留二进制与截断边界。普通内容上限为 1 MiB，只有受支持
+  的图片/视频媒体预览可提升到 16 MiB。
 - `pr_merge` 返回 `PrMergeOutcome`；合并成功后关闭关联 Issue 的失败属于部分成功，不得把合并改成失败。
 - AI SSE 使用 `eventsource-stream`；事件携带 `request_id`，`AppState.ai_tasks` 管理取消句柄。
 - AI Prompt 按 UTF-8 字符边界截断到约 64 KiB，禁止直接按字节切片。
@@ -111,13 +117,16 @@ src-tauri/
   只允许打开版本化官方 ZIP，不执行应用内覆盖安装。
 - 诊断信息必须脱敏自托管平台地址、非官方 AI 地址和凭证值；复制动作通过原生剪贴板插件完成。
 - single-instance 必须是首个注册插件；窗口恢复只恢复位置、尺寸和最大化状态，并在显示前校正到可见区域。
+- 原生菜单首次安装必须使用简体中文 fallback；界面语言变化后通过 `native_menu_set_labels` 同步完整菜单
+  文案。菜单 JS bridge、路由入口和设置页 hash 必须保持一致，禁止出现仅菜单可达或跳转目标漂移。
 
 ## 前端要点
 
 - **无 UI 框架**：手写 CSS + CSS 变量；未经沟通不要引入 Tailwind 或组件库。
 - Pinia store 只能调用 `src/api/index.ts`，组件和 store 不直接 `invoke`。
 - 认证、仓库选择、Fork 上下文、仓库分页均按平台隔离。切换到未登录平台时，登录链接必须携带目标平台，不能回退到其他已登录平台。
-- PR/Issue/Inbox 异步请求需捕获平台、仓库、分类、上下文和序列号；上下文改变或旧请求迟到时不得覆盖新状态。
+- PR/Issue/Inbox 异步请求需捕获平台、仓库、分类、筛选、排序、分页上下文和序列号；上下文改变或
+  旧请求迟到时不得覆盖新状态。PR 当前页状态补充还必须校验 `request_id` 并取消旧批次。
 - 仓库首次加载替换第一页；“加载更多”追加并按 `id + full_name` 去重；失败保留已有数据并可重试。
 - 收件箱按平台独立维护 items/page/totalPages/loading/error/failedPage；跨平台合并按
   `platform + repository_full_name + number` 去重，并合并分类、关系来源和状态摘要；单平台失败不得
@@ -134,14 +143,17 @@ src-tauri/
 - AI 建议定位使用显式请求/结果协议跳转到 Diff；路径需要兼容重命名前后名称，失败必须回到 AI
   页签并给出原因，不能把焦点留在无目标的 Diff。
 - DiffViewer 使用后端标准化 patch；上下文展开通过 `pr_file_content` 获取 base/head 文件内容，
-  二进制、截断或不可用内容必须显示明确限制，不得拼接出误导性 Diff。可预览的图片必须只在
-  受限图片上下文中展示；SVG 不得作为标记注入页面，图片加载的旧响应不得覆盖当前文件。
+  二进制、截断或不可用内容必须显示明确限制，不得拼接出误导性 Diff。受支持的图片和视频只能在
+  受限媒体上下文中预览；SVG 不得作为标记注入页面，object URL 必须及时释放，媒体加载的旧响应
+  不得覆盖当前文件。
 - 模型 ID、标题和错误正文等远端字符串只能作为文本渲染。Markdown 只允许通过共享
   `MarkdownRenderer` 的标签、属性和 URL 白名单清洗后使用受控 `v-html`；其他组件不得直接渲染
-  远端 HTML。
+  远端 HTML。Markdown 视频附件只允许受限的 GitHub HTTPS host/path；加载失败必须保留原始安全链接，
+  扩展来源时必须同步最小化审查 CSP `media-src`。
 - oxlint 使用 `.oxlintrc.json`；禁止内联 `oxlint-disable`。oxfmt：双引号、分号、尾逗号、
   100 列宽。
-- `src/main.ts` 有 `/settings` HMR 保护；菜单“设置...”通过 `window.__goToSettings()` 跳转。
+- `src/main.ts` 有 `/settings` HMR 保护；原生菜单通过受控 JS bridge 跳转到新建 PR/MR、Issue、
+  命令面板、设置、更新检查和诊断等入口，菜单文案必须随当前界面语言同步。
 - 用户界面文案必须通过 `src/i18n/` 提供简体中文和英文资源，默认使用简体中文；AI 评审 Prompt
   必须按评审开始时捕获的意见语言生成。后端或远端返回的错误正文尚未本地化时仍按不可信文本展示。
 
@@ -151,8 +163,8 @@ src-tauri/
 - Rust：单元测试覆盖 TokenVault、UTF-8 截断、SSE、AI 响应解析、API base、patch、文件内容、
   updater 输入边界、诊断脱敏、单实例与窗口恢复；WireMock 覆盖三个平台 Adapter。
 - 命名集成测试目标：`github_adapter`、`gitlab_adapter`、`gitee_adapter`。
-- 涉及认证、平台切换、分页、收件箱、Diff 上下文、AI 生命周期/版本状态、更新流程或合并 outcome
-  时，必须同步增加回归测试。
+- 涉及认证、平台切换、PR 搜索/排序/分页、状态批次取消、收件箱、Diff 上下文与媒体预览、Markdown
+  附件来源、AI 生命周期/版本状态、原生菜单、更新流程或合并 outcome 时，必须同步增加回归测试。
 - 提交前完整执行：
 
 ```bash

@@ -56,15 +56,19 @@ reviews through an OpenAI-compatible API.
   - Keeps authentication, repository selection, Fork context, and pagination independent per platform
   - Supports incremental loading, deduplication, retry, independent refresh, and search across loaded
     repositories in the sidebar
+  - Stars frequently used repositories locally per platform and groups them at the top of the sidebar
   - Supports self-hosted GitLab and Gitee addresses and normalizes their API version paths
 - **Pull Requests / Merge Requests**
-  - Filters by Open, Closed, Merged, or All
+  - Filters by Open, Closed, Merged, or All, with combined title, author, label, review-state, and
+    assignee / tester search
+  - Sorts by best match, update time, creation time, or comment count; GitHub, GitLab, and Gitee all
+    use server-side filtering and pagination
   - Supports previous / next page navigation, direct page selection, and 10 / 20 / 50 / 100 items per
     page, with an explicit message when a platform cannot continue pagination
   - Shows approval, CI / test, Draft, conflict, and overall merge status on Open list cards, with
     specific blockers available on hover
-  - Runs one batch status query for the current GitHub Open page; GitLab and Gitee use list fields
-    instead of requesting a detail check for every item
+  - Enriches the current page through a cancellable batched status request, so stale work cannot
+    overwrite a new filter, page, or repository context
   - Shows only the final closed or merged state for Closed / Merged lists, without continuing to query
     live approval and CI / test status
   - Displays title, author, branches, labels, merge status, and cross-platform merge-readiness checks;
@@ -85,8 +89,10 @@ reviews through an OpenAI-compatible API.
   - Renders normalized patches as side-by-side diffs with diff2html
   - Finds code in the current text file with `⌘/Ctrl + F`, including case-sensitive, whole-word, and
     regular-expression matching
-  - Switches previewable image files between source and image views, with explicit errors for oversized,
-    invalid, or failed images
+  - Switches supported image and video files between source and media views, with explicit errors for
+    oversized, invalid, or failed media
+  - Plays GitHub video attachments from restricted sources in Markdown descriptions and comments, while
+    preserving the original safe link as a fallback
   - Provides file navigation, a diff-focused sidebar, renamed-path display, and per-file context
     expansion and collapse
   - Adds line comments to selected code on GitHub, GitLab, and Gitee
@@ -122,7 +128,8 @@ reviews through an OpenAI-compatible API.
   - Supports OpenAI-compatible Chat Completions and Models APIs
   - Includes presets for OpenAI, DeepSeek, Qwen, Moonshot, and Ollama
   - Supports connection tests, model list retrieval and search, Temperature, and Max Tokens settings
-  - Supports regular responses and standard SSE streaming, with a unique `request_id` for every stream
+  - Supports regular responses and standard SSE streaming, with a unique `request_id` for every stream,
+    and can stop the active review explicitly
   - Uses the current interface language for review findings by default, with a manual choice of Simplified
     Chinese or English before starting a review
   - Captures the selected review language when a review starts, so later interface-language changes do
@@ -144,7 +151,10 @@ reviews through an OpenAI-compatible API.
 - **Desktop integration and updates**
   - Supports Simplified Chinese and English, defaults to Simplified Chinese, applies language changes
     immediately, and restores the selection on the next launch
-  - Provides native menu entries for Settings, Undo, Redo, Cut, Copy, Paste, and Select All
+  - Keeps the native menu in sync with the interface language and provides New PR / MR, New Issue,
+    command palette, Settings, update, diagnostics, window, and help entries
+  - Preserves desktop editing and view actions such as Undo, Redo, Cut, Copy, Paste, Select All, Reload,
+    and Full Screen
   - Runs as a single instance and activates the existing main window when launched again
   - Restores window position, size, and maximized state safely
   - Supports signed update checks, download and installation, restart confirmation, and daily automatic
@@ -203,7 +213,7 @@ reviews through an OpenAI-compatible API.
 | Code quality | oxlint + oxfmt + frontend standards checker |
 | Backend | Rust 2021, Tokio, Reqwest |
 | Platform abstraction | `GitPlatform` trait + GitHub / GitLab / Gitee adapters |
-| Diff rendering | Normalized patch, diff2html, highlight.js, code search, and image preview |
+| Diff rendering | Normalized patch, diff2html, highlight.js, code search, and bounded image / video preview |
 | AI | OpenAI-compatible API, SSE streaming, incremental Compare Diff |
 | Credential storage | System Keyring first, AES-256-GCM encrypted-file fallback |
 | Local data | SQLite comment snapshot cache |
@@ -327,7 +337,7 @@ change. Gitee does not support Draft creation, so the Draft option is not shown.
 5. Adjust Temperature and Max Tokens, then use **Test Connection** to verify the configuration.
 6. Open the **AI Review** tab for a PR / MR, choose a focus and **Review language**, and start the review.
    The review language follows the current interface by default and can be set independently to Simplified
-   Chinese or English.
+   Chinese or English, and the active streaming review can be stopped when needed.
 7. Add findings to the review draft, edit them, or ignore them. Select a file location to open the diff, then
    return to AI Review to continue.
 8. After a new PR / MR commit, use an incremental review to compare the last successful version with the
@@ -412,7 +422,7 @@ mergebeacon/
 │   ├── components/
 │   │   ├── ai/                  # AI settings, streaming/incremental review, history, findings
 │   │   ├── command/             # Global command palette
-│   │   ├── diff/                # Normalized diff, search, image preview, context, quick comments
+│   │   ├── diff/                # Normalized diff, search, media preview, context, quick comments
 │   │   ├── inbox/               # Cross-platform PR inbox cards
 │   │   ├── issue/               # Issue cards and forms
 │   │   ├── layout/              # Application layout, platform and repository sidebars
@@ -422,20 +432,21 @@ mergebeacon/
 │   │   └── shared/              # Shared forms and state components
 │   ├── pages/                   # 9 pages: sign-in, inbox, PR, Issue, and Settings
 │   ├── router/index.ts          # 11 route records and sign-in restoration guard
-│   ├── stores/                  # Auth / Capability / Repo / PR / Issue / Inbox / Notification / Review / UI / Update
+│   ├── stores/                  # 11 Pinia stores for auth, capabilities, repos, PRs, Issues, notifications, and review state
 │   └── types/index.ts           # Shared frontend types
 ├── src-tauri/
 │   ├── src/
 │   │   ├── ai/                  # OpenAI-compatible client, prompt, and configuration
-│   │   ├── commands/            # Auth, diagnostics, updates, platforms, inbox, PR, review, Issue, AI
+│   │   ├── commands/            # Auth, diagnostics, updates, capabilities, native menu, notifications, PR, review, Issue, AI
 │   │   ├── platform/            # GitPlatform trait and three platform adapters
-│   │   ├── file_content.rs      # Diff-context file-content processing
+│   │   ├── file_content.rs      # Diff context and bounded media-content processing
+│   │   ├── native_menu.rs       # Localized native menu and desktop actions
 │   │   ├── patch.rs             # Cross-platform patch normalization
 │   │   ├── single_instance.rs   # Single-instance window activation
 │   │   ├── window_state.rs      # Safe window-state restoration
 │   │   ├── local_store.rs       # SQLite comment snapshot cache
 │   │   ├── error_log.rs         # Redacted, size-limited, securely rotated error logs
-│   │   ├── state.rs             # Shared state and cancellable AI task registry
+│   │   ├── state.rs             # Shared state, update coordination, cancellable task registries
 │   │   └── vault.rs             # TokenVault with Keyring-first, encrypted-file fallback
 │   ├── tests/                   # GitHub / GitLab / Gitee WireMock integration tests
 │   ├── Cargo.toml
@@ -483,16 +494,18 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-The application currently registers 67 Tauri Commands:
+The application currently registers 70 Tauri Commands:
 
 - Authentication (5): `auth_login`, `auth_logout`, `auth_check`, `auth_has_any_token`, `auth_has_token`
-- Diagnostics, updates, and platform capabilities (10): `support_info`, `copy_support_info`,
-  `copy_recent_error_logs`, `clipboard_write_text`, `error_log_record`, `app_version`, `update_check`,
-  `update_download_and_install`, `update_restart`, `platform_capabilities`
+- Diagnostics, updates, platform capabilities, and native menu (11): `support_info`,
+  `copy_support_info`, `copy_recent_error_logs`, `clipboard_write_text`, `error_log_record`, `app_version`,
+  `update_check`, `update_download_and_install`, `update_restart`, `platform_capabilities`,
+  `native_menu_set_labels`
 - Repositories (1): `repo_list`
 - Desktop notifications (3): `desktop_notification_permission_granted`,
   `desktop_notification_request_permission`, `desktop_notification_send`
-- Inbox and PR / MR (21): `review_inbox_list`, `pr_list`, `pr_detail`, `pr_dependencies`,
+- Inbox and PR / MR (23): `review_inbox_list`, `pr_list`, `pr_list_statuses`,
+  `pr_list_statuses_cancel`, `pr_detail`, `pr_dependencies`,
   `pr_merge_queue_status`, `pr_branches`, `pr_labels`, `pr_templates`, `pr_description_image_upload`,
   `pr_participant_suggestions`, `pr_create_preview`, `pr_create`, `pr_metadata_update`,
   `pr_merge_readiness`, `pr_diff`, `pr_commits`, `pr_compare_diff`, `pr_file_content`, `pr_merge`,
