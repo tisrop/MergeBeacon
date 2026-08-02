@@ -652,13 +652,6 @@ pub struct ReviewCommentPosition {
     pub body: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateReviewRequest {
-    pub body: String,
-    pub event: ReviewEvent,
-    pub comments: Vec<ReviewCommentPosition>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewKind {
@@ -785,13 +778,6 @@ pub struct IssueTemplate {
     pub body: String,
     pub labels: Vec<String>,
     pub source_path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateIssueRequest {
-    pub title: String,
-    pub body: String,
-    pub labels: Vec<String>,
 }
 
 // ── Merge / Close / Reopen ──

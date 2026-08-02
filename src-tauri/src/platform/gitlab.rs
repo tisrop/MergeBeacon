@@ -69,15 +69,9 @@ impl GitLabAdapter {
         Self { client, token, base_url: "https://gitlab.com/api/v4".to_string() }
     }
 
-    #[allow(dead_code)]
     pub fn with_base_url(mut self, url: String) -> Self {
         self.base_url = super::normalize_api_base("gitlab", &url);
         self
-    }
-
-    #[allow(dead_code)]
-    fn auth_header(&self) -> String {
-        format!("PRIVATE-TOKEN: {}", self.token)
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, AppError> {

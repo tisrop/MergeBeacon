@@ -37,7 +37,6 @@ impl GitHubAdapter {
         Self { client, token, base_url: "https://api.github.com".to_string() }
     }
 
-    #[allow(dead_code)]
     pub fn with_base_url(mut self, url: String) -> Self {
         self.base_url = url.trim_end_matches('/').to_string();
         self

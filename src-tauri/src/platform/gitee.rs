@@ -33,7 +33,6 @@ impl GiteeAdapter {
         Self { client, token, base_url: "https://gitee.com/api/v5".to_string() }
     }
 
-    #[allow(dead_code)]
     pub fn with_base_url(mut self, url: String) -> Self {
         self.base_url = super::normalize_api_base("gitee", &url);
         self

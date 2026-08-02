@@ -28,9 +28,9 @@ reviews through an OpenAI-compatible API.
 
 ![MergeBeacon side-by-side diff review](docs/images/diff-review.png)
 
-### AI-assisted review
+### AI review workspace
 
-![MergeBeacon AI review summary and findings](docs/images/ai-review.png)
+![MergeBeacon AI review workspace](docs/images/ai-review.png)
 
 ## Feature overview
 

@@ -83,19 +83,6 @@ export interface UpdateCheckResult {
   portable_download_url?: string | null;
 }
 
-export interface SupportInfo {
-  app_version: string;
-  operating_system: string;
-  architecture: string;
-  current_platform: string;
-  platform_endpoint: string;
-  credential_storage: string;
-  ai_configured: boolean;
-  ai_endpoint: string;
-  local_cache_available: boolean;
-  formatted: string;
-}
-
 export interface NativeMenuLabels {
   about: string;
   check_updates: string;
@@ -551,12 +538,6 @@ export interface DiffLocationResult {
 // ── Review ──
 export type ReviewEvent = "approve" | "comment" | "request_changes";
 
-export interface CreateReviewRequest {
-  body: string;
-  event: ReviewEvent;
-  comments: ReviewCommentPosition[];
-}
-
 export interface ReviewCommentPosition {
   path: string;
   position: number;
@@ -654,12 +635,6 @@ export interface IssueMetadataUpdate {
   state: Exclude<IssueState, "all">;
   labels: string[];
   expected_updated_at: string;
-}
-
-export interface CreateIssueRequest {
-  title: string;
-  body: string;
-  labels: string[];
 }
 
 // ── 分页 ──
@@ -765,11 +740,4 @@ export interface AiReviewHistoryEntry {
   truncated: boolean;
   language: AiReviewLanguage;
   result: AiReviewResult;
-}
-
-// ── AI 预设 ──
-export interface AiPreset {
-  name: string;
-  endpoint: string;
-  default_model: string;
 }
