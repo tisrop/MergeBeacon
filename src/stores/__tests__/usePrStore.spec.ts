@@ -11,6 +11,8 @@ import {
   prMerge,
   prMergeReadiness,
   prMetadataUpdate,
+  prClose,
+  prReopen,
 } from "@/api";
 import { DEFAULT_LIST_QUERY, isDefaultPrListQuery, usePrStore } from "@/stores/usePrStore";
 import type {
@@ -46,6 +48,75 @@ function deferred<T>() {
     reject = fail;
   });
   return { promise, resolve, reject };
+}
+
+function createPrDetail(
+  number: number,
+  title: string,
+  state: PrDetail["summary"]["state"] = "open",
+): PrDetail {
+  return {
+    summary: {
+      number,
+      title,
+      author: { id: number, login: `user-${number}`, name: `User ${number}`, avatar_url: "" },
+      state,
+      created_at: "",
+      updated_at: "",
+      labels: [],
+    },
+    body: "",
+    source_branch: `feature-${number}`,
+    target_branch: "main",
+    mergeable: true,
+    head_sha: `head-${number}`,
+    base_sha: "base-sha",
+    draft: false,
+    reviewers: [],
+    assignees: [],
+    milestone: null,
+    metadata_permissions: {
+      can_edit_title_body: true,
+      can_toggle_draft: true,
+      can_manage_reviewers: true,
+      can_manage_assignees: true,
+      can_manage_labels: true,
+      can_manage_milestone: true,
+    },
+  };
+}
+
+type PrStore = ReturnType<typeof usePrStore>;
+
+async function expectStateChangeRefreshToIgnoreNavigation(
+  prepareAction: () => void,
+  executeAction: (store: PrStore) => Promise<unknown>,
+): Promise<void> {
+  const initialDetail = createPrDetail(1, "PR A");
+  const lateDetail = createPrDetail(1, "迟到的 PR A");
+  const currentDetail = createPrDetail(2, "PR B");
+  const lateRefresh = deferred<PrDetail>();
+
+  vi.mocked(prDetail)
+    .mockReset()
+    .mockResolvedValueOnce(initialDetail)
+    .mockReturnValueOnce(lateRefresh.promise)
+    .mockResolvedValueOnce(currentDetail);
+  vi.mocked(prMergeReadiness).mockReset();
+  prepareAction();
+
+  const store = usePrStore();
+  await store.fetchPrDetail("github", "old", "repo", 1);
+  const pendingAction = executeAction(store);
+  await vi.waitFor(() => expect(prDetail).toHaveBeenCalledTimes(2));
+
+  await store.fetchPrDetail("gitlab", "new", "repo", 2);
+  lateRefresh.resolve(lateDetail);
+  await pendingAction;
+
+  expect(store.currentPr).toEqual(currentDetail);
+  expect(prMergeReadiness).not.toHaveBeenCalled();
+  expect(store.error).toBeNull();
 }
 
 describe("usePrStore", () => {
@@ -473,14 +544,93 @@ describe("usePrStore", () => {
       },
     };
     vi.mocked(prMerge).mockResolvedValue(outcome);
-    vi.mocked(prDetail).mockResolvedValue(detail);
+    vi.mocked(prDetail)
+      .mockResolvedValueOnce(createPrDetail(42, "待合并"))
+      .mockResolvedValueOnce(detail);
     const store = usePrStore();
+    await store.fetchPrDetail("github", "o", "r", 42);
 
     const result = await store.mergePr("github", "o", "r", 42, "merge", undefined, undefined, true);
 
     expect(result).toEqual(outcome);
     expect(prDetail).toHaveBeenCalledWith("github", "o", "r", 42);
     expect(store.currentPr?.summary.title).toBe("已合并");
+  });
+
+  it("mergePr 切换详情后忽略迟到的旧 PR 刷新", async () => {
+    await expectStateChangeRefreshToIgnoreNavigation(
+      () => {
+        vi.mocked(prMerge)
+          .mockReset()
+          .mockResolvedValue({
+            merge: { merged: true, message: "merged", sha: "merged-sha" },
+            closed_issues: [],
+            issue_close_failures: [],
+          });
+      },
+      (store) => store.mergePr("github", "old", "repo", 1, "merge"),
+    );
+  });
+
+  it("closePr 切换详情后忽略迟到的旧 PR 刷新", async () => {
+    await expectStateChangeRefreshToIgnoreNavigation(
+      () => {
+        vi.mocked(prClose).mockReset().mockResolvedValue("closed");
+      },
+      (store) => store.closePr("github", "old", "repo", 1),
+    );
+  });
+
+  it("reopenPr 切换详情后忽略迟到的旧 PR 刷新", async () => {
+    await expectStateChangeRefreshToIgnoreNavigation(
+      () => {
+        vi.mocked(prReopen).mockReset().mockResolvedValue("open");
+      },
+      (store) => store.reopenPr("github", "old", "repo", 1),
+    );
+  });
+
+  it("写操作刷新合并就绪状态时不会覆盖已切换的 PR", async () => {
+    const oldReadiness = deferred<PrMergeReadiness>();
+    const currentDetail = createPrDetail(2, "PR B");
+    vi.mocked(prMerge)
+      .mockReset()
+      .mockResolvedValue({
+        merge: { merged: true, message: "merged", sha: "merged-sha" },
+        closed_issues: [],
+        issue_close_failures: [],
+      });
+    vi.mocked(prDetail)
+      .mockReset()
+      .mockResolvedValueOnce(createPrDetail(1, "PR A"))
+      .mockResolvedValueOnce(createPrDetail(1, "已合并的 PR A", "merged"))
+      .mockResolvedValueOnce(currentDetail);
+    vi.mocked(prMergeReadiness).mockReset().mockReturnValueOnce(oldReadiness.promise);
+    const store = usePrStore();
+    await store.fetchPrDetail("github", "old", "repo", 1);
+
+    const pendingMerge = store.mergePr("github", "old", "repo", 1, "merge");
+    await vi.waitFor(() => expect(prMergeReadiness).toHaveBeenCalledTimes(1));
+    await store.fetchPrDetail("gitlab", "new", "repo", 2);
+    oldReadiness.resolve({
+      status: "ready",
+      head_sha: "old-sha",
+      mergeable: true,
+      draft: false,
+      has_conflicts: false,
+      checks_status: "ready",
+      approvals_status: "ready",
+      approvals_required: null,
+      approvals_received: null,
+      has_merge_permission: true,
+      branch_behind: false,
+      blocking_reasons: [],
+    });
+    await pendingMerge;
+
+    expect(store.currentPr).toEqual(currentDetail);
+    expect(store.mergeReadiness).toBeNull();
+    expect(store.readinessError).toBeNull();
   });
 
   it("忽略迟到的旧 PR 合并就绪响应", async () => {

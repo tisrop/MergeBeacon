@@ -58,6 +58,20 @@ interface PersistedItemState extends ReviewInboxLocalState {
   touched_at: number;
 }
 
+function persistedItemStateEquals(left: PersistedItemState, right: PersistedItemState): boolean {
+  return (
+    left.unread === right.unread &&
+    left.new_commits === right.new_commits &&
+    left.new_comments === right.new_comments &&
+    left.status_changed === right.status_changed &&
+    left.updated_at === right.updated_at &&
+    left.head_sha === right.head_sha &&
+    left.comments_count === right.comments_count &&
+    left.status_fingerprint === right.status_fingerprint &&
+    left.touched_at === right.touched_at
+  );
+}
+
 const defaultFilters: InboxFilters = {
   category: "review_requested",
   platform: "all",
@@ -345,7 +359,7 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
         status_fingerprint: fingerprint,
         touched_at: now,
       };
-      changed ||= JSON.stringify(next[key]) !== JSON.stringify(previous);
+      changed ||= !persistedItemStateEquals(next[key], previous);
     }
     if (changed) {
       itemStates.value = next;

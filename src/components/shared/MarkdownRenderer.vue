@@ -4,6 +4,7 @@ import { marked } from "marked";
 import { clipboardWriteText } from "@/api";
 import { useI18n } from "@/i18n";
 import { getErrorMessage } from "@/utils/error";
+import { parseHtmlFragment, sanitizeHtmlFragment } from "@/utils/sanitizeHtml";
 
 const props = defineProps<{
   content: string;
@@ -79,15 +80,6 @@ const githubVideoAttachmentHosts = new Set([
   "github-production-user-asset-6210df.s3.amazonaws.com",
 ]);
 const videoAttachmentPathPattern = /\.(?:mp4|m4v|mov|webm|ogv|ogg)$/i;
-// Reuse the parser for synchronous recomputations; parseFromString still returns an isolated document.
-const htmlParser = new DOMParser();
-
-function parseHtmlFragment(html: string): { document: Document; root: Element } | null {
-  const document = htmlParser.parseFromString(`<div>${html}</div>`, "text/html");
-  const root = document.body.firstElementChild;
-  return root ? { document, root } : null;
-}
-
 function isSafeUrl(value: string, attribute: "href" | "src"): boolean {
   const trimmed = value.trim();
   if (!trimmed) return true;
@@ -107,43 +99,26 @@ function isSafeUrl(value: string, attribute: "href" | "src"): boolean {
 }
 
 function sanitizeHtml(rawHtml: string): string {
-  const fragment = parseHtmlFragment(rawHtml);
-  if (!fragment) return "";
-  const { root } = fragment;
-
-  for (const element of Array.from(root.querySelectorAll("*"))) {
-    if (!allowedTags.has(element.tagName)) {
-      if (["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "FORM"].includes(element.tagName)) {
-        element.remove();
-      } else {
-        element.replaceWith(...Array.from(element.childNodes));
+  return sanitizeHtmlFragment(rawHtml, {
+    allowedTags,
+    allowedAttributes,
+    afterSanitizeElement(element) {
+      for (const name of ["href", "src"] as const) {
+        const value = element.getAttribute(name);
+        if (value && !isSafeUrl(value, name)) element.removeAttribute(name);
       }
-      continue;
-    }
-
-    const allowed = allowedAttributes[element.tagName] ?? new Set<string>();
-    for (const attribute of Array.from(element.attributes)) {
-      const name = attribute.name.toLowerCase();
-      if (name.startsWith("on") || name === "style" || !allowed.has(name)) {
-        element.removeAttribute(attribute.name);
+      if (element.tagName === "INPUT") {
+        if (element.getAttribute("type") !== "checkbox") {
+          element.remove();
+          return;
+        }
+        element.setAttribute("disabled", "");
       }
-    }
-    for (const name of ["href", "src"] as const) {
-      const value = element.getAttribute(name);
-      if (value && !isSafeUrl(value, name)) element.removeAttribute(name);
-    }
-    if (element.tagName === "INPUT") {
-      if (element.getAttribute("type") !== "checkbox") {
-        element.remove();
-        continue;
+      if (element.tagName === "A" && element.hasAttribute("href")) {
+        element.setAttribute("rel", "noopener noreferrer");
       }
-      element.setAttribute("disabled", "");
-    }
-    if (element.tagName === "A" && element.hasAttribute("href")) {
-      element.setAttribute("rel", "noopener noreferrer");
-    }
-  }
-  return root.innerHTML;
+    },
+  });
 }
 
 function isGitHubVideoAttachmentCandidate(value: string): boolean {

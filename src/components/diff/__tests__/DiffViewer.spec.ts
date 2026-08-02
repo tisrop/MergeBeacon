@@ -11,12 +11,20 @@ const {
   reviewViewedFilesListMock,
   reviewFileSetViewedMock,
   clipboardWriteTextMock,
+  diff2HtmlMock,
 } = vi.hoisted(() => ({
   prFileContentMock: vi.fn(),
   reviewViewedFilesListMock: vi.fn(),
   reviewFileSetViewedMock: vi.fn(),
   clipboardWriteTextMock: vi.fn(),
+  diff2HtmlMock: vi.fn(),
 }));
+
+vi.mock("diff2html", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("diff2html")>();
+  diff2HtmlMock.mockImplementation(actual.html);
+  return { ...actual, html: diff2HtmlMock };
+});
 
 vi.mock("@/api", () => ({
   prFileContent: prFileContentMock,
@@ -36,6 +44,7 @@ vi.stubGlobal("localStorage", {
 
 beforeEach(() => {
   setAppLocale("zh-CN");
+  diff2HtmlMock.mockClear();
 });
 
 const diff: DiffResult = {
@@ -2588,6 +2597,52 @@ index 1111111..2222222 100644
     expect(wrapper.get(".diff2html-container").text()).toContain("<safe>");
     expect(wrapper.find(".diff2html-container script").exists()).toBe(false);
     expect(wrapper.find(".diff2html-container safe").exists()).toBe(false);
+  });
+
+  it("legacy diff2html 输出注入前会经过严格白名单消毒", async () => {
+    diff2HtmlMock.mockReturnValueOnce(`
+      <div class="d2h-wrapper application-shell" style="position: fixed" onclick="alert(1)">
+        <script>alert(1)</script>
+        <iframe srcdoc="<script>alert(2)</script>"></iframe>
+        <img src="x" onerror="alert(3)">
+        <div class="d2h-file-wrapper" data-lang="ts" data-secret="leak">
+          <span class="d2h-file-name">src/components/App.ts</span>
+          <svg class="d2h-icon foreign-class" aria-hidden="true" width="12" height="16"
+            viewBox="0 0 12 16" onload="alert(4)">
+            <path d="M0 0h1v1z" onclick="alert(5)"></path>
+            <foreignObject><div onclick="alert(6)">unsafe</div></foreignObject>
+          </svg>
+          <label class="d2h-file-collapse">
+            <input class="d2h-file-collapse-input" type="checkbox" name="viewed"
+              value="viewed" onchange="alert(7)">
+          </label>
+          <input class="d2h-file-collapse-input" type="text" autofocus
+            formaction="javascript:alert(8)">
+          <table class="d2h-diff-table"><tbody class="d2h-diff-tbody"><tr>
+            <td class="d2h-info"><div class="d2h-code-side-line">safe content</div></td>
+          </tr></tbody></table>
+        </div>
+      </div>
+    `);
+
+    const wrapper = await mountViewer();
+    const legacyDiff = wrapper.get(".legacy-diff");
+    const sanitizedWrapper = legacyDiff.get(".d2h-wrapper");
+    const checkbox = legacyDiff.get<HTMLInputElement>('input[type="checkbox"]');
+
+    expect(sanitizedWrapper.text()).toContain("safe content");
+    expect(sanitizedWrapper.classes()).toEqual(["d2h-wrapper"]);
+    expect(legacyDiff.find("script, iframe, img, foreignObject").exists()).toBe(false);
+    expect(legacyDiff.find("[style], [onclick], [onerror], [onload], [onchange]").exists()).toBe(
+      false,
+    );
+    expect(legacyDiff.find("[data-secret], [autofocus], [formaction]").exists()).toBe(false);
+    expect(legacyDiff.find(".foreign-class").exists()).toBe(false);
+    expect(legacyDiff.findAll("input")).toHaveLength(1);
+    expect(checkbox.attributes("disabled")).toBe("");
+    expect(checkbox.attributes("name")).toBeUndefined();
+    expect(checkbox.attributes("value")).toBeUndefined();
+    expect(legacyDiff.find("svg.d2h-icon path").exists()).toBe(true);
   });
 
   it("文件名右侧的复制按钮把当前文件路径写入系统剪贴板", async () => {

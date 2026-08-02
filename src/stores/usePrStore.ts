@@ -402,12 +402,23 @@ export const usePrStore = defineStore("pr", () => {
     number: number,
   ) {
     const sequence = readinessRequest.begin();
+    const contextKey = `${platform}:${owner}/${repo}:${number}`;
     readinessError.value = null;
     try {
       const result = await prMergeReadiness(platform, owner, repo, number);
-      if (readinessRequest.isCurrent(sequence)) mergeReadiness.value = result;
+      if (
+        readinessRequest.isCurrent(sequence) &&
+        (!detailContextKey || detailContextKey === contextKey)
+      ) {
+        mergeReadiness.value = result;
+      }
     } catch (e) {
-      if (!readinessRequest.isCurrent(sequence)) return;
+      if (
+        !readinessRequest.isCurrent(sequence) ||
+        (detailContextKey && detailContextKey !== contextKey)
+      ) {
+        return;
+      }
       readinessError.value = typeof e === "string" ? e : String(e);
       mergeReadiness.value = null;
     } finally {
@@ -438,6 +449,8 @@ export const usePrStore = defineStore("pr", () => {
 
   async function fetchStateCounts(platform: Platform, owner: string, repo: string) {
     const sequence = countsRequest.beginSilent();
+    // 三个平台没有统一的批量状态计数接口；用最小分页并发读取 total_count，
+    // 并通过 allSettled 保留单个状态失败时的其他计数。
     const states: PrState[] = ["open", "closed", "merged", "all"];
     const results = await Promise.allSettled(
       states.map((state) => prList(platform, owner, repo, state, 1, 1)),
@@ -480,6 +493,31 @@ export const usePrStore = defineStore("pr", () => {
     }
   }
 
+  async function refreshPrAfterStateChange(
+    platform: Platform,
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<void> {
+    const contextKey = `${platform}:${owner}/${repo}:${number}`;
+    if (detailContextKey !== contextKey) return;
+
+    const sequence = detailRequest.beginSilent();
+    let refreshedDetail: PrDetail;
+    try {
+      refreshedDetail = await prDetail(platform, owner, repo, number);
+    } catch (requestError) {
+      if (!detailRequest.isCurrent(sequence) || detailContextKey !== contextKey) return;
+      throw requestError;
+    } finally {
+      detailRequest.finish(sequence);
+    }
+
+    if (!detailRequest.isCurrent(sequence) || detailContextKey !== contextKey) return;
+    currentPr.value = refreshedDetail;
+    await fetchMergeReadiness(platform, owner, repo, number);
+  }
+
   async function mergePr(
     platform: Platform,
     owner: string,
@@ -490,7 +528,8 @@ export const usePrStore = defineStore("pr", () => {
     commitMessage?: string,
     closeIssues?: boolean,
   ) {
-    error.value = null;
+    const contextKey = `${platform}:${owner}/${repo}:${number}`;
+    if (detailContextKey === contextKey) error.value = null;
     try {
       const result = await prMerge(
         platform,
@@ -502,35 +541,40 @@ export const usePrStore = defineStore("pr", () => {
         commitMessage,
         closeIssues,
       );
-      currentPr.value = await prDetail(platform, owner, repo, number);
-      await fetchMergeReadiness(platform, owner, repo, number);
+      await refreshPrAfterStateChange(platform, owner, repo, number);
       return result;
     } catch (e) {
-      error.value = typeof e === "string" ? e : String(e);
+      if (detailContextKey === contextKey) {
+        error.value = typeof e === "string" ? e : String(e);
+      }
       throw e;
     }
   }
 
   async function closePr(platform: Platform, owner: string, repo: string, number: number) {
-    error.value = null;
+    const contextKey = `${platform}:${owner}/${repo}:${number}`;
+    if (detailContextKey === contextKey) error.value = null;
     try {
       await prClose(platform, owner, repo, number);
-      currentPr.value = await prDetail(platform, owner, repo, number);
-      await fetchMergeReadiness(platform, owner, repo, number);
+      await refreshPrAfterStateChange(platform, owner, repo, number);
     } catch (e) {
-      error.value = typeof e === "string" ? e : String(e);
+      if (detailContextKey === contextKey) {
+        error.value = typeof e === "string" ? e : String(e);
+      }
       throw e;
     }
   }
 
   async function reopenPr(platform: Platform, owner: string, repo: string, number: number) {
-    error.value = null;
+    const contextKey = `${platform}:${owner}/${repo}:${number}`;
+    if (detailContextKey === contextKey) error.value = null;
     try {
       await prReopen(platform, owner, repo, number);
-      currentPr.value = await prDetail(platform, owner, repo, number);
-      await fetchMergeReadiness(platform, owner, repo, number);
+      await refreshPrAfterStateChange(platform, owner, repo, number);
     } catch (e) {
-      error.value = typeof e === "string" ? e : String(e);
+      if (detailContextKey === contextKey) {
+        error.value = typeof e === "string" ? e : String(e);
+      }
       throw e;
     }
   }

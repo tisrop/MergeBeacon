@@ -104,7 +104,7 @@ function checkDirectStyleMutation(file, source) {
 
 function checkVueHtml(file, source) {
   const path = normalizedPath(file);
-  let diffRendererExceptionCount = 0;
+  let rendererExceptionCount = 0;
   checkPattern(
     file,
     source,
@@ -113,11 +113,12 @@ function checkVueHtml(file, source) {
     "远端内容禁止通过 v-html 渲染。",
     (match) => {
       const isDiffRenderer =
-        path === "src/components/diff/DiffViewer.vue" && match[0] === 'v-html="diffHtml"';
+        path === "src/components/diff/LegacyDiffRenderer.vue" &&
+        match[0] === 'v-html="sanitizedHtml"';
       const isMarkdownRenderer = path === "src/components/shared/MarkdownRenderer.vue";
       if (!isDiffRenderer && !isMarkdownRenderer) return false;
-      diffRendererExceptionCount += 1;
-      return diffRendererExceptionCount === 1;
+      rendererExceptionCount += 1;
+      return rendererExceptionCount === 1;
     },
   );
 }
