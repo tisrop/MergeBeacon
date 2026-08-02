@@ -86,6 +86,24 @@ describe("useAsyncList", () => {
     expect(list.loading.value).toBe(false);
   });
 
+  it("reset 作废在途请求并清空全部列表状态", () => {
+    const list = useAsyncList();
+    const sequence = list.begin();
+    list.succeed(sequence, 3, 8);
+    list.fail(sequence, 5, "boom");
+
+    list.reset();
+
+    expect(list.isCurrent(sequence)).toBe(false);
+    expect(list.loading.value).toBe(false);
+    expect(list.error.value).toBeNull();
+    expect(list.page.value).toBe(0);
+    expect(list.totalPages.value).toBe(1);
+    expect(list.failedPage.value).toBeNull();
+    // 回到初始态：page 0 < totalPages 1，表示尚未加载、可触发加载。
+    expect(list.hasMore.value).toBe(true);
+  });
+
   it("finish 只关闭最新请求的 loading", () => {
     const list = useAsyncList();
     const stale = list.begin();

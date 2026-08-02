@@ -13,6 +13,8 @@ export interface AsyncListState {
   isCurrent: (current: number) => boolean;
   /** 作废在途请求并关闭 loading（例如上下文切换）。 */
   cancel: () => void;
+  /** 重置整个列表状态：作废在途请求、关 loading、清空错误与失败页、分页归零。 */
+  reset: () => void;
   /** 请求成功推进分页；序号过期返回 false，调用方应丢弃结果。 */
   succeed: (current: number, nextPage: number, nextTotalPages: number) => boolean;
   /** 记录错误与失败页；记录成功返回 true，序号过期返回 false。markFailedPage 可跳过失败页标记（后台刷新）。 */
@@ -63,6 +65,14 @@ export function useAsyncList(): AsyncListState {
     loading.value = false;
   }
 
+  function reset(): void {
+    cancel();
+    error.value = null;
+    page.value = 0;
+    totalPages.value = 1;
+    failedPage.value = null;
+  }
+
   function succeed(current: number, nextPage: number, nextTotalPages: number): boolean {
     if (!isCurrent(current)) return false;
     page.value = nextPage;
@@ -96,6 +106,7 @@ export function useAsyncList(): AsyncListState {
     begin,
     isCurrent,
     cancel,
+    reset,
     succeed,
     fail,
     finish,
