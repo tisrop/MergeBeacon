@@ -512,6 +512,38 @@ describe("usePrStore", () => {
     expect(store.mergeReadiness).toEqual(currentReadiness);
   });
 
+  it("在途合并就绪请求期间清空上下文会复位 loading", async () => {
+    const pending = deferred<PrMergeReadiness>();
+    vi.mocked(prMergeReadiness).mockReturnValueOnce(pending.promise);
+    const store = usePrStore();
+
+    const request = store.fetchMergeReadiness("github", "owner", "repo", 42);
+    expect(store.readinessLoading).toBe(true);
+
+    store.clearContext();
+
+    // clearContext 作废在途请求：loading 立即复位，迟到结果不会再次点亮。
+    expect(store.readinessLoading).toBe(false);
+    pending.resolve({
+      status: "ready",
+      head_sha: "late-sha",
+      mergeable: true,
+      draft: false,
+      has_conflicts: false,
+      checks_status: "ready",
+      approvals_status: "ready",
+      approvals_required: null,
+      approvals_received: null,
+      has_merge_permission: true,
+      branch_behind: false,
+      blocking_reasons: [],
+    });
+    await request;
+
+    expect(store.readinessLoading).toBe(false);
+    expect(store.mergeReadiness).toBeNull();
+  });
+
   it("切换 PR 后忽略迟到的元数据写入结果", async () => {
     const oldUpdate = deferred<Awaited<ReturnType<typeof prMetadataUpdate>>>();
     const oldDetail: PrDetail = {

@@ -34,6 +34,7 @@ import {
   type CommitRangeSelection,
 } from "@/utils/commitRange";
 import { translate } from "@/i18n";
+import { useAsyncRequest } from "@/composables/useAsyncRequest";
 
 const PAGE_SIZES = [10, 20, 50, 100] as const;
 export const DEFAULT_LIST_QUERY: Readonly<Required<PrListQuery>> = {
@@ -58,20 +59,15 @@ export const usePrStore = defineStore("pr", () => {
   // PR / MR 的提交列表与「按 commit 维度查看」的当前选择。
   const commits = ref<PrCommitSummary[]>([]);
   const commitsTruncatedEnd = ref<PrCommitTruncatedEnd | null>(null);
-  const commitsLoading = ref(false);
   const commitsError = ref<string | null>(null);
   // null 表示查看整体 Diff；非 null 时 rangeDiff 承载所选提交区间的 Diff。
   const commitRange = ref<CommitRangeSelection | null>(null);
   const rangeDiff = ref<DiffResult | null>(null);
   // 当前区间 Diff 的 compare 端点；Diff 上下文展开按它读取文件内容，不能沿用 PR 的 base/head。
   const rangeRevisions = ref<CommitRangeRevisions | null>(null);
-  const rangeDiffLoading = ref(false);
   const rangeDiffError = ref<string | null>(null);
   const mergeReadiness = ref<PrMergeReadiness | null>(null);
-  const readinessLoading = ref(false);
   const readinessError = ref<string | null>(null);
-  const detailLoading = ref(false);
-  const diffLoading = ref(false);
   const loading = ref(false);
   const error = ref<string | null>(null);
   const totalPages = ref(1);
@@ -91,13 +87,13 @@ export const usePrStore = defineStore("pr", () => {
     all: 0,
   });
   let listRequestSequence = 0;
-  let detailRequestSequence = 0;
-  let diffRequestSequence = 0;
-  let commitsRequestSequence = 0;
-  let rangeDiffRequestSequence = 0;
-  let countsRequestSequence = 0;
-  let readinessRequestSequence = 0;
-  let metadataRequestSequence = 0;
+  const detailRequest = useAsyncRequest();
+  const diffRequest = useAsyncRequest();
+  const commitsRequest = useAsyncRequest();
+  const rangeDiffRequest = useAsyncRequest();
+  const countsRequest = useAsyncRequest();
+  const readinessRequest = useAsyncRequest();
+  const metadataRequest = useAsyncRequest();
   let listContextKey = "";
   let detailContextKey = "";
   let activeListStatusRequestId: string | null = null;
@@ -121,13 +117,12 @@ export const usePrStore = defineStore("pr", () => {
     filters.value.page = 1;
     listQuery.value = { ...DEFAULT_LIST_QUERY };
     listRequestSequence++;
-    detailRequestSequence++;
-    diffRequestSequence++;
-    commitsRequestSequence++;
-    rangeDiffRequestSequence++;
-    countsRequestSequence++;
-    readinessRequestSequence++;
-    metadataRequestSequence++;
+    detailRequest.cancel();
+    diffRequest.cancel();
+    commitsRequest.cancel();
+    countsRequest.cancel();
+    readinessRequest.cancel();
+    metadataRequest.cancel();
     cancelListStatusSupplement();
     listContextKey = "";
     detailContextKey = "";
@@ -141,9 +136,6 @@ export const usePrStore = defineStore("pr", () => {
     mergeReadiness.value = null;
     readinessError.value = null;
     error.value = null;
-    detailLoading.value = false;
-    diffLoading.value = false;
-    commitsLoading.value = false;
     totalPages.value = 1;
     listTotalCount.value = 0;
     listTruncated.value = false;
@@ -266,7 +258,7 @@ export const usePrStore = defineStore("pr", () => {
     repo: string,
     number: number,
   ): Promise<boolean> {
-    const sequence = ++detailRequestSequence;
+    const sequence = detailRequest.begin();
     const contextKey = `${platform}:${owner}/${repo}:${number}`;
     if (detailContextKey !== contextKey) {
       currentPr.value = null;
@@ -279,15 +271,14 @@ export const usePrStore = defineStore("pr", () => {
       readinessError.value = null;
     }
     detailContextKey = contextKey;
-    detailLoading.value = true;
     error.value = null;
     try {
       const result = await prDetail(platform, owner, repo, number);
-      if (sequence !== detailRequestSequence || detailContextKey !== contextKey) return false;
+      if (!detailRequest.isCurrent(sequence) || detailContextKey !== contextKey) return false;
       currentPr.value = result;
       return true;
     } catch (requestError) {
-      if (sequence !== detailRequestSequence || detailContextKey !== contextKey) return false;
+      if (!detailRequest.isCurrent(sequence) || detailContextKey !== contextKey) return false;
       currentPr.value = null;
       const message = typeof requestError === "string" ? requestError : String(requestError);
       error.value = /\b404\b|not found/i.test(message)
@@ -295,38 +286,35 @@ export const usePrStore = defineStore("pr", () => {
         : message;
       return false;
     } finally {
-      if (sequence === detailRequestSequence) detailLoading.value = false;
+      detailRequest.finish(sequence);
     }
   }
 
   async function fetchPrDiff(platform: Platform, owner: string, repo: string, number: number) {
-    const sequence = ++diffRequestSequence;
-    diffLoading.value = true;
+    const sequence = diffRequest.begin();
     try {
       const result = await prDiff(platform, owner, repo, number);
-      if (sequence === diffRequestSequence) diff.value = result;
+      if (diffRequest.isCurrent(sequence)) diff.value = result;
     } finally {
-      if (sequence === diffRequestSequence) diffLoading.value = false;
+      diffRequest.finish(sequence);
     }
   }
 
   /** 回到整体 Diff 视图，并作废在途的区间 Diff 请求。 */
   function resetCommitSelection() {
-    rangeDiffRequestSequence++;
+    rangeDiffRequest.cancel();
     commitRange.value = null;
     rangeDiff.value = null;
     rangeRevisions.value = null;
     rangeDiffError.value = null;
-    rangeDiffLoading.value = false;
   }
 
   async function fetchPrCommits(platform: Platform, owner: string, repo: string, number: number) {
-    const sequence = ++commitsRequestSequence;
-    commitsLoading.value = true;
+    const sequence = commitsRequest.begin();
     commitsError.value = null;
     try {
       const result = await prCommits(platform, owner, repo, number);
-      if (sequence !== commitsRequestSequence) return;
+      if (!commitsRequest.isCurrent(sequence)) return;
       // 提交列表变化后旧下标会指向别的提交，直接回到整体 Diff，避免展示错位的区间。
       const changed =
         result.commits.length !== commits.value.length ||
@@ -335,13 +323,13 @@ export const usePrStore = defineStore("pr", () => {
       commitsTruncatedEnd.value = result.truncated_end;
       if (changed) resetCommitSelection();
     } catch (requestError) {
-      if (sequence !== commitsRequestSequence) return;
+      if (!commitsRequest.isCurrent(sequence)) return;
       commits.value = [];
       commitsTruncatedEnd.value = null;
       commitsError.value = typeof requestError === "string" ? requestError : String(requestError);
       resetCommitSelection();
     } finally {
-      if (sequence === commitsRequestSequence) commitsLoading.value = false;
+      commitsRequest.finish(sequence);
     }
   }
 
@@ -367,7 +355,7 @@ export const usePrStore = defineStore("pr", () => {
       current &&
       current.startIndex === range.startIndex &&
       current.endIndex === range.endIndex &&
-      (rangeDiff.value !== null || rangeDiffLoading.value)
+      (rangeDiff.value !== null || rangeDiffRequest.loading.value)
     ) {
       return;
     }
@@ -376,19 +364,18 @@ export const usePrStore = defineStore("pr", () => {
       range,
       currentPr.value?.base_sha ?? null,
     );
-    const sequence = ++rangeDiffRequestSequence;
+    const sequence = rangeDiffRequest.begin();
     commitRange.value = range;
     if (!revisions) {
       rangeDiff.value = null;
       rangeRevisions.value = null;
-      rangeDiffLoading.value = false;
+      rangeDiffRequest.finish(sequence);
       rangeDiffError.value = translate("pr.commitRangeBaseUnavailable");
       return;
     }
     rangeDiff.value = null;
     rangeRevisions.value = revisions;
     rangeDiffError.value = null;
-    rangeDiffLoading.value = true;
     try {
       const result = await prCompareDiff(
         platform,
@@ -397,14 +384,14 @@ export const usePrStore = defineStore("pr", () => {
         revisions.baseSha,
         revisions.headSha,
       );
-      if (sequence !== rangeDiffRequestSequence) return;
+      if (!rangeDiffRequest.isCurrent(sequence)) return;
       rangeDiff.value = result;
     } catch (requestError) {
-      if (sequence !== rangeDiffRequestSequence) return;
+      if (!rangeDiffRequest.isCurrent(sequence)) return;
       rangeDiff.value = null;
       rangeDiffError.value = typeof requestError === "string" ? requestError : String(requestError);
     } finally {
-      if (sequence === rangeDiffRequestSequence) rangeDiffLoading.value = false;
+      rangeDiffRequest.finish(sequence);
     }
   }
 
@@ -414,18 +401,17 @@ export const usePrStore = defineStore("pr", () => {
     repo: string,
     number: number,
   ) {
-    const sequence = ++readinessRequestSequence;
-    readinessLoading.value = true;
+    const sequence = readinessRequest.begin();
     readinessError.value = null;
     try {
       const result = await prMergeReadiness(platform, owner, repo, number);
-      if (sequence === readinessRequestSequence) mergeReadiness.value = result;
+      if (readinessRequest.isCurrent(sequence)) mergeReadiness.value = result;
     } catch (e) {
-      if (sequence !== readinessRequestSequence) return;
+      if (!readinessRequest.isCurrent(sequence)) return;
       readinessError.value = typeof e === "string" ? e : String(e);
       mergeReadiness.value = null;
     } finally {
-      if (sequence === readinessRequestSequence) readinessLoading.value = false;
+      readinessRequest.finish(sequence);
     }
   }
 
@@ -451,12 +437,12 @@ export const usePrStore = defineStore("pr", () => {
   }
 
   async function fetchStateCounts(platform: Platform, owner: string, repo: string) {
-    const sequence = ++countsRequestSequence;
+    const sequence = countsRequest.beginSilent();
     const states: PrState[] = ["open", "closed", "merged", "all"];
     const results = await Promise.allSettled(
       states.map((state) => prList(platform, owner, repo, state, 1, 1)),
     );
-    if (sequence !== countsRequestSequence) return;
+    if (!countsRequest.isCurrent(sequence)) return;
     results.forEach((result, index) => {
       if (result.status === "fulfilled") {
         stateCounts.value[states[index]] = result.value.total_count;
@@ -471,12 +457,12 @@ export const usePrStore = defineStore("pr", () => {
     number: number,
     update: PrMetadataUpdate,
   ): Promise<PrMetadataUpdateOutcome | null> {
-    const sequence = ++metadataRequestSequence;
+    const sequence = metadataRequest.beginSilent();
     const contextKey = `${platform}:${owner}/${repo}:${number}`;
     error.value = null;
     try {
       const outcome = await prMetadataUpdate(platform, owner, repo, number, update);
-      if (sequence !== metadataRequestSequence || detailContextKey !== contextKey) return null;
+      if (!metadataRequest.isCurrent(sequence) || detailContextKey !== contextKey) return null;
       if (outcome.detail) {
         currentPr.value = outcome.detail;
         if (listContextKey === `${platform}:${owner}/${repo}`) {
@@ -489,7 +475,7 @@ export const usePrStore = defineStore("pr", () => {
       }
       return outcome;
     } catch (requestError) {
-      if (sequence !== metadataRequestSequence || detailContextKey !== contextKey) return null;
+      if (!metadataRequest.isCurrent(sequence) || detailContextKey !== contextKey) return null;
       throw requestError;
     }
   }
@@ -555,18 +541,18 @@ export const usePrStore = defineStore("pr", () => {
     diff,
     commits,
     commitsTruncatedEnd,
-    commitsLoading,
+    commitsLoading: commitsRequest.loading,
     commitsError,
     commitRange,
     rangeDiff,
     rangeRevisions,
-    rangeDiffLoading,
+    rangeDiffLoading: rangeDiffRequest.loading,
     rangeDiffError,
     mergeReadiness,
-    readinessLoading,
+    readinessLoading: readinessRequest.loading,
     readinessError,
-    detailLoading,
-    diffLoading,
+    detailLoading: detailRequest.loading,
+    diffLoading: diffRequest.loading,
     loading,
     error,
     totalPages,
