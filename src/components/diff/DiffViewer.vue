@@ -27,6 +27,7 @@ import {
 import { getErrorMessage } from "@/utils/error";
 import { findPatchLocation as findStandardPatchLocation } from "@/utils/diffHunk";
 import CodeSearchBar from "./CodeSearchBar.vue";
+import ControlledContextLine from "./ControlledContextLine.vue";
 import { useDiffCodeSearch } from "./useDiffCodeSearch";
 import { useDiffPopupStyle, useDiffViewportStyles } from "./useDiffLayoutStyles";
 import { useCopyToClipboard } from "@/composables/useCopyToClipboard";
@@ -2530,27 +2531,18 @@ onUnmounted(() => {
                       :key="`${controlledHunk.key}:${side}`"
                     >
                       <template v-if="controlledHunk.gapBefore">
-                        <div
+                        <ControlledContextLine
                           v-for="row in contextRowsFromStart(controlledHunk.gapBefore)"
                           :key="`${row.key}:${side}`"
-                          class="controlled-line controlled-context-line"
-                          :class="{
-                            'diff-location-highlight': isHighlightedLine(
+                          :row="row"
+                          :side="side"
+                          :highlighted="
+                            isHighlightedLine(
                               side,
                               side === 'left' ? row.left?.old_line : row.right?.new_line,
-                            ),
-                          }"
-                          :data-side="side"
-                          :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
-                        >
-                          <span class="controlled-line-number" aria-hidden="true">
-                            {{ side === "left" ? row.left?.old_line : row.right?.new_line }}
-                          </span>
-                          <span class="controlled-line-marker" aria-hidden="true"> </span>
-                          <code class="controlled-code">{{
-                            (side === "left" ? row.left : row.right)?.content ?? ""
-                          }}</code>
-                        </div>
+                            )
+                          "
+                        />
                       </template>
                       <section class="controlled-hunk">
                         <div
@@ -2600,27 +2592,18 @@ onUnmounted(() => {
                           </span>
                         </div>
                         <template v-if="controlledHunk.gapBefore">
-                          <div
+                          <ControlledContextLine
                             v-for="row in contextRowsFromEnd(controlledHunk.gapBefore)"
                             :key="`${row.key}:${side}`"
-                            class="controlled-line controlled-context-line"
-                            :class="{
-                              'diff-location-highlight': isHighlightedLine(
+                            :row="row"
+                            :side="side"
+                            :highlighted="
+                              isHighlightedLine(
                                 side,
                                 side === 'left' ? row.left?.old_line : row.right?.new_line,
-                              ),
-                            }"
-                            :data-side="side"
-                            :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
-                          >
-                            <span class="controlled-line-number" aria-hidden="true">
-                              {{ side === "left" ? row.left?.old_line : row.right?.new_line }}
-                            </span>
-                            <span class="controlled-line-marker" aria-hidden="true"> </span>
-                            <code class="controlled-code">{{
-                              (side === "left" ? row.left : row.right)?.content ?? ""
-                            }}</code>
-                          </div>
+                              )
+                            "
+                          />
                         </template>
                         <div
                           v-for="row in controlledHunk.rows"
@@ -2661,27 +2644,18 @@ onUnmounted(() => {
                       </section>
                     </template>
                     <template v-if="trailingContextGap">
-                      <div
+                      <ControlledContextLine
                         v-for="row in contextRowsFromStart(trailingContextGap)"
                         :key="`${row.key}:${side}`"
-                        class="controlled-line controlled-context-line"
-                        :class="{
-                          'diff-location-highlight': isHighlightedLine(
+                        :row="row"
+                        :side="side"
+                        :highlighted="
+                          isHighlightedLine(
                             side,
                             side === 'left' ? row.left?.old_line : row.right?.new_line,
-                          ),
-                        }"
-                        :data-side="side"
-                        :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
-                      >
-                        <span class="controlled-line-number" aria-hidden="true">
-                          {{ side === "left" ? row.left?.old_line : row.right?.new_line }}
-                        </span>
-                        <span class="controlled-line-marker" aria-hidden="true"> </span>
-                        <code class="controlled-code">{{
-                          (side === "left" ? row.left : row.right)?.content ?? ""
-                        }}</code>
-                      </div>
+                          )
+                        "
+                      />
                       <div
                         v-if="!isContextGapExpanded(trailingContextGap)"
                         class="controlled-context-gap controlled-context-gap-down"
@@ -2701,27 +2675,18 @@ onUnmounted(() => {
                         </div>
                         <span v-else class="context-gap-placeholder" aria-hidden="true" />
                       </div>
-                      <div
+                      <ControlledContextLine
                         v-for="row in contextRowsFromEnd(trailingContextGap)"
                         :key="`${row.key}:${side}`"
-                        class="controlled-line controlled-context-line"
-                        :class="{
-                          'diff-location-highlight': isHighlightedLine(
+                        :row="row"
+                        :side="side"
+                        :highlighted="
+                          isHighlightedLine(
                             side,
                             side === 'left' ? row.left?.old_line : row.right?.new_line,
-                          ),
-                        }"
-                        :data-side="side"
-                        :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
-                      >
-                        <span class="controlled-line-number" aria-hidden="true">
-                          {{ side === "left" ? row.left?.old_line : row.right?.new_line }}
-                        </span>
-                        <span class="controlled-line-marker" aria-hidden="true"> </span>
-                        <code class="controlled-code">{{
-                          (side === "left" ? row.left : row.right)?.content ?? ""
-                        }}</code>
-                      </div>
+                          )
+                        "
+                      />
                     </template>
                   </div>
                 </div>
