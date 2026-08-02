@@ -352,14 +352,6 @@ impl GitLabAdapter {
         Ok(Some(response))
     }
 
-    fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
-        match (left, right) {
-            (Some(true), _) | (_, Some(true)) => Some(true),
-            (Some(false), Some(false)) => Some(false),
-            _ => None,
-        }
-    }
-
     fn access_level(project: &Value) -> Option<u64> {
         [
             project["permissions"]["project_access"]["access_level"].as_u64(),
@@ -378,7 +370,7 @@ impl GitLabAdapter {
         let is_author =
             user.ok().and_then(|user| user["username"].as_str().map(|login| login.eq_ignore_ascii_case(author_login)));
         let can_write = project.ok().and_then(|project| Self::access_level(&project).map(|level| level >= 30));
-        let can_edit = Self::known_or(is_author, can_write);
+        let can_edit = super::known_or(is_author, can_write);
         PrMetadataPermissions {
             can_edit_title_body: can_edit,
             can_toggle_draft: can_edit,
@@ -701,48 +693,6 @@ impl GitLabAdapter {
             return Err(AppError::Api(format!("GitLab API {status} ({url}): {body}")));
         }
         Ok(GitLabPrSearchPage { items: response.json().await?, total_pages, total_count })
-    }
-
-    fn sort_merge_request_results(items: &mut [Value], sort: PrListSort) {
-        let string_field = |item: &Value, field: &str| item[field].as_str().unwrap_or("").to_string();
-        match sort {
-            PrListSort::BestMatch => {
-                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
-            }
-            PrListSort::UpdatedDesc => {
-                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
-            }
-            PrListSort::UpdatedAsc => items.sort_by_key(|item| string_field(item, "updated_at")),
-            PrListSort::CreatedDesc => {
-                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "created_at")));
-            }
-            PrListSort::CreatedAsc => items.sort_by_key(|item| string_field(item, "created_at")),
-            PrListSort::CommentsDesc => {
-                items.sort_by_key(|item| std::cmp::Reverse(item["user_notes_count"].as_u64().unwrap_or(0)));
-            }
-            PrListSort::CommentsAsc => {
-                items.sort_by_key(|item| item["user_notes_count"].as_u64().unwrap_or(0));
-            }
-        }
-    }
-
-    fn sort_merge_request_best_matches(items: &mut [Value], title: &str) {
-        if title.is_empty() {
-            Self::sort_merge_request_results(items, PrListSort::UpdatedDesc);
-            return;
-        }
-        let expected = title.to_lowercase();
-        items.sort_by_key(|item| {
-            let candidate = item["title"].as_str().unwrap_or("").to_lowercase();
-            let score = if candidate == expected {
-                2
-            } else if candidate.starts_with(&expected) {
-                1
-            } else {
-                0
-            };
-            std::cmp::Reverse((score, item["updated_at"].as_str().unwrap_or("").to_string()))
-        });
     }
 
     /// 把 GitLab commit 对象映射为统一提交摘要。
@@ -1145,9 +1095,9 @@ impl GitPlatform for GitLabAdapter {
 
         candidates.retain(|mr| Self::merge_request_matches_query(mr, query));
         if query.sort == PrListSort::BestMatch {
-            Self::sort_merge_request_best_matches(&mut candidates, &query.title);
+            super::sort_pr_best_matches(&mut candidates, &query.title);
         } else {
-            Self::sort_merge_request_results(&mut candidates, query.sort);
+            super::sort_pr_results(&mut candidates, query.sort, |item| item["user_notes_count"].as_u64().unwrap_or(0));
         }
         let total_count = candidates.len() as u32;
         let total_pages = total_count.div_ceil(per_page).max(1);

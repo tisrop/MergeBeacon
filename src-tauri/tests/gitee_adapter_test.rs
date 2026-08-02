@@ -599,6 +599,49 @@ async fn test_gitee_list_prs_pagination_headers() {
 }
 
 #[tokio::test]
+async fn test_gitee_list_prs_link_only_pagination() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls"))
+        .and(query_param("state", "open"))
+        .and(query_param("access_token", "test-token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .append_header(
+                    "link",
+                    "<https://gitee.com/api/v5/repos/octocat/hello-world/pulls?page=3&per_page=20&state=open>; rel='last'",
+                )
+                .set_body_json(serde_json::json!([
+                    {
+                        "number": 42,
+                        "title": "Fix bug",
+                        "state": "open",
+                        "merged_at": null,
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "updated_at": "2025-01-02T00:00:00Z",
+                        "user": { "id": 1, "login": "dev1", "name": "", "avatar_url": "" },
+                        "labels": []
+                    }
+                ])),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let client = HttpClient::new();
+    let adapter =
+        GiteeAdapter::new(client, "test-token".to_string()).with_base_url(format!("{}/api/v5", mock_server.uri()));
+
+    let result = adapter
+        .list_pull_requests("octocat", "hello-world", &mergebeacon_lib::models::PrState::Open, 1, 20)
+        .await
+        .expect("should list PRs");
+
+    // Gitee 不返回 total_page 头时，必须从 Link 头解析总页数，否则前端分页组件会消失。
+    assert_eq!(result.total_pages, 3);
+}
+
+#[tokio::test]
 async fn test_gitee_list_prs_merged() {
     let mock_server = MockServer::start().await;
 
