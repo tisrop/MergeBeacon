@@ -168,10 +168,18 @@ async function mountPage(
   const activeRepository = cachedRepositories[0]?.full_name ?? "team/repo";
   const [owner, ...repoParts] = activeRepository.split("/");
   repos.activeRepos[platform] = { owner, repo: repoParts.join("/") };
-  repos.reposCache[platform] = cachedRepositories;
   if (cachedRepositories.length > 0) {
-    repos.pages[platform] = 1;
-    repos.totalPagesByPlatform[platform] = 1;
+    // 通过真实状态机推进分页，避免对只读 computed 视图的静默写入。
+    vi.mocked(repoList).mockResolvedValue({
+      items: cachedRepositories,
+      page: 1,
+      total_pages: 1,
+      total_count: cachedRepositories.length,
+    });
+    await repos.fetchRepos(platform);
+  } else {
+    // 空缓存留给组件 ensureRepos 触发首屏请求（"全局创建只加载首屏"用例依赖该路径）。
+    repos.reposCache[platform] = [];
   }
   const wrapper = mount(PrNewPage, {
     global: {
@@ -251,6 +259,17 @@ describe("PrNewPage", () => {
     expect(wrapper.get('[data-testid="app-layout"]').attributes("data-compact-sidebar")).toBe(
       "true",
     );
+  });
+
+  it("mountPage 通过真实状态机建立单页分页前提", async () => {
+    const { repos } = await mountPage();
+
+    // 缓存非空时 mountPage 走 fetchRepos 推进状态机：page=1 且 totalPages=1，
+    // 页面分页前提 hasMore=false 真实建立，而非对只读 computed 的静默写入。
+    expect(repos.pages.github).toBe(1);
+    expect(repos.totalPagesByPlatform.github).toBe(1);
+    expect(repos.hasMore).toBe(false);
+    expect(repos.reposCache.github).toHaveLength(1);
   });
 
   it("标题和描述复用共享输入基础类", async () => {

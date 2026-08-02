@@ -15,7 +15,7 @@ export interface AsyncListState {
   cancel: () => void;
   /** 请求成功推进分页；序号过期返回 false，调用方应丢弃结果。 */
   succeed: (current: number, nextPage: number, nextTotalPages: number) => boolean;
-  /** 记录错误与失败页；序号过期返回 false。markFailedPage 可跳过失败页标记（后台刷新）。 */
+  /** 记录错误与失败页；记录成功返回 true，序号过期返回 false。markFailedPage 可跳过失败页标记（后台刷新）。 */
   fail: (
     current: number,
     requestedPage: number,
@@ -79,7 +79,7 @@ export function useAsyncList(): AsyncListState {
     if (!isCurrent(current)) return false;
     error.value = message;
     if (markFailedPage) failedPage.value = requestedPage;
-    return false;
+    return true;
   }
 
   function finish(current: number): void {

@@ -43,7 +43,7 @@ describe("useAsyncList", () => {
     const list = useAsyncList();
     const sequence = list.begin();
 
-    expect(list.fail(sequence, 3, "boom")).toBe(false);
+    expect(list.fail(sequence, 3, "boom")).toBe(true);
     expect(list.error.value).toBe("boom");
     expect(list.failedPage.value).toBe(3);
   });
@@ -51,7 +51,7 @@ describe("useAsyncList", () => {
   it("fail 可通过选项跳过失败页标记（后台刷新场景）", () => {
     const list = useAsyncList();
     const sequence = list.begin();
-    list.fail(sequence, 2, "boom", false);
+    expect(list.fail(sequence, 2, "boom", false)).toBe(true);
     expect(list.error.value).toBe("boom");
     expect(list.failedPage.value).toBeNull();
   });

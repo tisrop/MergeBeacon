@@ -152,7 +152,8 @@ export const useRepoStore = defineStore("repo", () => {
         list.fail(sequence, requestedPage, typeof cause === "string" ? cause : String(cause));
       } finally {
         list.finish(sequence);
-        loadingMoreByPlatform.value[platform] = false;
+        // loadingMore 与 loading 同样只允许最新请求收尾；迟到的旧请求不得清掉新请求的加载态。
+        if (list.isCurrent(sequence)) loadingMoreByPlatform.value[platform] = false;
         if (pendingFetches[platform]?.sequence === sequence) {
           pendingFetches[platform] = null;
         }
