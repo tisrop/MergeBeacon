@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import type { Platform, RepoSummary, Paginated } from "@/types";
 import { repoList } from "@/api";
 import { useAuthStore } from "./useAuthStore";
+import { useAsyncList } from "@/composables/useAsyncList";
 
 export interface ForkContext {
   upstreamFullName: string | null;
@@ -60,15 +61,37 @@ export const useRepoStore = defineStore("repo", () => {
   const starredReposByPlatform = ref<Record<Platform, string[]>>(loadStarredRepos());
   const activeRepos = ref<Record<Platform, RepoSelection | null>>(platformRecord(() => null));
   const forkContexts = ref<Record<Platform, ForkContext | null>>(platformRecord(() => null));
-  const pages = ref<Record<Platform, number>>(platformRecord(() => 0));
-  const totalPagesByPlatform = ref<Record<Platform, number>>(platformRecord(() => 1));
-  const loadingByPlatform = ref<Record<Platform, boolean>>(platformRecord(() => false));
+  const lists = platformRecord(() => useAsyncList());
   const loadingMoreByPlatform = ref<Record<Platform, boolean>>(platformRecord(() => false));
-  const errors = ref<Record<Platform, string | null>>(platformRecord(() => null));
-  const failedPages = ref<Record<Platform, number | null>>(platformRecord(() => null));
-  const requestSequences: Record<Platform, number> = platformRecord(() => 0);
   const pendingFetches: Record<Platform, { sequence: number; promise: Promise<void> } | null> =
     platformRecord(() => null);
+
+  // 分页状态按平台独立维护；对外保留 Record 视图，组件与测试不感知内部状态机。
+  const pages = computed<Record<Platform, number>>(() => ({
+    github: lists.github.page.value,
+    gitlab: lists.gitlab.page.value,
+    gitee: lists.gitee.page.value,
+  }));
+  const totalPagesByPlatform = computed<Record<Platform, number>>(() => ({
+    github: lists.github.totalPages.value,
+    gitlab: lists.gitlab.totalPages.value,
+    gitee: lists.gitee.totalPages.value,
+  }));
+  const loadingByPlatform = computed<Record<Platform, boolean>>(() => ({
+    github: lists.github.loading.value,
+    gitlab: lists.gitlab.loading.value,
+    gitee: lists.gitee.loading.value,
+  }));
+  const errors = computed<Record<Platform, string | null>>(() => ({
+    github: lists.github.error.value,
+    gitlab: lists.gitlab.error.value,
+    gitee: lists.gitee.error.value,
+  }));
+  const failedPages = computed<Record<Platform, number | null>>(() => ({
+    github: lists.github.failedPage.value,
+    gitlab: lists.gitlab.failedPage.value,
+    gitee: lists.gitee.failedPage.value,
+  }));
 
   const activePlatform = computed(() => useAuthStore().activePlatform);
   const repos = computed(() => reposCache.value[activePlatform.value] ?? []);
@@ -114,32 +137,22 @@ export const useRepoStore = defineStore("repo", () => {
   }
 
   function fetchRepos(platform: Platform, requestedPage: number = 1): Promise<void> {
-    const sequence = ++requestSequences[platform];
-    const loadingMoreRequest = requestedPage > 1;
-    loadingByPlatform.value[platform] = !loadingMoreRequest;
-    loadingMoreByPlatform.value[platform] = loadingMoreRequest;
-    errors.value[platform] = null;
-    failedPages.value[platform] = null;
+    const list = lists[platform];
+    const sequence = list.begin(requestedPage === 1);
+    loadingMoreByPlatform.value[platform] = requestedPage > 1;
     const promise = (async () => {
       try {
         const result: Paginated<RepoSummary> = await repoList(platform, requestedPage);
-        if (sequence !== requestSequences[platform]) return;
+        if (!list.succeed(sequence, result.page, result.total_pages)) return;
         reposCache.value[platform] =
           requestedPage === 1
             ? dedupeRepos(result.items)
             : dedupeRepos([...reposCache.value[platform], ...result.items]);
-        pages.value[platform] = result.page;
-        totalPagesByPlatform.value[platform] = Math.max(result.total_pages, result.page);
       } catch (cause) {
-        if (sequence === requestSequences[platform]) {
-          errors.value[platform] = typeof cause === "string" ? cause : String(cause);
-          failedPages.value[platform] = requestedPage;
-        }
+        list.fail(sequence, requestedPage, typeof cause === "string" ? cause : String(cause));
       } finally {
-        if (sequence === requestSequences[platform]) {
-          loadingByPlatform.value[platform] = false;
-          loadingMoreByPlatform.value[platform] = false;
-        }
+        list.finish(sequence);
+        loadingMoreByPlatform.value[platform] = false;
         if (pendingFetches[platform]?.sequence === sequence) {
           pendingFetches[platform] = null;
         }
