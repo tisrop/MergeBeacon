@@ -64,7 +64,6 @@ export const zhCN = {
   "language.interface": "界面语言",
   "language.interfaceHint": "切换后立即应用，并在下次启动时恢复。",
   "language.review": "意见语言",
-  "language.reviewHint": "默认跟随界面语言；手动选择只影响之后开始的 AI 评审。",
   "layout.currentAccount": "当前账号",
   "layout.currentPlatform": "当前平台：{platform}",
   "layout.currentRepository": "当前仓库：{repository}",
@@ -191,7 +190,6 @@ export const zhCN = {
   "settings.supportUnavailable": "诊断信息暂不可用",
   "settings.title": "设置",
   "settings.updateAvailable": "发现新版本 v{version}",
-  "settings.updateDescription": "检查、下载并安装来自官方签名源的更新。",
   "settings.updateInstalled": "更新已安装，重启应用后生效。",
   "settings.updateInstallerHint": "下载完成后将安装更新，并由你确认何时重启应用。",
   "settings.updateTitle": "应用更新",
@@ -1250,8 +1248,6 @@ export const enUS: Record<MessageKey, string> = {
   "language.interface": "Interface language",
   "language.interfaceHint": "Changes apply immediately and are restored on the next launch.",
   "language.review": "Review language",
-  "language.reviewHint":
-    "Follows the interface by default. A manual choice affects future AI reviews only.",
   "layout.currentAccount": "Current account",
   "layout.currentPlatform": "Current platform: {platform}",
   "layout.currentRepository": "Current repository: {repository}",
@@ -1390,7 +1386,6 @@ export const enUS: Record<MessageKey, string> = {
   "settings.supportUnavailable": "Diagnostics are unavailable",
   "settings.title": "Settings",
   "settings.updateAvailable": "Version v{version} is available",
-  "settings.updateDescription": "Check for and install updates from the official signed source.",
   "settings.updateInstalled": "The update is installed and will take effect after restart.",
   "settings.updateInstallerHint":
     "The update will be installed after download, and you choose when to restart.",
