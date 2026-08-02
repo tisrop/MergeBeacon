@@ -1,18 +1,18 @@
 import { computed, ref, watch } from "vue";
 import { defineStore } from "pinia";
 import { reviewInboxList } from "@/api";
-import { commandErrorCode } from "@/api/errors";
+import { isRateLimitError, RATE_LIMIT_BACKOFF_MS } from "@/api/errors";
 import type { Platform, ReadinessState, ReviewInboxCategory, ReviewInboxItem } from "@/types";
 import { translate } from "@/i18n";
+import { PLATFORMS, platformRecord } from "@/constants/platforms";
+import { readStorage, writeStorage } from "@/utils/storage";
 
 export const NOTIFICATION_POLL_INTERVAL_MS = 10 * 60 * 1000;
-const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000;
 const PREFERENCES_KEY = "mergebeacon:notification-preferences:v1";
 const SNAPSHOTS_KEY = "mergebeacon:notification-snapshots:v1";
 const BASELINES_KEY = "mergebeacon:notification-baselines:v1";
 const MAX_SNAPSHOTS = 5000;
 const SNAPSHOT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const PLATFORMS: Platform[] = ["github", "gitlab", "gitee"];
 const CATEGORIES: ReviewInboxCategory[] = ["review_requested", "authored"];
 
 export type NotificationEventType =
@@ -88,27 +88,6 @@ const defaultPreferences: NotificationPreferences = {
   hide_private_content: true,
 };
 
-function platformRecord<T>(factory: () => T): Record<Platform, T> {
-  return { github: factory(), gitlab: factory(), gitee: factory() };
-}
-
-function readStorage<T>(key: string, fallback: T): T {
-  try {
-    const value = localStorage.getItem(key);
-    return value ? (JSON.parse(value) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStorage(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Notification persistence is best effort and must not block the application.
-  }
-}
-
 function snapshotsWithinTtl(
   snapshots: Record<string, NotificationSnapshot>,
   now: number,
@@ -183,12 +162,6 @@ function itemSnapshot(
     checks_status: item.status.checks_status,
     touched_at: touchedAt,
   };
-}
-
-function isRateLimitError(cause: unknown): boolean {
-  if (commandErrorCode(cause) === "rate_limited") return true;
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return /\b429\b|rate.?limit|限流|请求过于频繁/i.test(message);
 }
 
 export const useNotificationStore = defineStore("notifications", () => {

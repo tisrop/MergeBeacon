@@ -109,3 +109,13 @@ export function commandErrorCode(error: unknown): CommandErrorCode | null {
     ? (code as CommandErrorCode)
     : null;
 }
+
+/** 命中限流后的统一退避时长。 */
+export const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000;
+
+/** 判断错误是否属于平台限流；识别结构化错误码与常见限流文案。 */
+export function isRateLimitError(cause: unknown): boolean {
+  if (commandErrorCode(cause) === "rate_limited") return true;
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return /\b429\b|rate.?limit|限流|请求过于频繁/i.test(message);
+}

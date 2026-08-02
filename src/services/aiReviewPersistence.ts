@@ -5,6 +5,7 @@ import type {
   AiSuggestionAction,
   Platform,
 } from "@/types";
+import { readStorage, writeStorage } from "@/utils/storage";
 
 const HISTORY_PREFIX = "mergebeacon:ai-review-history:v1";
 const RULES_PREFIX = "mergebeacon:ai-repository-rules:v1";
@@ -27,23 +28,6 @@ function repositoryKey(prefix: string, reference: AiRepositoryRef): string {
 
 function historyKey(reference: AiReviewRef): string {
   return `${repositoryKey(HISTORY_PREFIX, reference)}:${reference.prNumber}`;
-}
-
-function readStorage(key: string): unknown {
-  try {
-    const value = localStorage.getItem(key);
-    return value ? JSON.parse(value) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeStorage(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // AI history and repository rules are best-effort local enhancements.
-  }
 }
 
 function isSuggestion(value: unknown): value is AiSuggestion {
@@ -114,7 +98,7 @@ export function saveRepositoryRules(reference: AiRepositoryRef, rules: string): 
 }
 
 export function loadAiReviewHistory(reference: AiReviewRef): AiReviewHistoryEntry[] {
-  const stored = readStorage(historyKey(reference));
+  const stored = readStorage<unknown>(historyKey(reference), null);
   if (!Array.isArray(stored)) return [];
   return stored
     .filter(isHistoryEntry)

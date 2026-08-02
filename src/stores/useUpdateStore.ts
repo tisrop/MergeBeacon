@@ -10,39 +10,15 @@ import {
 import type { UpdateCheckResult } from "@/types";
 import { getErrorMessage } from "@/utils/error";
 import { translate } from "@/i18n";
+import { readStorageString, writeStorageString } from "@/utils/storage";
 
 const AUTO_UPDATE_CHECK_KEY = "mergebeacon:auto-update-check";
 const LAST_UPDATE_CHECK_KEY = "mergebeacon:last-update-check";
 const DISMISSED_UPDATE_VERSION_KEY = "mergebeacon:dismissed-update-version";
-const LEGACY_KEY_PREFIX = "mergepilot:";
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-function readUpdateStorage(key: string): string | null {
-  try {
-    const value = localStorage.getItem(key);
-    if (value !== null) return value;
-    const legacyKey = key.replace("mergebeacon:", LEGACY_KEY_PREFIX);
-    const legacyValue = localStorage.getItem(legacyKey);
-    if (legacyValue !== null) {
-      localStorage.setItem(key, legacyValue);
-      localStorage.removeItem(legacyKey);
-    }
-    return legacyValue;
-  } catch {
-    return null;
-  }
-}
-
-function writeUpdateStorage(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Storage may be unavailable in hardened webviews; update checks must remain usable.
-  }
-}
-
 export const useUpdateStore = defineStore("update", () => {
-  const isAutoUpdateCheckEnabled = ref(readUpdateStorage(AUTO_UPDATE_CHECK_KEY) !== "false");
+  const isAutoUpdateCheckEnabled = ref(readStorageString(AUTO_UPDATE_CHECK_KEY) !== "false");
   const isCheckingUpdate = ref(false);
   const updateResult = ref<UpdateCheckResult | null>(null);
   const updatePromptVersion = ref<string | null>(null);
@@ -64,7 +40,7 @@ export const useUpdateStore = defineStore("update", () => {
   }
 
   function isBackgroundCheckDue(now = Date.now()) {
-    const lastCheck = Number(readUpdateStorage(LAST_UPDATE_CHECK_KEY));
+    const lastCheck = Number(readStorageString(LAST_UPDATE_CHECK_KEY));
     return (
       !Number.isFinite(lastCheck) ||
       lastCheck <= 0 ||
@@ -83,7 +59,7 @@ export const useUpdateStore = defineStore("update", () => {
       return;
     }
     if (!isBackground) {
-      writeUpdateStorage(LAST_UPDATE_CHECK_KEY, String(Date.now()));
+      writeStorageString(LAST_UPDATE_CHECK_KEY, String(Date.now()));
       updateError.value = "";
       updateResult.value = null;
       updatePromptVersion.value = null;
@@ -94,7 +70,7 @@ export const useUpdateStore = defineStore("update", () => {
       const result = await checkForUpdates();
       updateResult.value = result;
       if (isBackground) {
-        const dismissedVersion = readUpdateStorage(DISMISSED_UPDATE_VERSION_KEY);
+        const dismissedVersion = readStorageString(DISMISSED_UPDATE_VERSION_KEY);
         updatePromptVersion.value =
           result.available && result.version !== dismissedVersion ? result.version : null;
       }
@@ -109,7 +85,7 @@ export const useUpdateStore = defineStore("update", () => {
 
   async function maybeCheckForUpdatesInBackground() {
     if (!isAutoUpdateCheckEnabled.value || !isBackgroundCheckDue()) return;
-    writeUpdateStorage(LAST_UPDATE_CHECK_KEY, String(Date.now()));
+    writeStorageString(LAST_UPDATE_CHECK_KEY, String(Date.now()));
     await checkUpdate(true);
   }
 
@@ -117,13 +93,13 @@ export const useUpdateStore = defineStore("update", () => {
     const dismissedVersion = updatePromptVersion.value;
     updatePromptVersion.value = null;
     if (dismissedVersion) {
-      writeUpdateStorage(DISMISSED_UPDATE_VERSION_KEY, dismissedVersion);
+      writeStorageString(DISMISSED_UPDATE_VERSION_KEY, dismissedVersion);
     }
   }
 
   async function setAutoUpdateCheckEnabled(enabled: boolean) {
     isAutoUpdateCheckEnabled.value = enabled;
-    writeUpdateStorage(AUTO_UPDATE_CHECK_KEY, String(enabled));
+    writeStorageString(AUTO_UPDATE_CHECK_KEY, String(enabled));
     if (enabled) {
       await maybeCheckForUpdatesInBackground();
     }

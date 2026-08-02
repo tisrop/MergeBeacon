@@ -1,7 +1,7 @@
 import { computed, onScopeDispose, ref, watch } from "vue";
 import { defineStore } from "pinia";
 import { reviewInboxList } from "@/api";
-import { commandErrorCode } from "@/api/errors";
+import { isRateLimitError, RATE_LIMIT_BACKOFF_MS } from "@/api/errors";
 import type {
   Paginated,
   Platform,
@@ -12,11 +12,11 @@ import type {
   ReviewInboxRelationship,
   ReviewInboxStatusSummary,
 } from "@/types";
+import { PLATFORMS, platformRecord } from "@/constants/platforms";
+import { readStorage, writeStorage } from "@/utils/storage";
 
-const PLATFORMS: Platform[] = ["github", "gitlab", "gitee"];
 const PER_PAGE = 20;
 export const INBOX_BACKGROUND_REFRESH_MS = 5 * 60 * 1000;
-const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000;
 const PREFERENCES_WRITE_DEBOUNCE_MS = 400;
 const PREFERENCES_STORAGE_KEY = "mergebeacon:review-inbox-preferences:v1";
 const ITEM_STATE_STORAGE_KEY = "mergebeacon:review-inbox-item-state:v1";
@@ -67,23 +67,6 @@ const defaultFilters: InboxFilters = {
   blocker: "all",
   sort: "updated",
 };
-
-function readStorage<T>(key: string, fallback: T): T {
-  try {
-    const value = localStorage.getItem(key);
-    return value ? (JSON.parse(value) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStorage(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Local persistence is best effort; inbox fetching must continue without it.
-  }
-}
 
 function loadFilters(): InboxFilters {
   const stored = readStorage<Partial<InboxFilters>>(PREFERENCES_STORAGE_KEY, {});
@@ -167,20 +150,6 @@ function sortItems(left: ReviewInboxItem, right: ReviewInboxItem, sort: InboxSor
     return item.status.checks_status === "blocked" ? 1 : 0;
   };
   return rank(right) - rank(left) || updated;
-}
-
-function isRateLimitError(cause: unknown): boolean {
-  if (commandErrorCode(cause) === "rate_limited") return true;
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return /\b429\b|rate.?limit|限流|请求过于频繁/i.test(message);
-}
-
-function platformRecord<T>(factory: () => T): Record<Platform, T> {
-  return {
-    github: factory(),
-    gitlab: factory(),
-    gitee: factory(),
-  };
 }
 
 function readinessRank(state: ReadinessState): number {
