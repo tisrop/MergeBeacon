@@ -212,6 +212,21 @@ describe("PrListPage 截断提示", () => {
     expect(wrapper.get(".search-limit-notice").text()).toBe(expected);
   });
 
+  it("只有一页时仍展示分页组件并禁用翻页和跳转", () => {
+    mocks.prStore.totalPages = 1;
+    const wrapper = mountPage("github");
+
+    expect(wrapper.find(".pagination").exists()).toBe(true);
+    expect(wrapper.get(".page-info").text()).toBe("1 / 1");
+    expect(
+      wrapper.get<HTMLButtonElement>(".pagination > button:first-child").element.disabled,
+    ).toBe(true);
+    expect(
+      wrapper.get<HTMLButtonElement>(".pagination > button:nth-of-type(2)").element.disabled,
+    ).toBe(true);
+    expect(wrapper.get<HTMLButtonElement>(".page-jump button").element.disabled).toBe(true);
+  });
+
   it("点击跳转后更新页码并直接请求目标页，当前页和越界页不可提交", async () => {
     mocks.authStore.isLoggedIn = true;
     mocks.prStore.totalPages = 5;
