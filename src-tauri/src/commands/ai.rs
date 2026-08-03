@@ -1,4 +1,5 @@
 use crate::ai::client::{AiClient, AiReviewOptions};
+use crate::commands::validate_request_id;
 use crate::error::{AppError, CommandError, CommandResult};
 use crate::error_log::ErrorLogStore;
 use crate::models::{AiConfig, AiPrDraftRequest, AiPrDraftResult, AiReviewRequest, AiReviewResult, AiStreamEvent};
@@ -39,11 +40,7 @@ fn configured_ai_client(state: &AppState) -> Result<(AiConfig, AiClient), Comman
 }
 
 fn validate_ai_request_id(request_id: String) -> Result<String, String> {
-    let request_id = request_id.trim().to_string();
-    if request_id.is_empty() || request_id.chars().count() > 128 || request_id.chars().any(char::is_control) {
-        return Err("AI 请求 ID 为空、过长或包含非法字符".into());
-    }
-    Ok(request_id)
+    validate_request_id(request_id, "AI")
 }
 
 fn validate_pr_draft_request(mut request: AiPrDraftRequest) -> Result<AiPrDraftRequest, String> {

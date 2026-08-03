@@ -7,12 +7,11 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use tauri::State;
 
-use super::auth::build_platform;
+use super::auth::build_adapter;
+use super::{validate_repo, validate_request_id};
 
 fn validate_compare_request(owner: &str, repo: &str, base_sha: &str, head_sha: &str) -> Result<(), String> {
-    if owner.trim().is_empty() || repo.trim().is_empty() {
-        return Err("仓库 owner 和名称不能为空".into());
-    }
+    validate_repo(owner, repo)?;
     if base_sha.trim().is_empty() || head_sha.trim().is_empty() {
         return Err("增量评审缺少 base/head 提交版本".into());
     }
@@ -421,7 +420,7 @@ pub async fn pr_list(
     per_page: Option<u32>,
     query: Option<PrListQuery>,
 ) -> CommandResult<Paginated<PrSummary>> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let pr_state = match state_filter.as_deref() {
         Some("closed") => PrState::Closed,
         Some("merged") => PrState::Merged,
@@ -457,10 +456,7 @@ pub async fn pr_list_statuses(
     repo: String,
     numbers: Vec<u64>,
 ) -> CommandResult<Vec<PrListStatus>> {
-    let request_id = request_id.trim().to_string();
-    if request_id.is_empty() || request_id.chars().count() > 128 || request_id.chars().any(char::is_control) {
-        return Err("PR 状态补充请求 ID 无效".into());
-    }
+    let request_id = validate_request_id(request_id, "PR 状态补充")?;
     if numbers.len() > 100 {
         return Err("单次最多补充 100 个 PR / MR 状态".into());
     }
@@ -468,7 +464,7 @@ pub async fn pr_list_statuses(
     if numbers.is_empty() {
         return Ok(Vec::new());
     }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let numbers = numbers.into_iter().collect::<Vec<_>>();
     let registry = state.pr_list_status_tasks.clone();
     let generation = registry.next_generation();
@@ -497,11 +493,8 @@ pub async fn pr_list_statuses(
 
 #[tauri::command]
 pub async fn pr_list_statuses_cancel(state: State<'_, AppState>, request_id: String) -> CommandResult<()> {
-    let request_id = request_id.trim();
-    if request_id.is_empty() || request_id.chars().count() > 128 || request_id.chars().any(char::is_control) {
-        return Err("PR 状态补充请求 ID 无效".into());
-    }
-    state.pr_list_status_tasks.cancel(request_id).await;
+    let request_id = validate_request_id(request_id, "PR 状态补充")?;
+    state.pr_list_status_tasks.cancel(&request_id).await;
     Ok(())
 }
 
@@ -513,7 +506,7 @@ pub async fn pr_detail(
     repo: String,
     number: u64,
 ) -> CommandResult<PrDetail> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.get_pull_request(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -527,10 +520,11 @@ pub async fn pr_dependencies(
 ) -> CommandResult<PrDependencyGraph> {
     let owner = owner.trim();
     let repo = repo.trim();
-    if owner.is_empty() || repo.is_empty() || number == 0 {
-        return Err("仓库和 PR / MR 编号不能为空".into());
+    validate_repo(owner, repo)?;
+    if number == 0 {
+        return Err("PR / MR 编号不能为空".into());
     }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let candidates = p.list_pr_dependency_candidates(owner, repo, number).await.map_err(CommandError::from)?;
     build_pr_dependency_graph(candidates.items, number, Some(candidates.current), candidates.truncated)
         .map_err(CommandError::from)
@@ -546,14 +540,15 @@ pub async fn pr_merge_queue_status(
 ) -> CommandResult<PrMergeQueueStatus> {
     let owner = owner.trim();
     let repo = repo.trim();
-    if owner.is_empty() || repo.is_empty() || number == 0 {
-        return Err("仓库和 PR / MR 编号不能为空".into());
+    validate_repo(owner, repo)?;
+    if number == 0 {
+        return Err("PR / MR 编号不能为空".into());
     }
     let capabilities = capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
     if capabilities.merge_queue_kind.is_none() {
         return Err("当前平台不支持原生 Merge Queue / Merge Train".into());
     }
-    let adapter = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let adapter = build_adapter(&platform, &state)?;
     adapter.get_pr_merge_queue_status(owner, repo, number).await.map_err(CommandError::from)
 }
 
@@ -566,10 +561,8 @@ pub async fn pr_branches(
 ) -> CommandResult<PrBranchOptions> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
-    if owner.is_empty() || repo.is_empty() {
-        return Err("仓库 owner 和名称不能为空".into());
-    }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    validate_repo(&owner, &repo)?;
+    let p = build_adapter(&platform, &state)?;
     p.list_branches(&owner, &repo).await.map_err(CommandError::from)
 }
 
@@ -582,10 +575,8 @@ pub async fn pr_labels(
 ) -> CommandResult<Vec<PrLabel>> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
-    if owner.is_empty() || repo.is_empty() {
-        return Err("仓库 owner 和名称不能为空".into());
-    }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    validate_repo(&owner, &repo)?;
+    let p = build_adapter(&platform, &state)?;
     p.list_labels(&owner, &repo).await.map_err(CommandError::from)
 }
 
@@ -598,10 +589,8 @@ pub async fn pr_templates(
 ) -> CommandResult<Vec<PrTemplate>> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
-    if owner.is_empty() || repo.is_empty() {
-        return Err("仓库 owner 和名称不能为空".into());
-    }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    validate_repo(&owner, &repo)?;
+    let p = build_adapter(&platform, &state)?;
     p.list_pr_templates(&owner, &repo).await.map_err(CommandError::from)
 }
 
@@ -625,7 +614,7 @@ pub async fn pr_description_image_upload(
     }
     let (file_name, content_type, content) =
         validate_pr_description_image_upload(&file_name, &content_type, &content_base64)?;
-    let adapter = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let adapter = build_adapter(&platform, &state)?;
     adapter
         .upload_pr_description_image(&owner, &repo, &file_name, &content_type, content)
         .await
@@ -641,10 +630,8 @@ pub async fn pr_participant_suggestions(
 ) -> CommandResult<Vec<User>> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
-    if owner.is_empty() || repo.is_empty() {
-        return Err("仓库 owner 和名称不能为空".into());
-    }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    validate_repo(&owner, &repo)?;
+    let p = build_adapter(&platform, &state)?;
     p.list_pr_participant_suggestions(&owner, &repo).await.map_err(CommandError::from)
 }
 
@@ -669,7 +656,7 @@ pub async fn pr_create_preview(
         return Err("当前平台不支持创建 PR / MR".into());
     }
 
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let preview = p.preview_pull_request(&owner, &repo, &request).await.map_err(CommandError::from)?;
     let patches = standardize_patches(&preview.diff, &preview.files);
     Ok(PrCreatePreview {
@@ -696,9 +683,7 @@ pub async fn pr_create(
 ) -> CommandResult<PrCreateOutcome> {
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
-    if owner.is_empty() || repo.is_empty() {
-        return Err("目标仓库 owner 和名称不能为空".into());
-    }
+    validate_repo(&owner, &repo)?;
     let request = validate_create_request(request)?;
     if request.source_owner == owner && request.source_repo == repo && request.source_branch == request.target_branch {
         return Err("同一仓库的源分支和目标分支不能相同".into());
@@ -711,7 +696,7 @@ pub async fn pr_create(
         return Err("当前平台不支持创建 Draft PR / MR".into());
     }
 
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let number = p.create_pull_request(&owner, &repo, &request).await.map_err(CommandError::from)?;
     let mut detail = match p.get_pull_request(&owner, &repo, number).await {
         Ok(detail) => detail,
@@ -800,12 +785,10 @@ pub async fn pr_metadata_update(
     number: u64,
     update: PrMetadataUpdate,
 ) -> CommandResult<PrMetadataUpdateOutcome> {
-    if owner.trim().is_empty() || repo.trim().is_empty() {
-        return Err("仓库 owner 和名称不能为空".into());
-    }
+    validate_repo(&owner, &repo)?;
     let update = validate_metadata_update(update)?;
     let capabilities = capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let current = p.get_pull_request(&owner, &repo, number).await.map_err(CommandError::from)?;
     if !update.expected_updated_at.trim().is_empty() && current.summary.updated_at != update.expected_updated_at {
         return Err("PR 元数据已在远端更新，请刷新详情后重试".into());
@@ -850,7 +833,7 @@ pub async fn pr_merge_readiness(
     repo: String,
     number: u64,
 ) -> CommandResult<PrMergeReadiness> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.get_merge_readiness(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -862,7 +845,7 @@ pub async fn pr_diff(
     repo: String,
     number: u64,
 ) -> CommandResult<DiffResult> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let (diff, files) = p.get_pr_diff(&owner, &repo, number).await.map_err(CommandError::from)?;
     let patches = standardize_patches(&diff, &files);
     Ok(DiffResult { diff, files, patch_schema_version: PATCH_SCHEMA_VERSION, patches })
@@ -876,10 +859,8 @@ pub async fn pr_commits(
     repo: String,
     number: u64,
 ) -> CommandResult<PrCommitList> {
-    if owner.trim().is_empty() || repo.trim().is_empty() {
-        return Err("仓库 owner 和名称不能为空".into());
-    }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    validate_repo(&owner, &repo)?;
+    let p = build_adapter(&platform, &state)?;
     p.list_pr_commits(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -894,7 +875,7 @@ pub async fn pr_compare_diff(
 ) -> CommandResult<DiffResult> {
     validate_compare_request(&owner, &repo, &base_sha, &head_sha)?;
 
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let (diff, files) = p.get_compare_diff(&owner, &repo, &base_sha, &head_sha).await.map_err(CommandError::from)?;
     let patches = standardize_patches(&diff, &files);
     Ok(DiffResult { diff, files, patch_schema_version: PATCH_SCHEMA_VERSION, patches })
@@ -910,12 +891,10 @@ pub async fn pr_file_content(
     revision: String,
     media_preview: Option<bool>,
 ) -> CommandResult<PrFileContent> {
-    if owner.trim().is_empty() || repo.trim().is_empty() {
-        return Err("仓库 owner 和名称不能为空".into());
-    }
+    validate_repo(&owner, &repo)?;
     crate::file_content::validate_request(&path, &revision).map_err(CommandError::from)?;
     let maximum_content_bytes = crate::file_content::preview_content_limit(&path, media_preview.unwrap_or(false));
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.get_pr_file_content_with_limit(&owner, &repo, &path, &revision, maximum_content_bytes)
         .await
         .map_err(CommandError::from)
@@ -934,7 +913,7 @@ pub async fn pr_merge(
     commit_message: Option<String>,
     close_issues: Option<bool>,
 ) -> CommandResult<PrMergeOutcome> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let pr_detail = p.get_pull_request(&owner, &repo, number).await.map_err(CommandError::from)?;
     let merge_strategy = match strategy.as_str() {
         "squash" => MergeStrategy::Squash,
@@ -969,7 +948,7 @@ pub async fn pr_close(
     repo: String,
     number: u64,
 ) -> CommandResult<PrState> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.close_pull_request(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -981,7 +960,7 @@ pub async fn pr_reopen(
     repo: String,
     number: u64,
 ) -> CommandResult<PrState> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.reopen_pull_request(&owner, &repo, number).await.map_err(CommandError::from)
 }
 

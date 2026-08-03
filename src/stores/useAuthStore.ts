@@ -2,44 +2,20 @@ import { defineStore } from "pinia";
 import { ref, computed, watch } from "vue";
 import type { Platform, User } from "@/types";
 import { authLogin, authLogout, authCheck, authHasToken } from "@/api";
+import { PLATFORMS } from "@/constants/platforms";
+import { readStorageString, writeStorageString } from "@/utils/storage";
 
 const PLATFORM_VISIBILITY_KEY = "mergebeacon:platformVisibility";
 const ACTIVE_PLATFORM_KEY = "mergebeacon:activePlatform";
-const LEGACY_KEY_PREFIX = "mergepilot:";
-const PLATFORMS: Platform[] = ["github", "gitlab", "gitee"];
 const DEFAULT_VISIBILITY: Record<Platform, boolean> = {
   github: true,
   gitlab: true,
   gitee: true,
 };
 
-function readStorage(key: string): string | null {
-  try {
-    const value = localStorage.getItem(key);
-    if (value !== null) return value;
-    const legacyKey = key.replace("mergebeacon:", LEGACY_KEY_PREFIX);
-    const legacyValue = localStorage.getItem(legacyKey);
-    if (legacyValue !== null) {
-      localStorage.setItem(key, legacyValue);
-      localStorage.removeItem(legacyKey);
-    }
-    return legacyValue;
-  } catch {
-    return null;
-  }
-}
-
-function writeStorage(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Keep the in-memory session usable when persistence is unavailable.
-  }
-}
-
 function loadPlatformVisibility(): Record<Platform, boolean> {
   const visibility = { ...DEFAULT_VISIBILITY };
-  const stored = readStorage(PLATFORM_VISIBILITY_KEY);
+  const stored = readStorageString(PLATFORM_VISIBILITY_KEY);
   if (!stored) return visibility;
 
   try {
@@ -75,12 +51,12 @@ export const useAuthStore = defineStore("auth", () => {
   watch(
     platformVisibility,
     (val) => {
-      writeStorage(PLATFORM_VISIBILITY_KEY, JSON.stringify(val));
+      writeStorageString(PLATFORM_VISIBILITY_KEY, JSON.stringify(val));
     },
     { deep: true },
   );
 
-  const storedActivePlatform = readStorage(ACTIVE_PLATFORM_KEY);
+  const storedActivePlatform = readStorageString(ACTIVE_PLATFORM_KEY);
   const activePlatform = ref<Platform>(
     storedActivePlatform === "github" ||
       storedActivePlatform === "gitlab" ||
@@ -89,7 +65,7 @@ export const useAuthStore = defineStore("auth", () => {
       : "github",
   );
   watch(activePlatform, (value) => {
-    writeStorage(ACTIVE_PLATFORM_KEY, value);
+    writeStorageString(ACTIVE_PLATFORM_KEY, value);
   });
 
   const activeUser = computed(() => platforms.value[activePlatform.value].user);

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { storeToRefs } from "pinia";
-import { html } from "diff2html";
 import "diff2html/bundles/css/diff2html.min.css";
 import type {
   DiffSide,
@@ -18,7 +17,6 @@ import type {
   StandardPatchFile,
 } from "@/types";
 import { prFileContent, reviewFileSetViewed, reviewViewedFilesList } from "@/api";
-import AppSelect from "@/components/shared/AppSelect.vue";
 import { useUiSettingsStore } from "@/stores/useUiSettingsStore";
 import {
   useReviewProgressStore,
@@ -27,12 +25,25 @@ import {
 import { getErrorMessage } from "@/utils/error";
 import { findPatchLocation as findStandardPatchLocation } from "@/utils/diffHunk";
 import CodeSearchBar from "./CodeSearchBar.vue";
+import ControlledContextLine from "./ControlledContextLine.vue";
+import DiffFileNavigator from "./DiffFileNavigator.vue";
+import LegacyDiffRenderer from "./LegacyDiffRenderer.vue";
+import QuickCommentPopup from "./QuickCommentPopup.vue";
+import {
+  buildFileTree,
+  collectDirectoryKeys,
+  expandedDirectoryKeysForFile,
+  firstFilePath,
+  MAX_NAVIGATOR_WIDTH,
+  MIN_NAVIGATOR_WIDTH,
+} from "./diffFileTree";
+import { renderLegacyDiffHtml } from "./legacyDiffHtml";
 import { useDiffCodeSearch } from "./useDiffCodeSearch";
-import { useDiffPopupStyle, useDiffViewportStyles } from "./useDiffLayoutStyles";
+import { useDiffViewportStyles } from "./useDiffLayoutStyles";
+import { useDiffQuickComment, type QuickCommentTarget } from "./useDiffQuickComment";
 import { useCopyToClipboard } from "@/composables/useCopyToClipboard";
 import { useDocumentStateClass } from "@/composables/useDynamicCssClass";
 import { useI18n } from "@/i18n";
-import type { MessageKey } from "@/i18n/messages";
 
 const props = defineProps<{
   diff: DiffResult | null;
@@ -73,18 +84,6 @@ const emit = defineEmits<{
   locationResult: [result: DiffLocationResult];
   reviewProgress: [unviewedFileCount: number];
 }>();
-
-interface FileTreeNode {
-  key: string;
-  name: string;
-  kind: "directory" | "file";
-  children: FileTreeNode[];
-  file: PrFile | null;
-}
-
-interface FileTreeRow extends FileTreeNode {
-  depth: number;
-}
 
 interface ControlledDiffRow {
   key: string;
@@ -182,7 +181,6 @@ const {
   unifiedScrollbarContentClass,
   leftScrollbarContentClass,
   rightScrollbarContentClass,
-  treeRowDepthClass,
 } = useDiffViewportStyles({
   navigatorWidth,
   topScrollbarContentWidth,
@@ -203,97 +201,11 @@ const statusDescriptions = computed<Record<FileStatus, string>>(() => ({
   renamed: t("diff.viewer.renamed"),
 }));
 
-function sortTree(nodes: FileTreeNode[]): void {
-  nodes.sort((left, right) => {
-    if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
-    return left.name.localeCompare(right.name);
-  });
-  nodes.forEach((node) => sortTree(node.children));
-}
-
-function buildFileTree(files: PrFile[]): FileTreeNode[] {
-  const root: FileTreeNode = {
-    key: "",
-    name: "",
-    kind: "directory",
-    children: [],
-    file: null,
-  };
-
-  files.forEach((file) => {
-    const segments = file.filename.split("/").filter(Boolean);
-    if (segments.length === 0) return;
-
-    let parent = root;
-    let currentPath = "";
-    segments.forEach((segment, index) => {
-      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-      const isFile = index === segments.length - 1;
-      let child = parent.children.find(
-        (node) => node.name === segment && node.kind === (isFile ? "file" : "directory"),
-      );
-      if (!child) {
-        child = {
-          key: isFile ? file.filename : `directory:${currentPath}`,
-          name: segment,
-          kind: isFile ? "file" : "directory",
-          children: [],
-          file: isFile ? file : null,
-        };
-        parent.children.push(child);
-      }
-      parent = child;
-    });
-  });
-
-  sortTree(root.children);
-  return root.children;
-}
-
-function firstFilePath(nodes: FileTreeNode[]): string {
-  for (const node of nodes) {
-    if (node.file) return node.file.filename;
-    const nested = firstFilePath(node.children);
-    if (nested) return nested;
-  }
-  return "";
-}
-
-function collectDirectoryKeys(nodes: FileTreeNode[], keys = new Set<string>()): Set<string> {
-  nodes.forEach((node) => {
-    if (node.kind === "directory") {
-      keys.add(node.key);
-      collectDirectoryKeys(node.children, keys);
-    }
-  });
-  return keys;
-}
-
 function expandDirectoriesForFile(path: string): void {
-  const segments = path.split("/").filter(Boolean);
-  const next = new Set(expandedDirectories.value);
-  let directoryPath = "";
-  for (const segment of segments.slice(0, -1)) {
-    directoryPath = directoryPath ? `${directoryPath}/${segment}` : segment;
-    next.add(`directory:${directoryPath}`);
-  }
-  expandedDirectories.value = next;
+  expandedDirectories.value = expandedDirectoryKeysForFile(path, expandedDirectories.value);
 }
 
 const fileTree = computed(() => buildFileTree(props.diff?.files ?? []));
-const visibleTreeRows = computed(() => {
-  const rows: FileTreeRow[] = [];
-  const visit = (nodes: FileTreeNode[], depth: number) => {
-    nodes.forEach((node) => {
-      rows.push({ ...node, depth });
-      if (node.kind === "directory" && expandedDirectories.value.has(node.key)) {
-        visit(node.children, depth + 1);
-      }
-    });
-  };
-  visit(fileTree.value, 1);
-  return rows;
-});
 const selectedFile = computed(
   () => props.diff?.files.find((file) => file.filename === selectedFilePath.value) ?? null,
 );
@@ -988,46 +900,11 @@ function collapseAllContext(): void {
 }
 
 const hasControlledPatch = computed(() => selectedStandardPatch.value !== null);
-const totalAdditions = computed(() =>
-  (props.diff?.files ?? []).reduce((total, file) => total + file.additions, 0),
-);
-const totalDeletions = computed(() =>
-  (props.diff?.files ?? []).reduce((total, file) => total + file.deletions, 0),
-);
 const fileSignature = computed(() =>
   (props.diff?.files ?? []).map((file) => file.filename).join("\0"),
 );
 
 const renderedDiff = computed(() => props.diff?.diff ?? "");
-
-const MAX_INLINE_HIGHLIGHT_RATIO = 0.8;
-const LOW_SIMILARITY_HIGHLIGHT_CLASS = "d2h-low-similarity-highlight";
-
-function textLength(value: string | null): number {
-  return Array.from(value ?? "").length;
-}
-
-function normalizeInlineHighlights(renderedHtml: string): string {
-  const document = new DOMParser().parseFromString(renderedHtml, "text/html");
-
-  document.querySelectorAll<HTMLElement>(".d2h-code-line-ctn").forEach((line) => {
-    const highlights = Array.from(line.querySelectorAll<HTMLElement>("ins, del"));
-    const totalLength = textLength(line.textContent);
-    if (highlights.length === 0 || totalLength === 0) return;
-
-    const highlightedLength = highlights.reduce(
-      (length, highlight) => length + textLength(highlight.textContent),
-      0,
-    );
-    if (highlightedLength / totalLength < MAX_INLINE_HIGHLIGHT_RATIO) return;
-
-    // diff2html 会把低相似度替换行的大部分内容标成词级变化。GitHub 对这种行只保留
-    // 整行浅色背景，避免整段代码被误显示为深红或深绿。
-    highlights.forEach((highlight) => highlight.classList.add(LOW_SIMILARITY_HIGHLIGHT_CLASS));
-  });
-
-  return document.body.innerHTML;
-}
 
 const diffHtml = computed(() => {
   if (!renderedDiff.value) return "";
@@ -1038,12 +915,12 @@ const diffHtml = computed(() => {
     renderNothingWhenEmpty: false,
   };
   try {
-    return normalizeInlineHighlights(html(renderedDiff.value, options));
+    return renderLegacyDiffHtml(renderedDiff.value, options);
   } catch {
     // 后端 patch 解析失败时始终回退到平台原始 diff，不能用空字符串覆盖视图。
     if (props.diff?.diff && renderedDiff.value !== props.diff.diff) {
       try {
-        return normalizeInlineHighlights(html(props.diff.diff, options));
+        return renderLegacyDiffHtml(props.diff.diff, options);
       } catch {
         return "";
       }
@@ -1068,16 +945,6 @@ function toggleDirectory(key: string) {
   expandedDirectories.value = next;
 }
 
-function activateTreeRow(row: FileTreeRow) {
-  if (row.kind === "directory") {
-    toggleDirectory(row.key);
-  } else if (row.file) {
-    void selectFile(row.file.filename);
-  }
-}
-
-const MIN_NAVIGATOR_WIDTH = 180;
-const MAX_NAVIGATOR_WIDTH = 520;
 const MIN_DIFF_WIDTH = 320;
 
 function clampNavigatorWidth(width: number): number {
@@ -1138,32 +1005,6 @@ async function selectFile(path: string) {
 
 function isFileViewed(path: string): boolean {
   return viewedFilePaths.value.has(path);
-}
-
-function fileTreeAriaLabel(row: FileTreeRow): string {
-  if (!row.file) return t("diff.viewer.directoryLabel", { name: row.name });
-  const summary = threadSummaryForFile(row.file.filename);
-  const viewed = isFileViewed(row.file.filename)
-    ? t("diff.viewer.fileViewedWithSource", { source: viewedProgressSource.value })
-    : t("diff.viewer.fileUnviewed");
-  const unresolved = summary?.unresolved
-    ? `, ${t("diff.viewer.fileUnresolved", { count: summary.unresolved })}`
-    : "";
-  return `${t("diff.viewer.fileLabel", {
-    status: statusDescriptions.value[row.file.status],
-    path: row.file.filename,
-  })}, ${viewed}${unresolved}`;
-}
-
-function fileTreeTitle(file: PrFile): string {
-  return t("diff.viewer.fileLabel", {
-    status: statusDescriptions.value[file.status],
-    path: file.filename,
-  });
-}
-
-function threadSummaryForFile(path: string) {
-  return props.threadSummary?.by_file[path];
 }
 
 const {
@@ -1511,64 +1352,11 @@ watch(
   { immediate: true, flush: "post" },
 );
 
-const popupRef = ref<HTMLElement | null>(null);
-
-const quickComment = ref<{
-  x: number;
-  y: number;
-  path: string;
-  startLine: number;
-  endLine: number;
-  side: "left" | "right";
-  selectedText: string;
-} | null>(null);
-const { popupPositionClass, positionPopup } = useDiffPopupStyle({
-  popupRef,
-  quickComment,
+const quickCommentReadOnly = computed(() => props.readOnly === true);
+const { quickComment } = useDiffQuickComment({
+  containerRef,
+  readOnly: quickCommentReadOnly,
 });
-const quickBody = ref("");
-const quickSubmitting = ref(false);
-type QuickCategoryId = "logic" | "security" | "performance" | "style" | "log";
-type QuickSubcategoryId =
-  | "boundary"
-  | "null"
-  | "exception"
-  | "concurrency"
-  | "state"
-  | "type"
-  | "injection"
-  | "permission"
-  | "exposure"
-  | "crypto"
-  | "validation"
-  | "csrf"
-  | "complexity"
-  | "memory"
-  | "io"
-  | "recompute"
-  | "cache"
-  | "database"
-  | "naming"
-  | "comments"
-  | "duplication"
-  | "hardcoded"
-  | "longFunction"
-  | "structure"
-  | "logLevel"
-  | "logExposure"
-  | "logMissing"
-  | "logContext"
-  | "logFormat"
-  | "logVolume";
-
-interface QuickSubcategoryDefinition {
-  id: QuickSubcategoryId;
-  labelKey: MessageKey;
-  templateKey: MessageKey;
-}
-
-const quickCategory = ref<QuickCategoryId>("logic");
-const quickSubCategory = ref<QuickSubcategoryId | "">("");
 
 const {
   registerSearchInput,
@@ -1605,374 +1393,14 @@ const {
   scrollElementWithinContainer,
 });
 
-const quickSubcategoryDefinitions: Record<QuickCategoryId, QuickSubcategoryDefinition[]> = {
-  logic: [
-    {
-      id: "boundary",
-      labelKey: "diff.quick.boundary.label",
-      templateKey: "diff.quick.boundary.template",
-    },
-    { id: "null", labelKey: "diff.quick.null.label", templateKey: "diff.quick.null.template" },
-    {
-      id: "exception",
-      labelKey: "diff.quick.exception.label",
-      templateKey: "diff.quick.exception.template",
-    },
-    {
-      id: "concurrency",
-      labelKey: "diff.quick.concurrency.label",
-      templateKey: "diff.quick.concurrency.template",
-    },
-    { id: "state", labelKey: "diff.quick.state.label", templateKey: "diff.quick.state.template" },
-    { id: "type", labelKey: "diff.quick.type.label", templateKey: "diff.quick.type.template" },
-  ],
-  security: [
-    {
-      id: "injection",
-      labelKey: "diff.quick.injection.label",
-      templateKey: "diff.quick.injection.template",
-    },
-    {
-      id: "permission",
-      labelKey: "diff.quick.permission.label",
-      templateKey: "diff.quick.permission.template",
-    },
-    {
-      id: "exposure",
-      labelKey: "diff.quick.exposure.label",
-      templateKey: "diff.quick.exposure.template",
-    },
-    {
-      id: "crypto",
-      labelKey: "diff.quick.crypto.label",
-      templateKey: "diff.quick.crypto.template",
-    },
-    {
-      id: "validation",
-      labelKey: "diff.quick.validation.label",
-      templateKey: "diff.quick.validation.template",
-    },
-    { id: "csrf", labelKey: "diff.quick.csrf.label", templateKey: "diff.quick.csrf.template" },
-  ],
-  performance: [
-    {
-      id: "complexity",
-      labelKey: "diff.quick.complexity.label",
-      templateKey: "diff.quick.complexity.template",
-    },
-    {
-      id: "memory",
-      labelKey: "diff.quick.memory.label",
-      templateKey: "diff.quick.memory.template",
-    },
-    { id: "io", labelKey: "diff.quick.io.label", templateKey: "diff.quick.io.template" },
-    {
-      id: "recompute",
-      labelKey: "diff.quick.recompute.label",
-      templateKey: "diff.quick.recompute.template",
-    },
-    { id: "cache", labelKey: "diff.quick.cache.label", templateKey: "diff.quick.cache.template" },
-    {
-      id: "database",
-      labelKey: "diff.quick.database.label",
-      templateKey: "diff.quick.database.template",
-    },
-  ],
-  style: [
-    {
-      id: "naming",
-      labelKey: "diff.quick.naming.label",
-      templateKey: "diff.quick.naming.template",
-    },
-    {
-      id: "comments",
-      labelKey: "diff.quick.comments.label",
-      templateKey: "diff.quick.comments.template",
-    },
-    {
-      id: "duplication",
-      labelKey: "diff.quick.duplication.label",
-      templateKey: "diff.quick.duplication.template",
-    },
-    {
-      id: "hardcoded",
-      labelKey: "diff.quick.hardcoded.label",
-      templateKey: "diff.quick.hardcoded.template",
-    },
-    {
-      id: "longFunction",
-      labelKey: "diff.quick.longFunction.label",
-      templateKey: "diff.quick.longFunction.template",
-    },
-    {
-      id: "structure",
-      labelKey: "diff.quick.structure.label",
-      templateKey: "diff.quick.structure.template",
-    },
-  ],
-  log: [
-    {
-      id: "logLevel",
-      labelKey: "diff.quick.logLevel.label",
-      templateKey: "diff.quick.logLevel.template",
-    },
-    {
-      id: "logExposure",
-      labelKey: "diff.quick.logExposure.label",
-      templateKey: "diff.quick.logExposure.template",
-    },
-    {
-      id: "logMissing",
-      labelKey: "diff.quick.logMissing.label",
-      templateKey: "diff.quick.logMissing.template",
-    },
-    {
-      id: "logContext",
-      labelKey: "diff.quick.logContext.label",
-      templateKey: "diff.quick.logContext.template",
-    },
-    {
-      id: "logFormat",
-      labelKey: "diff.quick.logFormat.label",
-      templateKey: "diff.quick.logFormat.template",
-    },
-    {
-      id: "logVolume",
-      labelKey: "diff.quick.logVolume.label",
-      templateKey: "diff.quick.logVolume.template",
-    },
-  ],
-};
-
-const quickCategoryLabels = computed<Record<QuickCategoryId, string>>(() => ({
-  logic: t("diff.viewer.quickCategoryLogic"),
-  security: t("diff.viewer.quickCategorySecurity"),
-  performance: t("diff.viewer.quickCategoryPerformance"),
-  style: t("diff.viewer.quickCategoryStyle"),
-  log: t("diff.viewer.quickCategoryLog"),
-}));
-const quickCategoryOptions = computed(() =>
-  Object.entries(quickCategoryLabels.value).map(([value, label]) => ({ value, label })),
-);
-const quickSubcategoryOptions = computed(() => [
-  { value: "", label: t("diff.viewer.quickSubcategory") },
-  ...quickSubcategoryDefinitions[quickCategory.value].map((subcategory) => ({
-    value: subcategory.id,
-    label: t(subcategory.labelKey),
-  })),
-]);
-
-function selectedQuickSubcategory(): QuickSubcategoryDefinition | undefined {
-  return quickSubcategoryDefinitions[quickCategory.value].find(
-    (subcategory) => subcategory.id === quickSubCategory.value,
-  );
+function submitQuickComment(target: QuickCommentTarget, body: string): void {
+  emit("addComment", target.path, target.startLine, target.endLine, target.side, body);
 }
-
-function quickCommentTag(): string {
-  const subcategory = selectedQuickSubcategory();
-  return t("diff.viewer.quickTag", {
-    category: quickCategoryLabels.value[quickCategory.value],
-    subcategory: subcategory
-      ? t("diff.viewer.quickSubtag", { subcategory: t(subcategory.labelKey) })
-      : "",
-  });
-}
-
-function getFileFromNode(node: Node): HTMLElement | null {
-  let element: HTMLElement | null =
-    node.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node.parentElement;
-  while (element) {
-    if (
-      element.classList.contains("controlled-file-wrapper") ||
-      element.classList.contains("d2h-file-wrapper") ||
-      element.classList.contains("d2h-wrapper")
-    ) {
-      return element;
-    }
-    element = element.parentElement;
-  }
-  return null;
-}
-
-function getControlledSelectionRange(
-  range: Range,
-  file: HTMLElement,
-): { path: string; startLine: number; endLine: number; side: "left" | "right" } | null {
-  const path = file.dataset.filePath ?? "";
-  if (!path) return null;
-
-  const selectedLines = Array.from(
-    file.querySelectorAll<HTMLElement>(".controlled-line[data-line][data-side]"),
-  ).filter((line) => range.intersectsNode(line));
-  const selectedSides = new Set(selectedLines.map((line) => line.dataset.side));
-  if (selectedLines.length === 0 || selectedSides.size !== 1) return null;
-
-  const side = selectedLines[0].dataset.side;
-  if (side !== "left" && side !== "right") return null;
-  const lines = selectedLines
-    .map((line) => Number.parseInt(line.dataset.line ?? "", 10))
-    .filter((line) => Number.isFinite(line) && line > 0);
-  if (lines.length === 0) return null;
-
-  return {
-    path,
-    startLine: Math.min(...lines),
-    endLine: Math.max(...lines),
-    side,
-  };
-}
-
-function getLegacySelectionRange(
-  range: Range,
-  file: HTMLElement,
-): { path: string; startLine: number; endLine: number; side: "left" | "right" } | null {
-  const fileNameElement =
-    file.querySelector(".d2h-file-name") ||
-    file.querySelector(".d2h-file-name-wrapper .d2h-file-name");
-  const path = fileNameElement?.textContent?.trim() || "";
-  if (!path) return null;
-
-  const lines: number[] = [];
-  let side: "left" | "right" | null = null;
-  file.querySelectorAll("tr").forEach((row) => {
-    if (!range.intersectsNode(row)) return;
-    row.querySelectorAll(".d2h-code-side-linenumber, .d2h-code-linenumber").forEach((element) => {
-      const line = Number.parseInt((element as HTMLElement).textContent || "0", 10);
-      if (!line) return;
-      lines.push(line);
-      if (side) return;
-
-      const scroller = (element as HTMLElement).closest<HTMLElement>(".d2h-file-side-diff");
-      if (!scroller) return;
-      const sideDiffs = scroller.parentElement?.querySelectorAll(".d2h-file-side-diff");
-      side = sideDiffs && sideDiffs.length > 1 && sideDiffs[0] === scroller ? "left" : "right";
-    });
-  });
-
-  if (lines.length === 0 || !side) return null;
-  return { path, startLine: Math.min(...lines), endLine: Math.max(...lines), side };
-}
-
-function getSelectionRange(): {
-  path: string;
-  startLine: number;
-  endLine: number;
-  side: "left" | "right";
-} | null {
-  const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || !selection.toString().trim()) return null;
-
-  const range = selection.getRangeAt(0);
-  const startFile = getFileFromNode(range.startContainer);
-  const endFile = getFileFromNode(range.endContainer);
-  if (!startFile || startFile !== endFile) return null;
-
-  return startFile.classList.contains("controlled-file-wrapper")
-    ? getControlledSelectionRange(range, startFile)
-    : getLegacySelectionRange(range, startFile);
-}
-
-function handleContextMenu(event: MouseEvent) {
-  if (props.readOnly) return;
-  const target = event.target as HTMLElement;
-  if (!containerRef.value?.contains(target)) return;
-
-  event.preventDefault();
-  event.stopPropagation();
-
-  const selRange = getSelectionRange();
-  if (!selRange) return;
-  quickComment.value = {
-    x: event.clientX,
-    y: event.clientY,
-    path: selRange.path,
-    startLine: selRange.startLine,
-    endLine: selRange.endLine,
-    side: selRange.side,
-    selectedText: window.getSelection()?.toString().trim() || "",
-  };
-  quickBody.value = "";
-}
-
-let contextMenuListenerAttached = false;
-
-function syncContextMenuListener(readOnly = props.readOnly): void {
-  if (readOnly) {
-    if (contextMenuListenerAttached) {
-      document.removeEventListener("contextmenu", handleContextMenu, true);
-      contextMenuListenerAttached = false;
-    }
-    return;
-  }
-  if (!contextMenuListenerAttached) {
-    document.addEventListener("contextmenu", handleContextMenu, true);
-    contextMenuListenerAttached = true;
-  }
-}
-
-function handleDocClick() {
-  quickComment.value = null;
-}
-
-async function submitQuickComment() {
-  if (!quickComment.value || !quickBody.value.trim()) return;
-  let finalBody = quickBody.value.trim();
-  if (!finalBody.startsWith("【") && !finalBody.startsWith("[")) {
-    finalBody = `${quickCommentTag()}${finalBody}`;
-  }
-  emit(
-    "addComment",
-    quickComment.value.path,
-    quickComment.value.startLine,
-    quickComment.value.endLine,
-    quickComment.value.side,
-    finalBody,
-  );
-  quickSubmitting.value = true;
-  await new Promise((r) => setTimeout(r, 200));
-  quickComment.value = null;
-  quickBody.value = "";
-  quickSubmitting.value = false;
-}
-
-function onSubCategoryChange() {
-  if (!quickSubCategory.value) {
-    quickBody.value = "";
-    return;
-  }
-  const subcategory = selectedQuickSubcategory();
-  if (subcategory) quickBody.value = `${quickCommentTag()}${t(subcategory.templateKey)}`;
-}
-
-function handleQuickKeydown(e: KeyboardEvent) {
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitQuickComment();
-  if (e.key === "Escape") quickComment.value = null;
-}
-
-watch(quickComment, async (val) => {
-  if (val) {
-    (document.querySelector(".quick-comment-textarea") as HTMLTextAreaElement)?.focus();
-    await positionPopup();
-  }
-});
-
-watch([quickCategory, quickSubCategory], async () => {
-  if (quickComment.value) {
-    await positionPopup();
-  }
-});
-
-watch(
-  () => props.readOnly,
-  (readOnly) => syncContextMenuListener(readOnly),
-);
 
 onMounted(() => {
   updateTopScrollbar();
   observeDiffSize();
   bindSideDiffScrollers();
-  syncContextMenuListener();
-  document.addEventListener("click", handleDocClick);
 });
 
 onUnmounted(() => {
@@ -1982,11 +1410,6 @@ onUnmounted(() => {
   for (const scroller of visibleSideDiffScrollers()) {
     scroller.removeEventListener("scroll", handleSideDiffScroll);
   }
-  if (contextMenuListenerAttached) {
-    document.removeEventListener("contextmenu", handleContextMenu, true);
-    contextMenuListenerAttached = false;
-  }
-  document.removeEventListener("click", handleDocClick);
   stopNavigatorResize();
 });
 </script>
@@ -2011,150 +1434,24 @@ onUnmounted(() => {
       ]"
       :aria-label="t('diff.viewer.browser')"
     >
-      <aside
+      <DiffFileNavigator
         v-if="navigatorVisible"
-        class="file-navigator"
-        :aria-label="t('diff.viewer.filesChanged')"
-      >
-        <header class="navigator-header">
-          <div>
-            <strong>{{ t("diff.viewer.files") }}</strong>
-            <span>{{ diff?.files.length ?? 0 }}</span>
-            <span
-              v-if="reviewProgressContext"
-              class="local-progress-label"
-              :title="viewedProgressDescription"
-            >
-              {{
-                t("diff.viewer.progressSummary", {
-                  source: viewedProgressSource,
-                  viewed: viewedFileCount,
-                  total: diff?.files.length ?? 0,
-                })
-              }}
-            </span>
-          </div>
-          <div class="change-summary" :aria-label="t('diff.viewer.changeSummary')">
-            <span class="additions">+{{ totalAdditions }}</span>
-            <span class="deletions">-{{ totalDeletions }}</span>
-          </div>
-        </header>
-
-        <nav class="file-tree" role="tree" :aria-label="t('diff.viewer.fileTree')">
-          <button
-            v-for="row in visibleTreeRows"
-            :key="row.key"
-            class="tree-row"
-            :class="[
-              treeRowDepthClass(row.depth),
-              {
-                selected: row.file?.filename === selectedFilePath,
-                viewed: row.file ? isFileViewed(row.file.filename) : false,
-              },
-            ]"
-            type="button"
-            role="treeitem"
-            :aria-level="row.depth"
-            :aria-expanded="row.kind === 'directory' ? expandedDirectories.has(row.key) : undefined"
-            :aria-current="row.file?.filename === selectedFilePath ? 'true' : undefined"
-            :aria-label="fileTreeAriaLabel(row)"
-            :data-file-path="row.file?.filename"
-            @click="activateTreeRow(row)"
-          >
-            <svg
-              v-if="row.kind === 'directory'"
-              class="disclosure-icon"
-              :class="{ expanded: expandedDirectories.has(row.key) }"
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path d="m4 2.5 3.5 3.5L4 9.5" stroke="currentColor" stroke-width="1.4" />
-            </svg>
-            <span v-else class="disclosure-spacer" aria-hidden="true" />
-            <svg
-              v-if="row.kind === 'directory'"
-              class="tree-icon directory-icon"
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M1.75 4.25h4l1.3 1.5h7.2v6.5a1.5 1.5 0 0 1-1.5 1.5h-10a1.5 1.5 0 0 1-1.5-1.5v-6.5c0-.83.67-1.5 1.5-1.5Z"
-                stroke="currentColor"
-                stroke-width="1.2"
-              />
-            </svg>
-            <svg
-              v-else
-              class="tree-icon"
-              width="15"
-              height="15"
-              viewBox="0 0 16 16"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path d="M4 1.75h5l3 3v9.5H4v-12.5Z" stroke="currentColor" stroke-width="1.2" />
-              <path d="M9 1.75v3h3" stroke="currentColor" stroke-width="1.2" />
-            </svg>
-            <span class="tree-label" :title="row.file ? fileTreeTitle(row.file) : row.name">
-              {{ row.name }}
-            </span>
-            <template v-if="row.file">
-              <span class="file-review-indicators" aria-hidden="true">
-                <span
-                  v-if="isFileViewed(row.file.filename)"
-                  class="viewed-indicator"
-                  :title="t('diff.viewer.fileViewedWithSource', { source: viewedProgressSource })"
-                  >✓</span
-                >
-                <span
-                  v-if="threadSummary?.by_file[row.file.filename]?.unresolved"
-                  class="unresolved-indicator"
-                  :title="
-                    t('diff.viewer.fileUnresolved', {
-                      count: threadSummary.by_file[row.file.filename].unresolved,
-                    })
-                  "
-                >
-                  {{ threadSummary.by_file[row.file.filename].unresolved }}
-                </span>
-                <span
-                  v-else-if="threadSummary?.by_file[row.file.filename]?.comments"
-                  class="comment-indicator"
-                  :title="
-                    t('diff.viewer.fileComments', {
-                      count: threadSummary.by_file[row.file.filename].comments,
-                    })
-                  "
-                >
-                  {{ threadSummary.by_file[row.file.filename].comments }}
-                </span>
-              </span>
-              <span class="file-change-count" aria-hidden="true">
-                <span v-if="row.file.additions" class="additions">+{{ row.file.additions }}</span>
-                <span v-if="row.file.deletions" class="deletions">-{{ row.file.deletions }}</span>
-              </span>
-            </template>
-          </button>
-        </nav>
-        <div
-          class="navigator-resizer"
-          role="separator"
-          :aria-label="t('diff.viewer.navigatorResize')"
-          aria-orientation="vertical"
-          :aria-valuemin="MIN_NAVIGATOR_WIDTH"
-          :aria-valuemax="MAX_NAVIGATOR_WIDTH"
-          :aria-valuenow="navigatorWidth"
-          tabindex="0"
-          @pointerdown="startNavigatorResize"
-          @keydown="resizeNavigatorWithKeyboard"
-        />
-      </aside>
+        :files="diff?.files ?? []"
+        :selected-file-path="selectedFilePath"
+        :expanded-directories="expandedDirectories"
+        :viewed-file-paths="viewedFilePaths"
+        :viewed-progress-source="viewedProgressSource"
+        :viewed-progress-description="viewedProgressDescription"
+        :viewed-file-count="viewedFileCount"
+        :show-review-progress="Boolean(reviewProgressContext)"
+        :thread-summary="threadSummary"
+        :navigator-width="navigatorWidth"
+        :resizing="resizingNavigator"
+        @select-file="selectFile"
+        @toggle-directory="toggleDirectory"
+        @start-resize="startNavigatorResize"
+        @resize-keydown="resizeNavigatorWithKeyboard"
+      />
 
       <section class="diff-context" :aria-label="t('diff.viewer.context')">
         <header class="diff-toolbar">
@@ -2530,27 +1827,18 @@ onUnmounted(() => {
                       :key="`${controlledHunk.key}:${side}`"
                     >
                       <template v-if="controlledHunk.gapBefore">
-                        <div
+                        <ControlledContextLine
                           v-for="row in contextRowsFromStart(controlledHunk.gapBefore)"
                           :key="`${row.key}:${side}`"
-                          class="controlled-line controlled-context-line"
-                          :class="{
-                            'diff-location-highlight': isHighlightedLine(
+                          :row="row"
+                          :side="side"
+                          :highlighted="
+                            isHighlightedLine(
                               side,
                               side === 'left' ? row.left?.old_line : row.right?.new_line,
-                            ),
-                          }"
-                          :data-side="side"
-                          :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
-                        >
-                          <span class="controlled-line-number" aria-hidden="true">
-                            {{ side === "left" ? row.left?.old_line : row.right?.new_line }}
-                          </span>
-                          <span class="controlled-line-marker" aria-hidden="true"> </span>
-                          <code class="controlled-code">{{
-                            (side === "left" ? row.left : row.right)?.content ?? ""
-                          }}</code>
-                        </div>
+                            )
+                          "
+                        />
                       </template>
                       <section class="controlled-hunk">
                         <div
@@ -2600,27 +1888,18 @@ onUnmounted(() => {
                           </span>
                         </div>
                         <template v-if="controlledHunk.gapBefore">
-                          <div
+                          <ControlledContextLine
                             v-for="row in contextRowsFromEnd(controlledHunk.gapBefore)"
                             :key="`${row.key}:${side}`"
-                            class="controlled-line controlled-context-line"
-                            :class="{
-                              'diff-location-highlight': isHighlightedLine(
+                            :row="row"
+                            :side="side"
+                            :highlighted="
+                              isHighlightedLine(
                                 side,
                                 side === 'left' ? row.left?.old_line : row.right?.new_line,
-                              ),
-                            }"
-                            :data-side="side"
-                            :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
-                          >
-                            <span class="controlled-line-number" aria-hidden="true">
-                              {{ side === "left" ? row.left?.old_line : row.right?.new_line }}
-                            </span>
-                            <span class="controlled-line-marker" aria-hidden="true"> </span>
-                            <code class="controlled-code">{{
-                              (side === "left" ? row.left : row.right)?.content ?? ""
-                            }}</code>
-                          </div>
+                              )
+                            "
+                          />
                         </template>
                         <div
                           v-for="row in controlledHunk.rows"
@@ -2661,27 +1940,18 @@ onUnmounted(() => {
                       </section>
                     </template>
                     <template v-if="trailingContextGap">
-                      <div
+                      <ControlledContextLine
                         v-for="row in contextRowsFromStart(trailingContextGap)"
                         :key="`${row.key}:${side}`"
-                        class="controlled-line controlled-context-line"
-                        :class="{
-                          'diff-location-highlight': isHighlightedLine(
+                        :row="row"
+                        :side="side"
+                        :highlighted="
+                          isHighlightedLine(
                             side,
                             side === 'left' ? row.left?.old_line : row.right?.new_line,
-                          ),
-                        }"
-                        :data-side="side"
-                        :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
-                      >
-                        <span class="controlled-line-number" aria-hidden="true">
-                          {{ side === "left" ? row.left?.old_line : row.right?.new_line }}
-                        </span>
-                        <span class="controlled-line-marker" aria-hidden="true"> </span>
-                        <code class="controlled-code">{{
-                          (side === "left" ? row.left : row.right)?.content ?? ""
-                        }}</code>
-                      </div>
+                          )
+                        "
+                      />
                       <div
                         v-if="!isContextGapExpanded(trailingContextGap)"
                         class="controlled-context-gap controlled-context-gap-down"
@@ -2701,27 +1971,18 @@ onUnmounted(() => {
                         </div>
                         <span v-else class="context-gap-placeholder" aria-hidden="true" />
                       </div>
-                      <div
+                      <ControlledContextLine
                         v-for="row in contextRowsFromEnd(trailingContextGap)"
                         :key="`${row.key}:${side}`"
-                        class="controlled-line controlled-context-line"
-                        :class="{
-                          'diff-location-highlight': isHighlightedLine(
+                        :row="row"
+                        :side="side"
+                        :highlighted="
+                          isHighlightedLine(
                             side,
                             side === 'left' ? row.left?.old_line : row.right?.new_line,
-                          ),
-                        }"
-                        :data-side="side"
-                        :data-line="side === 'left' ? row.left?.old_line : row.right?.new_line"
-                      >
-                        <span class="controlled-line-number" aria-hidden="true">
-                          {{ side === "left" ? row.left?.old_line : row.right?.new_line }}
-                        </span>
-                        <span class="controlled-line-marker" aria-hidden="true"> </span>
-                        <code class="controlled-code">{{
-                          (side === "left" ? row.left : row.right)?.content ?? ""
-                        }}</code>
-                      </div>
+                          )
+                        "
+                      />
                     </template>
                   </div>
                 </div>
@@ -2731,10 +1992,9 @@ onUnmounted(() => {
                 {{ selectedStandardPatch.message ?? t("diff.viewer.noTextDiff") }}
               </div>
             </article>
-            <div
+            <LegacyDiffRenderer
               v-else
-              class="legacy-diff"
-              v-html="diffHtml"
+              :sanitized-html="diffHtml"
               @pointerover="updateHoveredLegacyCodeSearchSide"
               @pointermove="updateHoveredLegacyCodeSearchSide"
               @pointerleave="clearHoveredCodeSearchSide"
@@ -2746,83 +2006,7 @@ onUnmounted(() => {
 
     <div v-else class="diff-empty">{{ t("diff.viewer.empty") }}</div>
 
-    <Teleport to="body">
-      <div
-        v-if="quickComment"
-        ref="popupRef"
-        class="quick-comment-popup"
-        :class="popupPositionClass"
-        @click.stop
-        @keydown="handleQuickKeydown"
-      >
-        <div class="popup-header">
-          <span class="file-ref">
-            {{ quickComment.path.split("/").pop() }}:L{{ quickComment.startLine
-            }}{{
-              quickComment.endLine !== quickComment.startLine ? "-L" + quickComment.endLine : ""
-            }}
-          </span>
-          <button
-            class="close-btn"
-            type="button"
-            :aria-label="t('common.close')"
-            @click="quickComment = null"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-        <pre v-if="quickComment.selectedText" class="selected-code">{{
-          quickComment.selectedText
-        }}</pre>
-
-        <div class="popup-category">
-          <AppSelect
-            v-model="quickCategory"
-            :options="quickCategoryOptions"
-            @update:model-value="
-              quickSubCategory = '';
-              quickBody = '';
-            "
-          />
-          <AppSelect
-            v-model="quickSubCategory"
-            :options="quickSubcategoryOptions"
-            @update:model-value="onSubCategoryChange"
-          />
-        </div>
-
-        <textarea
-          v-model="quickBody"
-          class="quick-comment-textarea"
-          :placeholder="t('diff.viewer.quickPlaceholder')"
-          rows="3"
-        />
-        <div class="popup-actions">
-          <button class="btn btn-sm" type="button" @click="quickComment = null">
-            {{ t("diff.viewer.quickCancel") }}
-          </button>
-          <button
-            class="btn btn-sm btn-primary"
-            :disabled="!quickBody.trim() || quickSubmitting"
-            @click="submitQuickComment"
-          >
-            {{ quickSubmitting ? t("diff.viewer.quickSubmitting") : t("diff.viewer.quickSubmit") }}
-          </button>
-        </div>
-      </div>
-    </Teleport>
+    <QuickCommentPopup v-model="quickComment" @submit="submitQuickComment" />
   </div>
 </template>
 

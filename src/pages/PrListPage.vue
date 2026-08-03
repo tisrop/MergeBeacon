@@ -369,7 +369,7 @@ function onSelectPr(prNumber: number) {
       />
     </div>
 
-    <div v-if="pr.list.length > 0 && pr.totalPages > 1" class="pagination">
+    <div v-if="pr.list.length > 0" class="pagination">
       <button
         class="btn btn-sm"
         :disabled="pr.filters.page <= 1 || pr.loading"

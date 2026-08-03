@@ -5,7 +5,7 @@ use crate::patch::{extract_hunk_for_line, patch_matches_path, standardize_patche
 use crate::state::AppState;
 use tauri::State;
 
-use super::auth::build_platform;
+use super::auth::build_adapter;
 
 fn value_id(value: &serde_json::Value) -> String {
     value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string())
@@ -55,7 +55,7 @@ pub async fn review_submit(
     event: String,
     comments: Vec<ReviewCommentPosition>,
 ) -> CommandResult<Review> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let review_event = match event.as_str() {
         "approve" => ReviewEvent::Approve,
         "request_changes" => ReviewEvent::RequestChanges,
@@ -72,7 +72,7 @@ pub async fn review_list(
     repo: String,
     pr_number: u64,
 ) -> CommandResult<Vec<Review>> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.list_reviews(&owner, &repo, pr_number).await.map_err(CommandError::from)
 }
 
@@ -85,7 +85,7 @@ pub async fn review_comments_list(
     repo: String,
     pr_number: u64,
 ) -> CommandResult<Vec<PrComment>> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let mut comments = p.list_pr_comments(&owner, &repo, pr_number).await.map_err(CommandError::from)?;
     let current_user = p.current_user().await.ok();
     for comment in &mut comments {
@@ -162,7 +162,7 @@ pub async fn review_thread_reply(
         return Err("评审线程和回复目标不能为空".into());
     }
     let body = validate_comment_body(&body)?;
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let comments = p.list_pr_comments(&owner, &repo, pr_number).await.map_err(CommandError::from)?;
     if !comments.iter().any(|comment| comment.thread_id == thread_id && value_id(&comment.id) == reply_to_id) {
         return Err("回复目标不存在，可能已被删除或线程已更新".into());
@@ -188,7 +188,7 @@ pub async fn review_comment_update(
         return Err("评审线程和评论 ID 不能为空".into());
     }
     let body = validate_comment_body(&body)?;
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     ensure_owned_comment(&*p, &owner, &repo, pr_number, &thread_id, &comment_id).await?;
     p.update_review_comment(&owner, &repo, pr_number, &thread_id, &comment_id, &body).await.map_err(CommandError::from)
 }
@@ -208,7 +208,7 @@ pub async fn review_comment_delete(
     if thread_id.trim().is_empty() || comment_id.trim().is_empty() {
         return Err("评审线程和评论 ID 不能为空".into());
     }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     ensure_owned_comment(&*p, &owner, &repo, pr_number, &thread_id, &comment_id).await?;
     p.delete_review_comment(&owner, &repo, pr_number, &thread_id, &comment_id).await.map_err(CommandError::from)?;
     let _ = comment_store.delete_snapshot(&comment_id, &platform);
@@ -233,7 +233,7 @@ pub async fn review_thread_set_resolved(
     if !capabilities.supports_review_thread_resolution {
         return Err(format!("{platform} 不支持解决或重新打开评审线程").into());
     }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.set_review_thread_resolved(&owner, &repo, pr_number, &thread_id, resolved).await.map_err(CommandError::from)
 }
 
@@ -250,7 +250,7 @@ pub async fn review_viewed_files_list(
     if !capabilities.supports_remote_file_viewed_state {
         return Err(format!("{platform} 不支持同步文件已查看状态").into());
     }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.list_viewed_pr_files(&owner, &repo, pr_number).await.map_err(CommandError::from)
 }
 
@@ -272,7 +272,7 @@ pub async fn review_file_set_viewed(
     if !capabilities.supports_remote_file_viewed_state {
         return Err(format!("{platform} 不支持同步文件已查看状态").into());
     }
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.set_pr_file_viewed(&owner, &repo, pr_number, &path, viewed).await.map_err(CommandError::from)
 }
 
@@ -293,7 +293,7 @@ pub async fn review_comment_add(
     body: String,
     diff_hunk: Option<String>,
 ) -> CommandResult<PrComment> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     let mut comment = p
         .create_pr_comment(&owner, &repo, pr_number, &commit_id, &path, start_line, line, &side, &body)
         .await

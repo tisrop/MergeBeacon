@@ -27,9 +27,9 @@
 
 ![MergeBeacon side-by-side Diff 评审界面](docs/images/diff-review.png)
 
-### AI 辅助评审
+### AI 评审工作台
 
-![MergeBeacon AI 评审摘要与问题建议](docs/images/ai-review.png)
+![MergeBeacon AI 评审工作台](docs/images/ai-review.png)
 
 ## 功能概览
 

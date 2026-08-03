@@ -1,7 +1,7 @@
 use crate::models::IssueTemplate;
-// TODO(security): Replace deprecated serde_yaml with a maintained parser after validating
-// compatibility with the Issue Form and Markdown frontmatter syntax supported here.
-use serde_yaml::{Mapping, Value};
+// serde_yaml 已弃坑（0.9.34+deprecated），改用其维护 fork serde_yaml_ng；
+// Issue Form 与 Markdown frontmatter 的解析行为由下方测试锁定。
+use serde_yaml_ng::{Mapping, Value};
 
 pub const MAX_ISSUE_TEMPLATE_FILES: usize = 30;
 pub const MAX_ISSUE_TEMPLATE_BYTES: usize = 256 * 1024;
@@ -38,10 +38,11 @@ pub async fn parse_remote_template(path: &str, content: &str) -> Option<IssueTem
 fn parse_markdown_template(path: &str, content: &str) -> IssueTemplate {
     let normalized = content.replace("\r\n", "\n");
     let (metadata, body) = split_frontmatter(&normalized);
-    let mapping = metadata.and_then(|value| serde_yaml::from_str::<Value>(value).ok()).and_then(|value| match value {
-        Value::Mapping(mapping) => Some(mapping),
-        _ => None,
-    });
+    let mapping =
+        metadata.and_then(|value| serde_yaml_ng::from_str::<Value>(value).ok()).and_then(|value| match value {
+            Value::Mapping(mapping) => Some(mapping),
+            _ => None,
+        });
 
     IssueTemplate {
         name: mapping
@@ -61,7 +62,7 @@ fn parse_markdown_template(path: &str, content: &str) -> IssueTemplate {
 }
 
 fn parse_issue_form(path: &str, content: &str) -> Option<IssueTemplate> {
-    let Value::Mapping(root) = serde_yaml::from_str::<Value>(content).ok()? else {
+    let Value::Mapping(root) = serde_yaml_ng::from_str::<Value>(content).ok()? else {
         return None;
     };
     let name =

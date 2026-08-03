@@ -4,10 +4,7 @@ import { getPlatformCapabilities } from "@/api";
 import type { Platform, PlatformCapabilities } from "@/types";
 import { getErrorMessage } from "@/utils/error";
 import { translate } from "@/i18n";
-
-function platformRecord<T>(factory: () => T): Record<Platform, T> {
-  return { github: factory(), gitlab: factory(), gitee: factory() };
-}
+import { platformRecord } from "@/constants/platforms";
 
 export const useCapabilityStore = defineStore("capabilities", () => {
   const values = ref<Record<Platform, PlatformCapabilities | null>>(platformRecord(() => null));

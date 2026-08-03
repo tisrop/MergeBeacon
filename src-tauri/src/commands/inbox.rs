@@ -3,7 +3,7 @@ use crate::models::{Paginated, ReviewInboxCategory, ReviewInboxItem};
 use crate::state::AppState;
 use tauri::State;
 
-use super::auth::build_platform;
+use super::auth::build_adapter;
 
 fn parse_request(
     category: Option<&str>,
@@ -35,7 +35,7 @@ pub async fn review_inbox_list(
     per_page: Option<u32>,
 ) -> CommandResult<Paginated<ReviewInboxItem>> {
     let (category, page, per_page) = parse_request(category.as_deref(), page, per_page)?;
-    let adapter = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let adapter = build_adapter(&platform, &state)?;
     adapter.list_review_inbox(&category, page, per_page).await.map_err(CommandError::from)
 }
 

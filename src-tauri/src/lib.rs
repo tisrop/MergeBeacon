@@ -132,48 +132,57 @@ pub fn run() {
                 if !menu_ready.load(Ordering::SeqCst) {
                     return;
                 }
-                if event.id() == native_menu::OPEN_SETTINGS_ID {
-                    eval_main_window(
-                        handle,
+                // JS bridge 菜单入口：脚本与菜单 ID 一一对应，文案与前端保持一致。
+                const EVAL_SCRIPTS: &[(&str, &str)] = &[
+                    (
+                        native_menu::OPEN_SETTINGS_ID,
                         "if(typeof window.__goToSettings==='function'){window.__goToSettings()}",
-                    );
-                } else if event.id() == native_menu::OPEN_COMMAND_PALETTE_ID {
-                    eval_main_window(
-                        handle,
+                    ),
+                    (
+                        native_menu::OPEN_COMMAND_PALETTE_ID,
                         "if(typeof window.__openCommandPalette==='function'){window.__openCommandPalette()}",
-                    );
-                } else if event.id() == native_menu::NEW_PULL_REQUEST_ID {
-                    eval_main_window(
-                        handle,
+                    ),
+                    (
+                        native_menu::NEW_PULL_REQUEST_ID,
                         "if(typeof window.__handleNativeMenuAction==='function'){window.__handleNativeMenuAction('new-pull-request')}",
-                    );
-                } else if event.id() == native_menu::NEW_ISSUE_ID {
-                    eval_main_window(
-                        handle,
+                    ),
+                    (
+                        native_menu::NEW_ISSUE_ID,
                         "if(typeof window.__handleNativeMenuAction==='function'){window.__handleNativeMenuAction('new-issue')}",
-                    );
-                } else if event.id() == native_menu::CHECK_UPDATES_ID {
-                    eval_main_window(
-                        handle,
+                    ),
+                    (
+                        native_menu::CHECK_UPDATES_ID,
                         "if(typeof window.__handleNativeMenuAction==='function'){window.__handleNativeMenuAction('check-updates')}",
-                    );
-                } else if event.id() == native_menu::OPEN_DIAGNOSTICS_ID {
-                    eval_main_window(
-                        handle,
+                    ),
+                    (
+                        native_menu::OPEN_DIAGNOSTICS_ID,
                         "if(typeof window.__handleNativeMenuAction==='function'){window.__handleNativeMenuAction('open-diagnostics')}",
-                    );
-                } else if event.id() == native_menu::RELOAD_WINDOW_ID {
+                    ),
+                ];
+                for (menu_id, script) in EVAL_SCRIPTS {
+                    if event.id() == menu_id {
+                        eval_main_window(handle, script);
+                        return;
+                    }
+                }
+                // 外部链接菜单：URL 与菜单 ID 一一对应。
+                const EXTERNAL_LINKS: &[(&str, &str, &str)] = &[
+                    (native_menu::OPEN_GITHUB_HOMEPAGE_ID, native_menu::GITHUB_HOMEPAGE_URL, "GitHub homepage"),
+                    (native_menu::REPORT_ISSUE_ID, native_menu::GITHUB_ISSUES_URL, "issue report page"),
+                    (native_menu::OPEN_RELEASE_NOTES_ID, native_menu::GITHUB_RELEASES_URL, "release notes"),
+                ];
+                for (menu_id, url, label) in EXTERNAL_LINKS {
+                    if event.id() == menu_id {
+                        open_external_url(handle, url, label);
+                        return;
+                    }
+                }
+                if event.id() == native_menu::RELOAD_WINDOW_ID {
                     if let Some(window) = handle.get_webview_window("main") {
                         if let Err(error) = window.reload() {
                             eprintln!("重新加载窗口失败：{error}");
                         }
                     }
-                } else if event.id() == native_menu::OPEN_GITHUB_HOMEPAGE_ID {
-                    open_external_url(handle, native_menu::GITHUB_HOMEPAGE_URL, "GitHub homepage");
-                } else if event.id() == native_menu::REPORT_ISSUE_ID {
-                    open_external_url(handle, native_menu::GITHUB_ISSUES_URL, "issue report page");
-                } else if event.id() == native_menu::OPEN_RELEASE_NOTES_ID {
-                    open_external_url(handle, native_menu::GITHUB_RELEASES_URL, "release notes");
                 }
             });
 

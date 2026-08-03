@@ -99,7 +99,7 @@ pub async fn repo_list(
     platform: String,
     page: u32,
 ) -> CommandResult<Paginated<RepoSummary>> {
-    let p = build_platform(&platform, &state).map_err(CommandError::from)?;
+    let p = build_adapter(&platform, &state)?;
     p.list_repos(page).await.map_err(CommandError::from)
 }
 
@@ -133,4 +133,12 @@ pub(crate) fn build_platform(
         }
         _ => Err(crate::error::AppError::Unknown(format!("Unknown platform: {}", platform))),
     }
+}
+
+/// Build a platform adapter in command contexts, mapping errors to `CommandError`.
+///
+/// 命令层获取 adapter 的统一入口；与 `build_platform` 的差异仅在错误转换。
+/// `auth_check` 等需要吞掉鉴权失败的调用仍使用 `build_platform` 原版。
+pub(crate) fn build_adapter(platform: &str, state: &AppState) -> CommandResult<Box<dyn crate::platform::GitPlatform>> {
+    build_platform(platform, state).map_err(CommandError::from)
 }

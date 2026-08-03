@@ -1,7 +1,7 @@
 import { computed, onScopeDispose, ref, watch } from "vue";
 import { defineStore } from "pinia";
 import { reviewInboxList } from "@/api";
-import { commandErrorCode } from "@/api/errors";
+import { isRateLimitError, RATE_LIMIT_BACKOFF_MS } from "@/api/errors";
 import type {
   Paginated,
   Platform,
@@ -12,11 +12,12 @@ import type {
   ReviewInboxRelationship,
   ReviewInboxStatusSummary,
 } from "@/types";
+import { PLATFORMS, platformRecord } from "@/constants/platforms";
+import { readStorage, writeStorage } from "@/utils/storage";
+import { useAsyncList } from "@/composables/useAsyncList";
 
-const PLATFORMS: Platform[] = ["github", "gitlab", "gitee"];
 const PER_PAGE = 20;
 export const INBOX_BACKGROUND_REFRESH_MS = 5 * 60 * 1000;
-const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000;
 const PREFERENCES_WRITE_DEBOUNCE_MS = 400;
 const PREFERENCES_STORAGE_KEY = "mergebeacon:review-inbox-preferences:v1";
 const ITEM_STATE_STORAGE_KEY = "mergebeacon:review-inbox-item-state:v1";
@@ -57,6 +58,20 @@ interface PersistedItemState extends ReviewInboxLocalState {
   touched_at: number;
 }
 
+function persistedItemStateEquals(left: PersistedItemState, right: PersistedItemState): boolean {
+  return (
+    left.unread === right.unread &&
+    left.new_commits === right.new_commits &&
+    left.new_comments === right.new_comments &&
+    left.status_changed === right.status_changed &&
+    left.updated_at === right.updated_at &&
+    left.head_sha === right.head_sha &&
+    left.comments_count === right.comments_count &&
+    left.status_fingerprint === right.status_fingerprint &&
+    left.touched_at === right.touched_at
+  );
+}
+
 const defaultFilters: InboxFilters = {
   category: "review_requested",
   platform: "all",
@@ -67,23 +82,6 @@ const defaultFilters: InboxFilters = {
   blocker: "all",
   sort: "updated",
 };
-
-function readStorage<T>(key: string, fallback: T): T {
-  try {
-    const value = localStorage.getItem(key);
-    return value ? (JSON.parse(value) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStorage(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Local persistence is best effort; inbox fetching must continue without it.
-  }
-}
 
 function loadFilters(): InboxFilters {
   const stored = readStorage<Partial<InboxFilters>>(PREFERENCES_STORAGE_KEY, {});
@@ -169,20 +167,6 @@ function sortItems(left: ReviewInboxItem, right: ReviewInboxItem, sort: InboxSor
   return rank(right) - rank(left) || updated;
 }
 
-function isRateLimitError(cause: unknown): boolean {
-  if (commandErrorCode(cause) === "rate_limited") return true;
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return /\b429\b|rate.?limit|限流|请求过于频繁/i.test(message);
-}
-
-function platformRecord<T>(factory: () => T): Record<Platform, T> {
-  return {
-    github: factory(),
-    gitlab: factory(),
-    gitee: factory(),
-  };
-}
-
 function readinessRank(state: ReadinessState): number {
   return { blocked: 4, pending: 3, ready: 2, unknown: 1 }[state];
 }
@@ -259,11 +243,7 @@ function composePageItems(pages: Map<number, ReviewInboxItem[]>): ReviewInboxIte
 
 export const useReviewInboxStore = defineStore("review-inbox", () => {
   const itemsByPlatform = ref<Record<Platform, ReviewInboxItem[]>>(platformRecord(() => []));
-  const pages = ref<Record<Platform, number>>(platformRecord(() => 0));
-  const totalPages = ref<Record<Platform, number>>(platformRecord(() => 1));
-  const loadingByPlatform = ref<Record<Platform, boolean>>(platformRecord(() => false));
-  const errors = ref<Record<Platform, string | null>>(platformRecord(() => null));
-  const failedPages = ref<Record<Platform, number | null>>(platformRecord(() => null));
+  const lists = platformRecord(() => useAsyncList());
   const filters = ref<InboxFilters>(loadFilters());
   const itemStates = ref<Record<string, PersistedItemState>>(
     readStorage<Record<string, PersistedItemState>>(ITEM_STATE_STORAGE_KEY, {}),
@@ -274,8 +254,34 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
   const pageItemsByPlatform: Record<Platform, Map<number, ReviewInboxItem[]>> = platformRecord(
     () => new Map(),
   );
-  const requestSequences: Record<Platform, number> = platformRecord(() => 0);
   let contextSequence = 0;
+
+  // 分页状态按平台独立维护；对外保留 Record 视图，组件与测试不感知内部状态机。
+  const pages = computed<Record<Platform, number>>(() => ({
+    github: lists.github.page.value,
+    gitlab: lists.gitlab.page.value,
+    gitee: lists.gitee.page.value,
+  }));
+  const totalPages = computed<Record<Platform, number>>(() => ({
+    github: lists.github.totalPages.value,
+    gitlab: lists.gitlab.totalPages.value,
+    gitee: lists.gitee.totalPages.value,
+  }));
+  const loadingByPlatform = computed<Record<Platform, boolean>>(() => ({
+    github: lists.github.loading.value,
+    gitlab: lists.gitlab.loading.value,
+    gitee: lists.gitee.loading.value,
+  }));
+  const errors = computed<Record<Platform, string | null>>(() => ({
+    github: lists.github.error.value,
+    gitlab: lists.gitlab.error.value,
+    gitee: lists.gitee.error.value,
+  }));
+  const failedPages = computed<Record<Platform, number | null>>(() => ({
+    github: lists.github.failedPage.value,
+    gitlab: lists.gitlab.failedPage.value,
+    gitee: lists.gitee.failedPage.value,
+  }));
 
   function persistItemStates(): void {
     const now = Date.now();
@@ -353,7 +359,7 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
         status_fingerprint: fingerprint,
         touched_at: now,
       };
-      changed ||= JSON.stringify(next[key]) !== JSON.stringify(previous);
+      changed ||= !persistedItemStateEquals(next[key], previous);
     }
     if (changed) {
       itemStates.value = next;
@@ -422,10 +428,11 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
     expectedContext: number,
     mode: "replace" | "append" | "background" = requestedPage === 1 ? "replace" : "append",
   ): Promise<boolean> {
-    const requestSequence = ++requestSequences[platform];
-    loadingByPlatform.value[platform] = true;
-    errors.value[platform] = null;
-    failedPages.value[platform] = null;
+    const list = lists[platform];
+    // 后台刷新不点亮 loading、失败也不记失败页（由调用方按已加载页重试）。
+    // 注意：旧版依赖 loading 作隐式互斥（后台刷新期间 loadMore/backgroundRefresh 被静默跳过）；
+    // 现并发安全由 begin 序号保证（后发者胜、迟到响应丢弃），允许并发执行，属有意改进。
+    const sequence = list.begin(mode !== "background");
     try {
       const result: Paginated<ReviewInboxItem> = await reviewInboxList(
         platform,
@@ -435,7 +442,7 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
       );
       if (
         expectedContext !== contextSequence ||
-        requestSequence !== requestSequences[platform] ||
+        !list.isCurrent(sequence) ||
         filters.value.category !== category
       ) {
         return false;
@@ -445,34 +452,35 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
       if (mode === "background") {
         pageItemsByPlatform[platform].set(1, incoming);
         itemsByPlatform.value[platform] = composePageItems(pageItemsByPlatform[platform]);
-        pages.value[platform] = Math.max(pages.value[platform], result.page);
-        totalPages.value[platform] = Math.max(pages.value[platform], result.total_pages);
+        // 后台刷新不得让已加载的页数倒退。
+        list.succeed(sequence, Math.max(list.page.value, result.page), result.total_pages);
       } else {
         if (mode === "replace") pageItemsByPlatform[platform].clear();
         pageItemsByPlatform[platform].set(result.page, incoming);
         itemsByPlatform.value[platform] = composePageItems(pageItemsByPlatform[platform]);
-        pages.value[platform] = result.page;
-        totalPages.value[platform] = Math.max(result.page, result.total_pages);
+        list.succeed(sequence, result.page, result.total_pages);
       }
       rateLimitedUntil.value[platform] = 0;
       return true;
     } catch (cause) {
       if (
         expectedContext === contextSequence &&
-        requestSequence === requestSequences[platform] &&
+        list.isCurrent(sequence) &&
         filters.value.category === category
       ) {
-        errors.value[platform] = typeof cause === "string" ? cause : String(cause);
-        if (mode !== "background") failedPages.value[platform] = requestedPage;
+        list.fail(
+          sequence,
+          requestedPage,
+          typeof cause === "string" ? cause : String(cause),
+          mode !== "background",
+        );
         if (isRateLimitError(cause)) {
           rateLimitedUntil.value[platform] = Date.now() + RATE_LIMIT_BACKOFF_MS;
         }
       }
       return false;
     } finally {
-      if (expectedContext === contextSequence && requestSequence === requestSequences[platform]) {
-        loadingByPlatform.value[platform] = false;
-      }
+      if (expectedContext === contextSequence) list.finish(sequence);
     }
   }
 
@@ -483,14 +491,9 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
     const category = filters.value.category;
 
     for (const platform of PLATFORMS) {
-      requestSequences[platform] += 1;
-      loadingByPlatform.value[platform] = false;
-      errors.value[platform] = null;
-      failedPages.value[platform] = null;
+      lists[platform].reset();
       itemsByPlatform.value[platform] = [];
       pageItemsByPlatform[platform].clear();
-      pages.value[platform] = 0;
-      totalPages.value[platform] = 1;
     }
 
     await Promise.all(
@@ -643,14 +646,9 @@ export const useReviewInboxStore = defineStore("review-inbox", () => {
     contextSequence += 1;
     loggedInPlatforms.value = [];
     for (const platform of PLATFORMS) {
-      requestSequences[platform] += 1;
+      lists[platform].reset();
       itemsByPlatform.value[platform] = [];
       pageItemsByPlatform[platform].clear();
-      pages.value[platform] = 0;
-      totalPages.value[platform] = 1;
-      loadingByPlatform.value[platform] = false;
-      errors.value[platform] = null;
-      failedPages.value[platform] = null;
     }
   }
 

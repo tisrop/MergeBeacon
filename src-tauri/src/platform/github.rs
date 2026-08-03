@@ -24,20 +24,10 @@ struct GithubInboxSupplement {
 }
 
 impl GitHubAdapter {
-    fn map_label_colors(labels: &Value) -> std::collections::BTreeMap<String, String> {
-        labels
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|label| Some((label["name"].as_str()?.to_string(), label["color"].as_str()?.to_string())))
-            .collect()
-    }
-
     pub fn new(client: HttpClient, token: String) -> Self {
         Self { client, token, base_url: "https://api.github.com".to_string() }
     }
 
-    #[allow(dead_code)]
     pub fn with_base_url(mut self, url: String) -> Self {
         self.base_url = url.trim_end_matches('/').to_string();
         self
@@ -270,34 +260,6 @@ impl GitHubAdapter {
             return Ok(None);
         }
         Ok(crate::pr_template::parse_remote_template(path, &content.content).await)
-    }
-
-    /// Parse the `Link` header to extract the last page number.
-    /// GitHub format: `<url?page=5>; rel="last"`
-    fn parse_last_page(link: Option<&str>, fallback: u32) -> u32 {
-        let Some(header) = link else {
-            return fallback;
-        };
-        // Find the URL with rel="last"
-        for part in header.split(',') {
-            let part = part.trim();
-            if part.contains(r#"rel="last""#) {
-                // Extract the page=XX from the URL between < and >
-                if let Some(url_start) = part.find('<') {
-                    let url_end = part[url_start..].find('>').unwrap_or(part.len() - url_start);
-                    let url = &part[url_start + 1..url_start + url_end];
-                    let query = url.split('?').nth(1).unwrap_or("");
-                    for seg in query.split('&') {
-                        if let Some(page_str) = seg.strip_prefix("page=") {
-                            if let Ok(n) = page_str.parse::<u32>() {
-                                return n;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        fallback
     }
 
     async fn get_text(&self, url: &str) -> Result<String, AppError> {
@@ -654,7 +616,7 @@ impl GitHubAdapter {
                     state: item_state,
                     created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
                     updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
-                    label_colors: Self::map_label_colors(&pr["labels"]),
+                    label_colors: super::map_label_colors(&pr["labels"]),
                     labels: pr["labels"]
                         .as_array()
                         .map(|labels| {
@@ -1061,14 +1023,6 @@ impl GitHubAdapter {
         })
     }
 
-    fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
-        match (left, right) {
-            (Some(true), _) | (_, Some(true)) => Some(true),
-            (Some(false), Some(false)) => Some(false),
-            _ => None,
-        }
-    }
-
     async fn metadata_permissions(&self, owner: &str, repo: &str, author_login: &str) -> PrMetadataPermissions {
         let user_url = format!("{}/user", self.base_url);
         let repo_url = format!("{}/repos/{}/{}", self.base_url, owner, repo);
@@ -1085,7 +1039,7 @@ impl GitHubAdapter {
             ];
             values.iter().any(Option::is_some).then(|| values.contains(&Some(true)))
         });
-        let can_edit = Self::known_or(is_author, can_write);
+        let can_edit = super::known_or(is_author, can_write);
         PrMetadataPermissions {
             can_edit_title_body: can_edit,
             can_toggle_draft: can_edit,
@@ -1170,7 +1124,8 @@ impl GitPlatform for GitHubAdapter {
             .header("Accept", "application/vnd.github.v3+json")
             .send()
             .await?;
-        let total_pages = Self::parse_last_page(resp.headers().get("link").and_then(|value| value.to_str().ok()), page);
+        let total_pages = super::last_page_from_link(resp.headers().get("link").and_then(|value| value.to_str().ok()))
+            .unwrap_or(page);
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
@@ -1263,7 +1218,7 @@ impl GitPlatform for GitHubAdapter {
             .await?;
 
         let link_header = resp.headers().get("link").and_then(|v| v.to_str().ok());
-        let last_page = Self::parse_last_page(link_header, page);
+        let last_page = super::last_page_from_link(link_header).unwrap_or(page);
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -1285,7 +1240,7 @@ impl GitPlatform for GitHubAdapter {
                     state: pr_state,
                     created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
                     updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
-                    label_colors: Self::map_label_colors(&pr["labels"]),
+                    label_colors: super::map_label_colors(&pr["labels"]),
                     labels: pr["labels"]
                         .as_array()
                         .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
@@ -1427,7 +1382,7 @@ impl GitPlatform for GitHubAdapter {
                     state: PrState::Open,
                     created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
                     updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
-                    label_colors: Self::map_label_colors(&pr["labels"]),
+                    label_colors: super::map_label_colors(&pr["labels"]),
                     labels: pr["labels"]
                         .as_array()
                         .map(|labels| {
@@ -1474,7 +1429,7 @@ impl GitPlatform for GitHubAdapter {
             state: Self::map_pr_state(json["state"].as_str().unwrap_or(""), !json["merged_at"].is_null()),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
-            label_colors: Self::map_label_colors(&json["labels"]),
+            label_colors: super::map_label_colors(&json["labels"]),
             labels: json["labels"]
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
@@ -2772,7 +2727,7 @@ impl GitPlatform for GitHubAdapter {
                     .as_array()
                     .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                     .unwrap_or_default(),
-                label_colors: Self::map_label_colors(&i["labels"]),
+                label_colors: super::map_label_colors(&i["labels"]),
                 created_at: i["created_at"].as_str().unwrap_or("").to_string(),
             })
             .collect();
@@ -2799,7 +2754,7 @@ impl GitPlatform for GitHubAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
-            label_colors: Self::map_label_colors(&json["labels"]),
+            label_colors: super::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             is_pull_request: json["pull_request"].is_object(),
@@ -2841,7 +2796,7 @@ impl GitPlatform for GitHubAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
-            label_colors: Self::map_label_colors(&json["labels"]),
+            label_colors: super::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             is_pull_request: false,
@@ -2886,7 +2841,7 @@ impl GitPlatform for GitHubAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|label| label["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
-            label_colors: Self::map_label_colors(&json["labels"]),
+            label_colors: super::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             is_pull_request: current.is_pull_request,

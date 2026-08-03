@@ -1,5 +1,5 @@
 import { nextTick, onScopeDispose, watch, type Ref } from "vue";
-import { createDynamicCssClass, getStaticCssClass } from "@/composables/useDynamicCssClass";
+import { createDynamicCssClass } from "@/composables/useDynamicCssClass";
 
 interface DiffViewportStyleOptions {
   navigatorWidth: Ref<number>;
@@ -57,9 +57,6 @@ export function useDiffViewportStyles(options: DiffViewportStyleOptions) {
     unifiedScrollbarContentClass: unifiedScrollbarContent.className,
     leftScrollbarContentClass: leftScrollbarContent.className,
     rightScrollbarContentClass: rightScrollbarContent.className,
-    treeRowDepthClass(depth: number): string {
-      return getStaticCssClass("diff-tree-depth", { "--tree-depth": `${Math.max(1, depth)}` });
-    },
   };
 }
 

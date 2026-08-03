@@ -5,6 +5,7 @@ pub mod gitlab;
 use crate::error::AppError;
 use crate::models::*;
 use async_trait::async_trait;
+use serde_json::Value;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PlatformCapabilities {
@@ -463,6 +464,87 @@ pub(crate) fn next_page_from_link(link: Option<&str>) -> Option<u32> {
     })
 }
 
+/// Parse the `Link` header to extract the last page number.
+/// Format: `<url?page=5>; rel="last"`
+pub(crate) fn last_page_from_link(link: Option<&str>) -> Option<u32> {
+    let header = link?;
+    header.split(',').find_map(|part| {
+        let part = part.trim();
+        if !part.contains(r#"rel="last""#) && !part.contains("rel='last'") {
+            return None;
+        }
+        let start = part.find('<')? + 1;
+        let end = part[start..].find('>')? + start;
+        part[start..end]
+            .split('?')
+            .nth(1)?
+            .split('&')
+            .find_map(|segment| segment.strip_prefix("page=").and_then(|value| value.parse::<u32>().ok()))
+    })
+}
+
+/// “任一 true 即 true；两个 false 才 false；其余为未知”的布尔合并。
+/// 用于权限等部分字段未知时保守取值，不把未知推断成确定结果。
+pub(crate) fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+    match (left, right) {
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        (Some(false), Some(false)) => Some(false),
+        _ => None,
+    }
+}
+
+/// 从平台标签数组中提取 `name -> color` 映射。
+pub(crate) fn map_label_colors(labels: &Value) -> std::collections::BTreeMap<String, String> {
+    labels
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|label| Some((label["name"].as_str()?.to_string(), label["color"].as_str()?.to_string())))
+        .collect()
+}
+
+/// 按统一的 PR 列表排序语义排序服务端结果；评论数字段由平台闭包提供。
+pub(crate) fn sort_pr_results(items: &mut [Value], sort: PrListSort, comments_count: impl Fn(&Value) -> u64) {
+    let string_field = |item: &Value, field: &str| item[field].as_str().unwrap_or("").to_string();
+    match sort {
+        PrListSort::BestMatch => {
+            items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
+        }
+        PrListSort::UpdatedDesc => {
+            items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
+        }
+        PrListSort::UpdatedAsc => items.sort_by_key(|item| string_field(item, "updated_at")),
+        PrListSort::CreatedDesc => {
+            items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "created_at")));
+        }
+        PrListSort::CreatedAsc => items.sort_by_key(|item| string_field(item, "created_at")),
+        PrListSort::CommentsDesc => {
+            items.sort_by_key(|item| std::cmp::Reverse(comments_count(item)));
+        }
+        PrListSort::CommentsAsc => items.sort_by_key(comments_count),
+    }
+}
+
+/// 按标题相关性排序搜索结果，标题为空时退化为更新时间倒序。
+pub(crate) fn sort_pr_best_matches(items: &mut [Value], title: &str) {
+    if title.is_empty() {
+        sort_pr_results(items, PrListSort::UpdatedDesc, |_| 0);
+        return;
+    }
+    let expected = title.to_lowercase();
+    items.sort_by_key(|item| {
+        let candidate = item["title"].as_str().unwrap_or("").to_lowercase();
+        let score = if candidate == expected {
+            2
+        } else if candidate.starts_with(&expected) {
+            1
+        } else {
+            0
+        };
+        std::cmp::Reverse((score, item["updated_at"].as_str().unwrap_or("").to_string()))
+    });
+}
+
 fn readiness_rank(state: ReadinessState) -> u8 {
     match state {
         ReadinessState::Blocked => 4,
@@ -843,11 +925,12 @@ mod tests {
 
     use super::{
         capabilities_for, collect_create_compare_pages, collect_json_pages, collect_json_pages_limited,
-        compare_page_error_summary, create_compare_is_incomplete, json_page_url, next_page_from_link,
-        normalize_api_base, sanitize_web_url, walk_pr_dependency_candidates, AppError, CreateComparePageSource,
-        JsonPage, JsonPageSource, CREATE_COMPARE_COMMIT_PAGE_SIZE, JSON_PAGE_SIZE, MAX_CREATE_COMPARE_PAGES,
+        compare_page_error_summary, create_compare_is_incomplete, json_page_url, known_or, last_page_from_link,
+        map_label_colors, next_page_from_link, normalize_api_base, sanitize_web_url, sort_pr_best_matches,
+        sort_pr_results, walk_pr_dependency_candidates, AppError, CreateComparePageSource, JsonPage, JsonPageSource,
+        CREATE_COMPARE_COMMIT_PAGE_SIZE, JSON_PAGE_SIZE, MAX_CREATE_COMPARE_PAGES,
     };
-    use crate::models::{PrCreatePreviewIncompleteReason, PrDependencyCandidate, PrState};
+    use crate::models::{PrCreatePreviewIncompleteReason, PrDependencyCandidate, PrListSort, PrState};
 
     struct MockPageSource {
         pages: Mutex<VecDeque<JsonPage>>,
@@ -1307,5 +1390,107 @@ mod tests {
         assert_eq!(next_page_from_link(Some(link)), Some(2));
         assert_eq!(next_page_from_link(Some("<https://example.test/items?page=5>; rel=\"last\"")), None);
         assert_eq!(next_page_from_link(None), None);
+    }
+
+    #[test]
+    fn reads_the_last_page_from_a_link_header() {
+        let link = concat!(
+            "<https://example.test/items?per_page=100&page=5>; rel=\"last\", ",
+            "<https://example.test/items?per_page=100&page=1>; rel=\"first\"",
+        );
+
+        assert_eq!(last_page_from_link(Some(link)), Some(5));
+        // 单引号 rel 变体（Gitee 可能返回）与双引号等价。
+        assert_eq!(last_page_from_link(Some(r#"<https://example.test/items?page=7>; rel='last'"#)), Some(7),);
+        // page 不是 URL 的第一个查询参数（Gitee 真实返回形态）。
+        assert_eq!(
+            last_page_from_link(Some("<https://gitee.test/api/v5/pulls?state=open&page=3&per_page=20>; rel=\"last\"")),
+            Some(3),
+        );
+        assert_eq!(last_page_from_link(Some("<https://example.test/items?page=2>; rel=\"next\"")), None);
+        assert_eq!(last_page_from_link(None), None);
+    }
+
+    #[test]
+    fn known_or_follows_the_platform_merge_truth_table() {
+        let cases: &[(Option<bool>, Option<bool>, Option<bool>)] = &[
+            (Some(true), Some(true), Some(true)),
+            (Some(true), Some(false), Some(true)),
+            (Some(true), None, Some(true)),
+            (Some(false), Some(true), Some(true)),
+            (None, Some(true), Some(true)),
+            (Some(false), Some(false), Some(false)),
+            (Some(false), None, None),
+            (None, Some(false), None),
+            (None, None, None),
+        ];
+        for (left, right, expected) in cases {
+            assert_eq!(known_or(*left, *right), *expected, "known_or({left:?}, {right:?})");
+        }
+    }
+
+    #[test]
+    fn maps_label_color_pairs() {
+        let labels = serde_json::json!([
+            { "name": "bug", "color": "d73a4a" },
+            { "name": "enhancement", "color": "a2eeef" },
+            { "name": "no-color", "color": null },
+        ]);
+
+        let colors = map_label_colors(&labels);
+
+        assert_eq!(colors.get("bug").map(String::as_str), Some("d73a4a"));
+        assert_eq!(colors.get("enhancement").map(String::as_str), Some("a2eeef"));
+        // 缺少 name 或 color 的条目不能进入结果。
+        assert_eq!(colors.len(), 2);
+        assert_eq!(map_label_colors(&serde_json::json!(null)).len(), 0);
+    }
+
+    #[test]
+    fn sorts_results_by_updated_and_comment_count() {
+        let comments = |item: &serde_json::Value| item["comments_count"].as_u64().unwrap_or(0);
+        let mut items = vec![
+            serde_json::json!({ "updated_at": "2024-01-01", "comments_count": 2 }),
+            serde_json::json!({ "updated_at": "2024-03-01", "comments_count": 5 }),
+            serde_json::json!({ "updated_at": "2024-02-01", "comments_count": 9 }),
+        ];
+
+        sort_pr_results(&mut items, PrListSort::UpdatedDesc, comments);
+
+        assert_eq!(items[0]["updated_at"], "2024-03-01");
+        assert_eq!(items[2]["updated_at"], "2024-01-01");
+
+        sort_pr_results(&mut items, PrListSort::CommentsDesc, comments);
+
+        assert_eq!(items[0]["comments_count"], 9);
+        assert_eq!(items[2]["comments_count"], 2);
+    }
+
+    #[test]
+    fn sorts_best_matches_by_title_relevance() {
+        let mut items = vec![
+            serde_json::json!({ "title": "Fix login bug", "updated_at": "2024-01-01" }),
+            serde_json::json!({ "title": "login flow docs", "updated_at": "2024-02-01" }),
+            serde_json::json!({ "title": "login", "updated_at": "2024-03-01" }),
+        ];
+
+        sort_pr_best_matches(&mut items, "login");
+
+        // 精确匹配优先，前缀匹配次之，无关标题最后。
+        assert_eq!(items[0]["title"], "login");
+        assert_eq!(items[1]["title"], "login flow docs");
+        assert_eq!(items[2]["title"], "Fix login bug");
+    }
+
+    #[test]
+    fn best_matches_fall_back_to_updated_desc_when_title_is_empty() {
+        let mut items = vec![
+            serde_json::json!({ "title": "older", "updated_at": "2024-01-01" }),
+            serde_json::json!({ "title": "newer", "updated_at": "2024-03-01" }),
+        ];
+
+        sort_pr_best_matches(&mut items, "");
+
+        assert_eq!(items[0]["title"], "newer");
     }
 }

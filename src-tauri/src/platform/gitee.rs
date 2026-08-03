@@ -20,20 +20,10 @@ struct GiteePrSearchPage {
 }
 
 impl GiteeAdapter {
-    fn map_label_colors(labels: &Value) -> std::collections::BTreeMap<String, String> {
-        labels
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|label| Some((label["name"].as_str()?.to_string(), label["color"].as_str()?.to_string())))
-            .collect()
-    }
-
     pub fn new(client: HttpClient, token: String) -> Self {
         Self { client, token, base_url: "https://gitee.com/api/v5".to_string() }
     }
 
-    #[allow(dead_code)]
     pub fn with_base_url(mut self, url: String) -> Self {
         self.base_url = super::normalize_api_base("gitee", &url);
         self
@@ -102,32 +92,6 @@ impl GiteeAdapter {
         }
     }
 
-    fn last_page_from_link_gitee(link: Option<&str>) -> Option<u32> {
-        let header = link?;
-        for part in header.split(',') {
-            let part = part.trim();
-            if part.contains("rel=\"last\"") || part.contains("rel='last'") {
-                if let Some(url_start) = part.find('<') {
-                    let url_end = part[url_start..].find('>').unwrap_or(part.len() - url_start);
-                    let url = &part[url_start + 1..url_start + url_end];
-                    let query = url.split('?').nth(1).unwrap_or("");
-                    for seg in query.split('&') {
-                        if let Some(page_str) = seg.strip_prefix("page=") {
-                            if let Ok(n) = page_str.parse::<u32>() {
-                                return Some(n);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn parse_last_page_gitee(link: Option<&str>, fallback: u32) -> u32 {
-        Self::last_page_from_link_gitee(link).unwrap_or(fallback)
-    }
-
     fn auth_query(&self) -> String {
         format!("access_token={}", self.token)
     }
@@ -168,7 +132,7 @@ impl GiteeAdapter {
         }
         Ok(GiteePrSearchPage {
             items: response.json().await?,
-            last_page: total_pages.or_else(|| Self::last_page_from_link_gitee(link.as_deref())),
+            last_page: total_pages.or_else(|| super::last_page_from_link(link.as_deref())),
         })
     }
 
@@ -366,7 +330,7 @@ impl GiteeAdapter {
             state: pr_state,
             created_at: pr["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: pr["updated_at"].as_str().unwrap_or("").to_string(),
-            label_colors: Self::map_label_colors(&pr["labels"]),
+            label_colors: super::map_label_colors(&pr["labels"]),
             labels: pr["labels"]
                 .as_array()
                 .map(|labels| labels.iter().filter_map(|label| label["name"].as_str().map(String::from)).collect())
@@ -419,48 +383,6 @@ impl GiteeAdapter {
         };
 
         state_matches && title_matches && author_matches && label_matches && assignee_matches && review_matches
-    }
-
-    fn sort_pull_request_results(items: &mut [Value], sort: PrListSort) {
-        let string_field = |item: &Value, field: &str| item[field].as_str().unwrap_or("").to_string();
-        let comments_count =
-            |item: &Value| item["comments_count"].as_u64().or_else(|| item["comments"].as_u64()).unwrap_or(0);
-        match sort {
-            PrListSort::BestMatch => {
-                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
-            }
-            PrListSort::UpdatedDesc => {
-                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "updated_at")));
-            }
-            PrListSort::UpdatedAsc => items.sort_by_key(|item| string_field(item, "updated_at")),
-            PrListSort::CreatedDesc => {
-                items.sort_by_key(|item| std::cmp::Reverse(string_field(item, "created_at")));
-            }
-            PrListSort::CreatedAsc => items.sort_by_key(|item| string_field(item, "created_at")),
-            PrListSort::CommentsDesc => {
-                items.sort_by_key(|item| std::cmp::Reverse(comments_count(item)));
-            }
-            PrListSort::CommentsAsc => items.sort_by_key(comments_count),
-        }
-    }
-
-    fn sort_pull_request_best_matches(items: &mut [Value], title: &str) {
-        if title.is_empty() {
-            Self::sort_pull_request_results(items, PrListSort::UpdatedDesc);
-            return;
-        }
-        let expected = title.to_lowercase();
-        items.sort_by_key(|item| {
-            let candidate = item["title"].as_str().unwrap_or("").to_lowercase();
-            let score = if candidate == expected {
-                2
-            } else if candidate.starts_with(&expected) {
-                1
-            } else {
-                0
-            };
-            std::cmp::Reverse((score, item["updated_at"].as_str().unwrap_or("").to_string()))
-        });
     }
 
     fn inbox_relationship(filter_name: &str) -> ReviewInboxRelationship {
@@ -576,14 +498,6 @@ impl GiteeAdapter {
         })
     }
 
-    fn known_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
-        match (left, right) {
-            (Some(true), _) | (_, Some(true)) => Some(true),
-            (Some(false), Some(false)) => Some(false),
-            _ => None,
-        }
-    }
-
     async fn metadata_permissions(&self, owner: &str, repo: &str, author_login: &str) -> PrMetadataPermissions {
         let user_url = format!("{}/user", self.base_url);
         let repo_url = format!("{}/repos/{}/{}", self.base_url, owner, repo);
@@ -591,7 +505,7 @@ impl GiteeAdapter {
         let is_author =
             user.ok().and_then(|user| user["login"].as_str().map(|login| login.eq_ignore_ascii_case(author_login)));
         let can_write = repository.ok().and_then(|repository| Self::repository_merge_permission(&repository));
-        let can_edit = Self::known_or(is_author, can_write);
+        let can_edit = super::known_or(is_author, can_write);
         PrMetadataPermissions {
             can_edit_title_body: can_edit,
             can_toggle_draft: Some(false),
@@ -777,7 +691,7 @@ impl GiteeAdapter {
                 .or_else(|| response.headers().get("total_page"))
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse::<u32>().ok())
-                .unwrap_or_else(|| Self::parse_last_page_gitee(link_header, page));
+                .unwrap_or_else(|| super::last_page_from_link(link_header).unwrap_or(page));
             let raw_repositories: Vec<Value> = response.json().await?;
             let fetched = raw_repositories.len();
 
@@ -830,7 +744,7 @@ impl GiteeAdapter {
                 .or_else(|| response.headers().get("total_page"))
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse::<u32>().ok())
-                .unwrap_or_else(|| Self::parse_last_page_gitee(link_header, page));
+                .unwrap_or_else(|| super::last_page_from_link(link_header).unwrap_or(page));
             let raw_items: Vec<Value> = response.json().await?;
             let fetched = raw_items.len();
 
@@ -926,7 +840,7 @@ impl super::JsonPageSource for GiteeAdapter {
             return Err(AppError::Api(format!("Gitee API {status} ({url}): {body}")));
         }
         let items = response.json().await?;
-        let link_total_pages = link.as_deref().map(|value| Self::parse_last_page_gitee(Some(value), page));
+        let link_total_pages = link.as_deref().map(|value| super::last_page_from_link(Some(value)).unwrap_or(page));
         let total_pages = header_total_pages.or(link_total_pages);
         let next_page = super::next_page_from_link(link.as_deref())
             .or_else(|| total_pages.filter(|total| page < *total).map(|_| page.saturating_add(1)));
@@ -967,7 +881,7 @@ impl GitPlatform for GiteeAdapter {
             .get("x-total-pages")
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<u32>().ok())
-            .unwrap_or_else(|| Self::parse_last_page_gitee(link_header, page));
+            .unwrap_or_else(|| super::last_page_from_link(link_header).unwrap_or(page));
         let header_total_count = resp
             .headers()
             .get("x-total-count")
@@ -1066,7 +980,7 @@ impl GitPlatform for GiteeAdapter {
             resp.headers().get("total_page").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u32>().ok());
 
         let link_header = resp.headers().get("link").and_then(|v| v.to_str().ok());
-        let last_page = header_total_page.unwrap_or_else(|| Self::parse_last_page_gitee(link_header, page));
+        let last_page = header_total_page.unwrap_or_else(|| super::last_page_from_link(link_header).unwrap_or(page));
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -1158,9 +1072,11 @@ impl GitPlatform for GiteeAdapter {
 
         candidates.retain(|pr| Self::pull_request_matches_query(pr, state, query));
         if query.sort == PrListSort::BestMatch {
-            Self::sort_pull_request_best_matches(&mut candidates, &query.title);
+            super::sort_pr_best_matches(&mut candidates, &query.title);
         } else {
-            Self::sort_pull_request_results(&mut candidates, query.sort);
+            super::sort_pr_results(&mut candidates, query.sort, |item| {
+                item["comments_count"].as_u64().or_else(|| item["comments"].as_u64()).unwrap_or(0)
+            });
         }
         let total_count = candidates.len() as u32;
         let per_page = per_page.clamp(1, 100);
@@ -2249,7 +2165,7 @@ impl GitPlatform for GiteeAdapter {
         let resp = self.client.get(&full_url).header("User-Agent", "mergebeacon").send().await?;
 
         let link_header = resp.headers().get("link").and_then(|v| v.to_str().ok());
-        let last_page = Self::parse_last_page_gitee(link_header, page);
+        let last_page = super::last_page_from_link(link_header).unwrap_or(page);
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -2274,7 +2190,7 @@ impl GitPlatform for GiteeAdapter {
                     .as_array()
                     .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                     .unwrap_or_default(),
-                label_colors: Self::map_label_colors(&i["labels"]),
+                label_colors: super::map_label_colors(&i["labels"]),
                 created_at: i["created_at"].as_str().unwrap_or("").to_string(),
             })
             .collect();
@@ -2301,7 +2217,7 @@ impl GitPlatform for GiteeAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
-            label_colors: Self::map_label_colors(&json["labels"]),
+            label_colors: super::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             is_pull_request: json["pull_request"].is_object(),
@@ -2343,7 +2259,7 @@ impl GitPlatform for GiteeAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
-            label_colors: Self::map_label_colors(&json["labels"]),
+            label_colors: super::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             is_pull_request: false,
@@ -2388,7 +2304,7 @@ impl GitPlatform for GiteeAdapter {
                 .as_array()
                 .map(|arr| arr.iter().filter_map(|label| label["name"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
-            label_colors: Self::map_label_colors(&json["labels"]),
+            label_colors: super::map_label_colors(&json["labels"]),
             created_at: json["created_at"].as_str().unwrap_or("").to_string(),
             updated_at: json["updated_at"].as_str().unwrap_or("").to_string(),
             is_pull_request: current.is_pull_request,

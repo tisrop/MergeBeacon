@@ -207,6 +207,49 @@ describe("useRepoStore", () => {
     expect(store.errors.github).toContain("github late error");
   });
 
+  it("迟到旧请求不会清空新请求的 loadingMore", async () => {
+    const firstPage = deferred<{
+      items: RepoSummary[];
+      page: number;
+      total_pages: number;
+      total_count: number;
+    }>();
+    const secondPage = deferred<{
+      items: RepoSummary[];
+      page: number;
+      total_pages: number;
+      total_count: number;
+    }>();
+    vi.mocked(repoList)
+      .mockReturnValueOnce(firstPage.promise)
+      .mockReturnValueOnce(secondPage.promise);
+    const store = useRepoStore();
+
+    const staleRequest = store.fetchRepos("github", 1);
+    const currentRequest = store.fetchRepos("github", 2);
+    expect(store.loadingMoreByPlatform.github).toBe(true);
+
+    // 旧请求迟到完成，不得清掉新请求的加载更多状态。
+    firstPage.resolve({
+      items: [repo(1, "a/one")],
+      page: 1,
+      total_pages: 1,
+      total_count: 1,
+    });
+    await staleRequest;
+    expect(store.loadingMoreByPlatform.github).toBe(true);
+
+    secondPage.resolve({
+      items: [repo(2, "a/two")],
+      page: 2,
+      total_pages: 2,
+      total_count: 2,
+    });
+    await currentRequest;
+    expect(store.loadingMoreByPlatform.github).toBe(false);
+    expect(store.reposCache.github.map((item) => item.full_name)).toEqual(["a/two"]);
+  });
+
   it("显式平台写入仓库选择时不会污染当前平台", () => {
     const auth = useAuthStore();
     const store = useRepoStore();
