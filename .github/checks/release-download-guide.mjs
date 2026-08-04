@@ -39,11 +39,18 @@ function assetUrl(repository, tag, asset) {
   return `https://github.com/${repository}/releases/download/${encodePathSegments(tag)}/${encodeURIComponent(asset.name)}`;
 }
 
-function markdownLink(label, repository, tag, asset) {
-  return `[${label}](${assetUrl(repository, tag, asset)})`;
+function downloadBadgeLink({ label, detail, color, logo, repository, tag, asset }) {
+  const badgePath = [label, detail, color].map(encodeURIComponent).join("-");
+  const badgeQuery = new URLSearchParams({
+    style: "flat-square",
+    logo,
+    logoColor: "white",
+  });
+  const badgeUrl = `https://img.shields.io/badge/${badgePath}?${badgeQuery}`;
+  return `[![${label} ${detail}](${badgeUrl})](${assetUrl(repository, tag, asset)})`;
 }
 
-function downloadBadge(repository, tag, asset, label = "downloads") {
+function downloadCountBadge(repository, tag, asset, label = "downloads") {
   const [owner, name] = repository.split("/");
   const badgeUrl = [
     "https://img.shields.io/github/downloads",
@@ -52,11 +59,7 @@ function downloadBadge(repository, tag, asset, label = "downloads") {
     encodeURIComponent(tag),
     encodeURIComponent(asset.name),
   ].join("/");
-  return `![${label}](${badgeUrl}?label=${encodeURIComponent(label)}&cacheSeconds=300)`;
-}
-
-function downloadLink(label, repository, tag, asset, countLabel = "downloads") {
-  return `${markdownLink(label, repository, tag, asset)} ${downloadBadge(repository, tag, asset, countLabel)}`;
+  return `![${label}](${badgeUrl}?label=${encodeURIComponent(label)}&cacheSeconds=300&style=flat-square)`;
 }
 
 function stripExistingGuide(body) {
@@ -105,39 +108,36 @@ export function buildReleaseDownloadGuide({ body, assets, repository, tag }) {
   const linuxDeb = optionalUniqueAsset(assets, "Linux DEB", (name) => /\.deb$/i.test(name));
   const linuxRpm = optionalUniqueAsset(assets, "Linux RPM", (name) => /\.rpm$/i.test(name));
 
-  const macArmUpdater = uniqueAsset(assets, "macOS Apple Silicon updater", (name) =>
-    /(?:aarch64|arm64)\.app\.tar\.gz$/i.test(name),
-  );
-  const macIntelUpdater = uniqueAsset(assets, "macOS Intel updater", (name) =>
-    /(?:x64|x86_64)\.app\.tar\.gz$/i.test(name),
-  );
-
-  const linuxLinks = [downloadLink("AppImage", repository, tag, linuxAppImage, "manual + in-app")];
+  const badge = (label, detail, color, logo, asset, countLabel = "downloads") =>
+    `${downloadBadgeLink({ label, detail, color, logo, repository, tag, asset })} ${downloadCountBadge(repository, tag, asset, countLabel)}`;
+  const macDownloads = [
+    badge("DMG", "Apple Silicon", "555555", "apple", macArm),
+    badge("DMG", "Intel", "555555", "apple", macIntel),
+  ];
+  const windowsDownloads = [
+    badge("MSI", "x64", "0078D4", "windows11", windowsMsi, "manual + in-app"),
+    badge("EXE", "x64", "0078D4", "windows11", windowsExe, "manual + in-app"),
+    badge("ZIP", "x64", "0078D4", "windows11", windowsPortable, "manual + app update"),
+  ];
+  const linuxDownloads = [
+    badge("AppImage", "x64", "1793D1", "linux", linuxAppImage, "manual + in-app"),
+  ];
   if (linuxDeb) {
-    linuxLinks.push(downloadLink("Debian / Ubuntu (.deb)", repository, tag, linuxDeb));
+    linuxDownloads.push(badge("DEB", "x64", "1793D1", "linux", linuxDeb));
   }
   if (linuxRpm) {
-    linuxLinks.push(downloadLink("Fedora / RPM (.rpm)", repository, tag, linuxRpm));
+    linuxDownloads.push(badge("RPM", "x64", "1793D1", "linux", linuxRpm));
   }
 
   const guide = [
     GUIDE_START,
     "**Download based on your device:**",
     "",
-    `- **macOS (Apple Silicon / arm64):** ${downloadLink("Download DMG", repository, tag, macArm)}`,
-    `- **macOS (Intel / x64):** ${downloadLink("Download DMG", repository, tag, macIntel)}`,
-    `- **Windows (64-bit):** ${[
-      downloadLink("MSI installer", repository, tag, windowsMsi, "manual + in-app"),
-      downloadLink("EXE installer", repository, tag, windowsExe, "manual + in-app"),
-      downloadLink("Portable ZIP", repository, tag, windowsPortable, "manual + app update"),
-    ].join(" · ")}`,
-    `- **Linux (64-bit):** ${linuxLinks.join(" · ")}`,
-    "",
-    "**In-app updater downloads:**",
-    "",
-    `- **macOS:** Apple Silicon ${downloadBadge(repository, tag, macArmUpdater, "in-app")} · Intel ${downloadBadge(repository, tag, macIntelUpdater, "in-app")}`,
-    "",
-    '_Counts come from GitHub Release assets and may be cached for up to 5 minutes. Badges marked "manual + in-app" include downloads started by the app updater. Update checks (`latest.json`) are excluded._',
+    "| OS | Download |",
+    "| --- | --- |",
+    `| macOS | ${macDownloads.join("<br>")} |`,
+    `| Windows | ${windowsDownloads.join("<br>")} |`,
+    `| Linux | ${linuxDownloads.join("<br>")} |`,
     GUIDE_END,
   ].join("\n");
 
