@@ -10,6 +10,7 @@ const query = (): PrListQuery => ({
   label: "",
   reviews: null,
   assignee: "",
+  reviewer: "",
   sort: "updated_desc",
 });
 
@@ -54,9 +55,14 @@ describe("PrSearchBar", () => {
     expect(wrapper.text()).not.toContain("测试者");
   });
 
-  it("Gitee 使用审查者和测试者筛选文案并禁用不支持的要求更改", async () => {
+  it("Gitee 使用审查者和测试者筛选文案并提供用户选择器", async () => {
     const wrapper = mount(PrSearchBar, {
-      props: { platform: "gitee", query: query() },
+      props: {
+        platform: "gitee",
+        query: query(),
+        reviewerOptions: [{ value: "carol", label: "carol" }],
+        assigneeOptions: [{ value: "maintainer", label: "maintainer" }],
+      },
     });
 
     const testerFilter = wrapper.get('[aria-label="测试者筛选"]');
@@ -66,15 +72,16 @@ describe("PrSearchBar", () => {
       "搜索测试者",
     );
 
-    const reviewerFilter = wrapper.get('[aria-label="审查者状态筛选"]');
-    expect(reviewerFilter.text()).toContain("所有审查状态");
+    const reviewerFilter = wrapper.get('[aria-label="审查者筛选"]');
+    expect(reviewerFilter.text()).toContain("所有审查者");
     await reviewerFilter.trigger("click");
-
-    const option = wrapper.get<HTMLButtonElement>(
-      '.dropdown-option[data-value="changes_requested"]',
+    expect(wrapper.get('input[aria-label="搜索审查者"]').attributes("placeholder")).toBe(
+      "搜索审查者",
     );
-    expect(option.text()).toBe("要求更改（Gitee 不支持）");
-    expect(option.element.disabled).toBe(true);
+    await wrapper.get('.dropdown-option[data-value="carol"]').trigger("click");
+
+    const applied = wrapper.emitted<PrListQuery[]>("apply") ?? [];
+    expect(applied.at(-1)?.[0]).toEqual({ ...query(), reviewer: "carol" });
   });
 
   it("Gitee 英文界面使用 Reviewers 和 Testers", () => {
@@ -84,9 +91,7 @@ describe("PrSearchBar", () => {
     });
 
     expect(wrapper.get('[aria-label="Tester filter"]').text()).toContain("All testers");
-    expect(wrapper.get('[aria-label="Reviewer status filter"]').text()).toContain(
-      "All review states",
-    );
+    expect(wrapper.get('[aria-label="Reviewer filter"]').text()).toContain("All reviewers");
   });
 
   it("下拉筛选改变时立即搜索，标题仍需提交表单后才生效", async () => {

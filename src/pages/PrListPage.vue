@@ -51,6 +51,9 @@ const authorOptions = computed(() =>
 const assigneeOptions = computed(() =>
   userFilterOptions(listFilterOptions.participants.value, pr.listQuery.assignee),
 );
+const reviewerOptions = computed(() =>
+  userFilterOptions(listFilterOptions.participants.value, pr.listQuery.reviewer),
+);
 const repositoryLabelOptions = computed(() =>
   labelFilterOptions(
     [
@@ -284,6 +287,7 @@ function onSelectPr(prNumber: number) {
         :author-options="authorOptions"
         :label-options="repositoryLabelOptions"
         :assignee-options="assigneeOptions"
+        :reviewer-options="reviewerOptions"
         @apply="applyListQuery"
         @clear="clearListQuery"
         @retry-options="retryFilterOptions"

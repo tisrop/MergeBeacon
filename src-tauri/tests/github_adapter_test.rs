@@ -632,6 +632,17 @@ async fn test_github_list_prs() {
 }
 
 #[tokio::test]
+async fn test_github_rejects_reviewer_user_filter_as_gitee_only() {
+    let adapter = GitHubAdapter::new(HttpClient::new(), "test-token".into());
+    let query = PrListQuery { reviewer: "hubot".into(), ..PrListQuery::default() };
+    let result = adapter.search_pull_requests("octocat", "hello-world", &PrState::Open, &query, 1, 20).await;
+
+    assert!(result.is_err(), "GitHub 应拒绝 reviewer 用户筛选");
+    let message = format!("{}", result.err().unwrap());
+    assert!(message.contains("不支持") || message.contains("审查者"), "错误消息应说明不支持该筛选: {message}");
+}
+
+#[tokio::test]
 async fn test_github_search_prs_uses_filters_sort_and_server_pagination() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -664,6 +675,7 @@ async fn test_github_search_prs_uses_filters_sort_and_server_pagination() {
                 label: "help wanted".into(),
                 reviews: Some(PrReviewFilter::Approved),
                 assignee: "hubot".into(),
+                reviewer: String::new(),
                 sort: PrListSort::CommentsDesc,
             },
             2,
@@ -2867,6 +2879,7 @@ async fn test_github_updates_pull_request_metadata() {
             avatar_url: "".into(),
         }],
         reviewer_statuses: Vec::new(),
+        assignee_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(3),
             login: "old-assignee".into(),

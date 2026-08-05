@@ -16,6 +16,7 @@ const props = withDefaults(
     authorOptions?: SelectOption[];
     labelOptions?: SelectOption[];
     assigneeOptions?: SelectOption[];
+    reviewerOptions?: SelectOption[];
   }>(),
   {
     platform: "github",
@@ -23,6 +24,7 @@ const props = withDefaults(
     authorOptions: () => [],
     labelOptions: () => [],
     assigneeOptions: () => [],
+    reviewerOptions: () => [],
   },
 );
 const emit = defineEmits<{ apply: [query: PrListQuery]; clear: []; retryOptions: [] }>();
@@ -42,12 +44,13 @@ const assigneeLabels = computed(() =>
         search: t("pr.searchAssignee"),
       },
 );
-const reviewLabels = computed(() =>
+const reviewerLabels = computed(() =>
   props.platform === "gitee"
     ? {
         field: t("pr.giteeReviewers"),
-        all: t("pr.allGiteeReviewStates"),
-        aria: t("pr.giteeReviewerFilterAria"),
+        all: t("pr.allGiteeReviewers"),
+        aria: t("pr.giteeReviewerUserFilterAria"),
+        search: t("pr.searchGiteeReviewers"),
       }
     : {
         field: t("pr.reviews"),
@@ -56,16 +59,11 @@ const reviewLabels = computed(() =>
       },
 );
 const reviewOptions = computed<SelectOption[]>(() => [
-  { value: "", label: reviewLabels.value.all },
+  { value: "", label: reviewerLabels.value.all },
   { value: "none", label: t("pr.noReview") },
   { value: "required", label: t("pr.reviewRequired") },
   { value: "approved", label: t("pr.reviewApproved") },
-  {
-    value: "changes_requested",
-    label:
-      props.platform === "gitee" ? t("pr.changesRequestedUnsupported") : t("pr.changesRequested"),
-    disabled: props.platform === "gitee",
-  },
+  { value: "changes_requested", label: t("pr.changesRequested") },
 ]);
 const sortOptions = computed<SelectOption[]>(() => [
   { value: "best_match", label: t("pr.bestMatch") },
@@ -90,6 +88,7 @@ const {
   setAuthor,
   setLabel,
   setAssignee,
+  setReviewer,
   setReviews,
   setSort,
 } = usePrSearchBar(
@@ -155,6 +154,26 @@ const {
         />
       </div>
       <div class="filter-field select-field">
+        <span>{{ reviewerLabels.field }}</span>
+        <AppSelect
+          v-if="platform === 'gitee'"
+          :aria-label="reviewerLabels.aria"
+          searchable
+          :search-placeholder="reviewerLabels.search"
+          :disabled="optionsLoading"
+          :model-value="draft.reviewer"
+          :options="withAllOption(reviewerLabels.all, reviewerOptions)"
+          @update:model-value="setReviewer"
+        />
+        <AppSelect
+          v-else
+          :aria-label="reviewerLabels.aria"
+          :model-value="draft.reviews ?? ''"
+          :options="reviewOptions"
+          @update:model-value="setReviews"
+        />
+      </div>
+      <div class="filter-field select-field">
         <span>{{ assigneeLabels.field }}</span>
         <AppSelect
           :aria-label="assigneeLabels.aria"
@@ -164,15 +183,6 @@ const {
           :model-value="draft.assignee"
           :options="withAllOption(assigneeLabels.all, assigneeOptions)"
           @update:model-value="setAssignee"
-        />
-      </div>
-      <div class="filter-field select-field">
-        <span>{{ reviewLabels.field }}</span>
-        <AppSelect
-          :aria-label="reviewLabels.aria"
-          :model-value="draft.reviews ?? ''"
-          :options="reviewOptions"
-          @update:model-value="setReviews"
         />
       </div>
       <div class="filter-field select-field sort-field">

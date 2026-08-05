@@ -124,6 +124,7 @@ describe("usePrStore", () => {
     const reorderedQuery = {
       sort: DEFAULT_LIST_QUERY.sort,
       assignee: DEFAULT_LIST_QUERY.assignee,
+      reviewer: DEFAULT_LIST_QUERY.reviewer,
       reviews: DEFAULT_LIST_QUERY.reviews,
       label: DEFAULT_LIST_QUERY.label,
       author: DEFAULT_LIST_QUERY.author,
@@ -132,6 +133,7 @@ describe("usePrStore", () => {
 
     expect(isDefaultPrListQuery(reorderedQuery)).toBe(true);
     expect(isDefaultPrListQuery({ ...reorderedQuery, label: "bug" })).toBe(false);
+    expect(isDefaultPrListQuery({ ...reorderedQuery, reviewer: "carol" })).toBe(false);
   });
 
   beforeEach(() => {
@@ -407,6 +409,7 @@ describe("usePrStore", () => {
       label: " help wanted ",
       reviews: "approved",
       assignee: " hubot ",
+      reviewer: "  reviewer  ",
       sort: "comments_desc",
     });
     await store.fetchPrList("github", "owner", "repo");
@@ -418,6 +421,7 @@ describe("usePrStore", () => {
       label: "help wanted",
       reviews: "approved",
       assignee: "hubot",
+      reviewer: "reviewer",
       sort: "comments_desc",
     });
   });
@@ -430,6 +434,7 @@ describe("usePrStore", () => {
       label: "",
       reviews: null,
       assignee: "",
+      reviewer: "",
       sort: "updated_asc",
     });
 
@@ -441,6 +446,7 @@ describe("usePrStore", () => {
       label: "",
       reviews: null,
       assignee: "",
+      reviewer: "",
       sort: "updated_desc",
     });
     expect(store.hasListQuery).toBe(false);

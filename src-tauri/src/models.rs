@@ -66,6 +66,7 @@ pub struct PrListQuery {
     pub label: String,
     pub reviews: Option<PrReviewFilter>,
     pub assignee: String,
+    pub reviewer: String,
     pub sort: PrListSort,
 }
 
@@ -76,6 +77,7 @@ impl PrListQuery {
             && self.label.is_empty()
             && self.reviews.is_none()
             && self.assignee.is_empty()
+            && self.reviewer.is_empty()
             && self.sort == PrListSort::UpdatedDesc
     }
 }
@@ -230,6 +232,8 @@ pub struct PrDetail {
     #[serde(default)]
     pub reviewer_statuses: Vec<PrReviewerStatus>,
     pub assignees: Vec<User>,
+    #[serde(default)]
+    pub assignee_statuses: Vec<PrReviewerStatus>,
     pub milestone: Option<PrMilestone>,
     pub metadata_permissions: PrMetadataPermissions,
     pub web_url: Option<String>,

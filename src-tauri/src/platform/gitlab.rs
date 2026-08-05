@@ -1032,6 +1032,12 @@ impl GitPlatform for GitLabAdapter {
         const SEARCH_RESULT_LIMIT: usize = 1_000;
         const REMOTE_PAGE_SIZE: u32 = 100;
 
+        // reviewer 字段是 Gitee 专属的审查者筛选语义；GitLab 的审查者通过 reviews（状态）筛选表达，
+        // 不支持按审查者用户过滤。收到非空 reviewer 时必须显式拒绝，禁止静默降级为未过滤结果。
+        if !query.reviewer.is_empty() {
+            return Err(AppError::NotImplemented("GitLab 不支持按审查者用户筛选，该筛选仅适用于 Gitee".into()));
+        }
+
         if query.is_default() {
             return self.list_pull_requests(owner, repo, state, page, per_page).await;
         }
@@ -1273,6 +1279,7 @@ impl GitPlatform for GitLabAdapter {
                 .as_array()
                 .map(|users| users.iter().map(Self::map_user).collect())
                 .unwrap_or_default(),
+            assignee_statuses: Vec::new(),
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
             web_url: sanitize_web_url(&json["web_url"]),

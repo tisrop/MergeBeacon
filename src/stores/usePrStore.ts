@@ -43,6 +43,7 @@ export const DEFAULT_LIST_QUERY: Readonly<Required<PrListQuery>> = {
   label: "",
   reviews: null,
   assignee: "",
+  reviewer: "",
   sort: "updated_desc",
 };
 
@@ -480,6 +481,7 @@ export const usePrStore = defineStore("pr", () => {
       label: query.label.trim(),
       reviews: query.reviews,
       assignee: query.assignee.trim(),
+      reviewer: query.reviewer.trim(),
       sort: query.sort,
     };
     filters.value.page = 1;

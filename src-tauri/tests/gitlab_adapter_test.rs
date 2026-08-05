@@ -1110,6 +1110,17 @@ async fn test_gitlab_closed_pr_list_omits_live_status_summary() {
 }
 
 #[tokio::test]
+async fn test_gitlab_rejects_reviewer_user_filter_as_gitee_only() {
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".into());
+    let query = PrListQuery { reviewer: "hubot".into(), ..PrListQuery::default() };
+    let result = adapter.search_pull_requests("group", "repo", &PrState::Open, &query, 1, 20).await;
+
+    assert!(result.is_err(), "GitLab 应拒绝 reviewer 用户筛选");
+    let message = format!("{}", result.err().unwrap());
+    assert!(message.contains("不支持") || message.contains("审查者"), "错误消息应说明不支持该筛选: {message}");
+}
+
+#[tokio::test]
 async fn test_gitlab_searches_filters_sorts_and_paginates_merge_requests() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -1193,6 +1204,7 @@ async fn test_gitlab_searches_filters_sorts_and_paginates_merge_requests() {
         label: "bug".into(),
         reviews: Some(PrReviewFilter::Approved),
         assignee: "bob".into(),
+        reviewer: String::new(),
         sort: PrListSort::CommentsDesc,
     };
     let result = adapter
@@ -1252,6 +1264,7 @@ async fn test_gitlab_uses_server_pagination_for_supported_pr_filters() {
         label: "bug".into(),
         reviews: None,
         assignee: "".into(),
+        reviewer: String::new(),
         sort: PrListSort::UpdatedDesc,
     };
     let result = adapter
@@ -2507,6 +2520,7 @@ async fn test_gitlab_updates_merge_request_metadata() {
             avatar_url: "".into(),
         }],
         reviewer_statuses: Vec::new(),
+        assignee_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(3),
             login: "old-assignee".into(),
@@ -2582,6 +2596,7 @@ async fn test_gitlab_clears_merge_request_milestone_with_zero_id() {
         draft: Some(false),
         reviewers: Vec::new(),
         reviewer_statuses: Vec::new(),
+        assignee_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),

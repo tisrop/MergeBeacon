@@ -768,6 +768,7 @@ async fn test_gitee_searches_filters_sorts_and_paginates_pull_requests() {
         label: "bug".into(),
         reviews: Some(PrReviewFilter::Approved),
         assignee: "bob".into(),
+        reviewer: String::new(),
         sort: PrListSort::CommentsDesc,
     };
     let result = adapter
@@ -785,6 +786,96 @@ async fn test_gitee_searches_filters_sorts_and_paginates_pull_requests() {
     let requests = mock_server.received_requests().await.expect("requests");
     assert_eq!(requests.len(), 1);
     assert!(requests[0].url.query_pairs().all(|(name, _)| name != "author" && name != "assignee"));
+}
+
+#[tokio::test]
+async fn test_gitee_filters_pull_requests_by_reviewer_user() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v5/repos/octocat/hello-world/pulls"))
+        .and(query_param("state", "open"))
+        .and(query_param("access_token", "test-token"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "100"))
+        .respond_with(ResponseTemplate::new(200).append_header("total_page", "1").set_body_json(serde_json::json!([
+            {
+                "number": 51,
+                "title": "Reviewed by assignee reviewer",
+                "state": "open",
+                "merged_at": null,
+                "created_at": "2026-07-20T10:00:00Z",
+                "updated_at": "2026-07-21T10:00:00Z",
+                "user": { "id": 1, "login": "alice", "name": "Alice", "avatar_url": "" },
+                "labels": [],
+                "assignees_number": 1,
+                "assignees": [{ "login": "bob", "accept": true }],
+                "api_reviewers_number": 0,
+                "api_reviewers": []
+            },
+            {
+                "number": 52,
+                "title": "Reviewed by api reviewer",
+                "state": "open",
+                "merged_at": null,
+                "created_at": "2026-07-20T10:00:00Z",
+                "updated_at": "2026-07-21T10:00:00Z",
+                "user": { "id": 1, "login": "alice", "name": "Alice", "avatar_url": "" },
+                "labels": [],
+                "assignees_number": 0,
+                "assignees": [],
+                "api_reviewers_number": 1,
+                "api_reviewers": [{ "login": "carol", "accept": false }]
+            },
+            {
+                "number": 53,
+                "title": "Tester must not match reviewer filter",
+                "state": "open",
+                "merged_at": null,
+                "created_at": "2026-07-20T10:00:00Z",
+                "updated_at": "2026-07-21T10:00:00Z",
+                "user": { "id": 1, "login": "alice", "name": "Alice", "avatar_url": "" },
+                "labels": [],
+                "testers_number": 1,
+                "testers": [{ "login": "bob", "accept": false }],
+                "assignees_number": 0,
+                "assignees": [],
+                "api_reviewers_number": 0,
+                "api_reviewers": []
+            }
+        ])))
+        .expect(3)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GiteeAdapter::new(HttpClient::new(), "test-token".into())
+        .with_base_url(format!("{}/api/v5", mock_server.uri()));
+
+    let query = PrListQuery { reviewer: "bob".into(), ..PrListQuery::default() };
+    let result = adapter
+        .search_pull_requests("octocat", "hello-world", &PrState::Open, &query, 1, 20)
+        .await
+        .expect("should search pull requests");
+
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].number, 51);
+
+    let query = PrListQuery { reviewer: "carol".into(), ..PrListQuery::default() };
+    let result = adapter
+        .search_pull_requests("octocat", "hello-world", &PrState::Open, &query, 1, 20)
+        .await
+        .expect("should search pull requests");
+
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].number, 52);
+
+    // testers 不应被审查者筛选命中
+    let query = PrListQuery { reviewer: "dave".into(), ..PrListQuery::default() };
+    let result = adapter
+        .search_pull_requests("octocat", "hello-world", &PrState::Open, &query, 1, 20)
+        .await
+        .expect("should search pull requests");
+
+    assert!(result.items.is_empty());
 }
 
 #[tokio::test]
@@ -2091,7 +2182,23 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
                     "accept": "true"
                 }
             ],
-            "testers": [{"id": 4, "login": "tester", "name": "Tester", "avatar_url": ""}],
+            "testers": [
+                {
+                    "id": 4,
+                    "login": "tester-approved",
+                    "name": "Approved Tester",
+                    "avatar_url": "",
+                    "accept": true,
+                    "html_url": "https://gitee.com/tester-approved"
+                },
+                {
+                    "id": 7,
+                    "login": "tester-pending",
+                    "name": "Pending Tester",
+                    "avatar_url": "",
+                    "accept": false
+                }
+            ],
             "milestone": {"id": 9, "number": 4, "title": "0.6.0"},
             "html_url": "https://gitee.com/octocat/hello-world/pulls/42"
         })))
@@ -2115,7 +2222,13 @@ async fn test_gitee_pr_detail_exposes_base_and_head_revisions() {
     assert_eq!(detail.reviewer_statuses[2].status, PrReviewStatus::Unknown);
     assert_eq!(detail.reviewer_statuses[3].status, PrReviewStatus::Unknown);
     assert_eq!(detail.reviewer_statuses[0].web_url.as_deref(), Some("https://gitee.com/reviewer"));
-    assert_eq!(detail.assignees.iter().map(|value| value.login.as_str()).collect::<Vec<_>>(), vec!["tester"]);
+    assert_eq!(
+        detail.assignees.iter().map(|value| value.login.as_str()).collect::<Vec<_>>(),
+        vec!["tester-approved", "tester-pending"]
+    );
+    assert_eq!(detail.assignee_statuses[0].status, PrReviewStatus::Approved);
+    assert_eq!(detail.assignee_statuses[1].status, PrReviewStatus::Pending);
+    assert_eq!(detail.assignee_statuses[0].web_url.as_deref(), Some("https://gitee.com/tester-approved"));
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
 
@@ -2476,6 +2589,7 @@ async fn test_gitee_updates_pull_request_metadata_without_unsupported_fields() {
             avatar_url: "".into(),
         }],
         reviewer_statuses: Vec::new(),
+        assignee_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(8),
             login: "old-tester".into(),
@@ -2560,6 +2674,7 @@ async fn test_gitee_reports_reviewer_success_when_pull_patch_fails() {
         draft: None,
         reviewers: Vec::new(),
         reviewer_statuses: Vec::new(),
+        assignee_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: None,
         metadata_permissions: PrMetadataPermissions::default(),
@@ -2622,6 +2737,7 @@ async fn test_gitee_clears_pull_request_milestone_with_zero_number() {
         draft: None,
         reviewers: Vec::new(),
         reviewer_statuses: Vec::new(),
+        assignee_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: Some(PrMilestone { id: serde_json::json!(9), number: Some(4), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),

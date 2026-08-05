@@ -1271,6 +1271,11 @@ impl GitPlatform for GitHubAdapter {
         page: u32,
         per_page: u32,
     ) -> Result<Paginated<PrSummary>, AppError> {
+        // reviewer 字段是 Gitee 专属的审查者筛选语义；GitHub 的审查者通过 reviews（状态）筛选表达，
+        // 不支持按审查者用户过滤。收到非空 reviewer 时必须显式拒绝，禁止静默降级为未过滤结果。
+        if !query.reviewer.is_empty() {
+            return Err(AppError::NotImplemented("GitHub 不支持按审查者用户筛选，该筛选仅适用于 Gitee".into()));
+        }
         if query.is_default() {
             self.list_pull_requests(owner, repo, state, page, per_page).await
         } else {
@@ -1503,6 +1508,7 @@ impl GitPlatform for GitHubAdapter {
                 .as_array()
                 .map(|users| users.iter().map(Self::map_user).collect())
                 .unwrap_or_default(),
+            assignee_statuses: Vec::new(),
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
             web_url: sanitize_web_url(&json["html_url"]),
@@ -2958,6 +2964,7 @@ mod pr_search_tests {
             label: "help wanted".into(),
             reviews: Some(PrReviewFilter::ChangesRequested),
             assignee: "hubot".into(),
+            reviewer: String::new(),
             sort: PrListSort::CommentsDesc,
         };
 
