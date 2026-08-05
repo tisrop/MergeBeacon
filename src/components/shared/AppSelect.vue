@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useSelectDropdown } from "@/composables/useSelectDropdown";
+import { useSelectDropdownPlacement } from "@/composables/useSelectDropdownPlacement";
 import type { SelectOption } from "./selectOptions";
 import { useI18n } from "@/i18n";
 
@@ -66,6 +67,16 @@ const {
   closeOnSelect: true,
   optionSelector: ".dropdown-option",
 });
+
+const dropdownRef = ref<HTMLElement | null>(null);
+const { dropdownPlacement, dropdownCssClass } = useSelectDropdownPlacement({
+  open,
+  triggerRef,
+  dropdownRef,
+  cssPrefix: "app-select-dropdown",
+  cssVarName: "--app-select-dropdown-max-height",
+  recalcTrigger: filteredOptions,
+});
 </script>
 
 <template>
@@ -106,7 +117,12 @@ const {
       </svg>
     </div>
 
-    <div v-if="open" class="dropdown-panel">
+    <div
+      v-if="open"
+      ref="dropdownRef"
+      class="dropdown-panel"
+      :class="[dropdownCssClass.className, { 'dropdown-panel-up': dropdownPlacement === 'up' }]"
+    >
       <input
         v-if="searchable"
         ref="searchInputRef"

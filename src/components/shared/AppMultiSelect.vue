@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from "vue";
-import { createDynamicCssClass } from "@/composables/useDynamicCssClass";
+import { computed, ref } from "vue";
 import { useSelectDropdown } from "@/composables/useSelectDropdown";
+import { useSelectDropdownPlacement } from "@/composables/useSelectDropdownPlacement";
 import { labelColorClass } from "@/utils/labelColorClass";
 import { useI18n } from "@/i18n";
 
@@ -50,48 +50,6 @@ const selectedLabels = computed(() =>
 );
 const selectedText = computed(() => selectedLabels.value.join(", "));
 const dropdownRef = ref<HTMLElement | null>(null);
-const dropdownPlacement = ref<"up" | "down">("down");
-const dropdownCssClass = createDynamicCssClass("multi-select-dropdown");
-
-function verticalClippingBoundary(element: HTMLElement): { top: number; bottom: number } {
-  let top = 0;
-  let bottom = window.innerHeight;
-  let ancestor = element.parentElement;
-  while (ancestor) {
-    const computedStyle = window.getComputedStyle(ancestor);
-    const overflow = `${computedStyle.overflow} ${computedStyle.overflowY}`;
-    if (/auto|scroll|hidden|clip/.test(overflow)) {
-      const rect = ancestor.getBoundingClientRect();
-      top = Math.max(top, rect.top);
-      bottom = Math.min(bottom, rect.bottom);
-    }
-    ancestor = ancestor.parentElement;
-  }
-  return { top, bottom };
-}
-
-function updateDropdownPlacement(): void {
-  if (!open.value || !triggerRef.value || !dropdownRef.value) return;
-  const triggerRect = triggerRef.value.getBoundingClientRect();
-  const boundary = verticalClippingBoundary(triggerRef.value);
-  const spaceAbove = Math.max(0, triggerRect.top - boundary.top - 4);
-  const spaceBelow = Math.max(0, boundary.bottom - triggerRect.bottom - 4);
-  const desiredHeight = Math.min(dropdownRef.value.scrollHeight || 280, 280);
-  dropdownPlacement.value = spaceBelow < desiredHeight && spaceAbove > spaceBelow ? "up" : "down";
-  const availableSpace = dropdownPlacement.value === "up" ? spaceAbove : spaceBelow;
-  const maxHeight = Math.max(64, Math.min(280, Math.floor(availableSpace)));
-  dropdownCssClass.update({ "--multi-select-dropdown-max-height": `${maxHeight}px` });
-}
-
-function addPlacementListeners(): void {
-  window.addEventListener("resize", updateDropdownPlacement);
-  document.addEventListener("scroll", updateDropdownPlacement, true);
-}
-
-function removePlacementListeners(): void {
-  window.removeEventListener("resize", updateDropdownPlacement);
-  document.removeEventListener("scroll", updateDropdownPlacement, true);
-}
 
 function toggleOption(option: MultiSelectOption): void {
   if (option.disabled) return;
@@ -127,23 +85,13 @@ const {
   optionSelector: ".multi-select-option",
 });
 
-watch(open, async (isOpen) => {
-  removePlacementListeners();
-  if (!isOpen) return;
-  await nextTick();
-  updateDropdownPlacement();
-  addPlacementListeners();
-});
-
-watch(filteredOptions, async () => {
-  if (!open.value) return;
-  await nextTick();
-  updateDropdownPlacement();
-});
-
-onUnmounted(() => {
-  removePlacementListeners();
-  dropdownCssClass.dispose();
+const { dropdownPlacement, dropdownCssClass } = useSelectDropdownPlacement({
+  open,
+  triggerRef,
+  dropdownRef,
+  cssPrefix: "multi-select-dropdown",
+  cssVarName: "--multi-select-dropdown-max-height",
+  recalcTrigger: filteredOptions,
 });
 </script>
 
