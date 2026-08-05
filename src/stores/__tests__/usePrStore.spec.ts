@@ -448,8 +448,10 @@ describe("usePrStore", () => {
 
   it("后台加载 Diff 时不占用详情或列表的加载状态", async () => {
     const pendingDiff = deferred<DiffResult>();
+    vi.mocked(prDetail).mockResolvedValueOnce(createPrDetail(42, "当前 PR"));
     vi.mocked(prDiff).mockReturnValueOnce(pendingDiff.promise);
     const store = usePrStore();
+    await store.fetchPrDetail("github", "owner", "repo", 42);
 
     const request = store.fetchPrDiff("github", "owner", "repo", 42);
 
@@ -461,6 +463,44 @@ describe("usePrStore", () => {
     await request;
 
     expect(store.diffLoading).toBe(false);
+  });
+
+  it("静默刷新详情时保留当前内容且不进入首屏加载态", async () => {
+    const initialDetail = createPrDetail(42, "旧标题");
+    const refreshedDetail = createPrDetail(42, "新标题");
+    const refreshRequest = deferred<PrDetail>();
+    vi.mocked(prDetail)
+      .mockResolvedValueOnce(initialDetail)
+      .mockReturnValueOnce(refreshRequest.promise);
+    const store = usePrStore();
+    await store.fetchPrDetail("github", "owner", "repo", 42);
+
+    const pending = store.refreshPrDetail("github", "owner", "repo", 42);
+
+    expect(store.detailLoading).toBe(false);
+    expect(store.currentPr).toEqual(initialDetail);
+
+    refreshRequest.resolve(refreshedDetail);
+    await expect(pending).resolves.toBe(true);
+    expect(store.currentPr).toEqual(refreshedDetail);
+    expect(store.detailLoading).toBe(false);
+  });
+
+  it("静默刷新返回 404 时清除过期详情并显示明确提示", async () => {
+    const initialDetail = createPrDetail(42, "即将被删除的 PR");
+    vi.mocked(prDetail)
+      .mockResolvedValueOnce(initialDetail)
+      .mockRejectedValueOnce(new Error("GitHub API 404 Not Found"));
+    const store = usePrStore();
+    await store.fetchPrDetail("github", "owner", "repo", 42);
+
+    const loaded = await store.refreshPrDetail("github", "owner", "repo", 42);
+
+    expect(loaded).toBe(false);
+    expect(store.currentPr).toBeNull();
+    expect(store.error).toBe(
+      "找不到 owner/repo #42，该 PR / MR 可能不存在，或当前 Token 无权访问。",
+    );
   });
 
   it("详情上下文变化且请求返回 404 时清除旧详情并显示明确提示", async () => {
@@ -872,6 +912,50 @@ describe("usePrStore", () => {
     expect(store.diff).toEqual(currentDiff);
   });
 
+  it("切换详情后忽略旧 PR 迟到的 Diff 和提交列表", async () => {
+    const staleDiff = deferred<DiffResult>();
+    const staleCommits = deferred<{
+      commits: PrCommitSummary[];
+      truncated_end: "oldest" | "newest" | null;
+    }>();
+    vi.mocked(prDetail)
+      .mockResolvedValueOnce(createPrDetail(1, "旧 PR"))
+      .mockResolvedValueOnce(createPrDetail(2, "新 PR"));
+    vi.mocked(prDiff).mockReturnValueOnce(staleDiff.promise);
+    vi.mocked(prCommits).mockReturnValueOnce(staleCommits.promise);
+    const store = usePrStore();
+    await store.fetchPrDetail("github", "owner", "repo", 1);
+
+    const oldDiffRequest = store.fetchPrDiff("github", "owner", "repo", 1);
+    const oldCommitsRequest = store.fetchPrCommits("github", "owner", "repo", 1);
+    await store.fetchPrDetail("github", "owner", "repo", 2);
+    staleDiff.resolve({
+      diff: "旧 PR Diff",
+      files: [],
+      patch_schema_version: 1,
+      patches: [],
+    });
+    staleCommits.resolve({
+      commits: [
+        {
+          sha: "old-commit",
+          title: "旧 PR 提交",
+          author_name: "Alice",
+          authored_at: "2026-08-05T10:00:00Z",
+          parent_shas: ["base"],
+        },
+      ],
+      truncated_end: "oldest",
+    });
+    await Promise.all([oldDiffRequest, oldCommitsRequest]);
+
+    expect(store.currentPr?.summary.number).toBe(2);
+    expect(store.diff).toBeNull();
+    expect(store.commits).toEqual([]);
+    expect(store.commitsTruncatedEnd).toBeNull();
+    expect(store.commitsError).toBeNull();
+  });
+
   describe("按 commit 维度查看", () => {
     const commit = (sha: string, parents: string[] = []): PrCommitSummary => ({
       sha,
@@ -887,12 +971,19 @@ describe("usePrStore", () => {
       patches: [],
     };
 
+    async function storeForPr() {
+      vi.mocked(prDetail).mockResolvedValueOnce(createPrDetail(42, "当前 PR"));
+      const store = usePrStore();
+      await store.fetchPrDetail("github", "owner", "repo", 42);
+      return store;
+    }
+
     async function storeWithCommits() {
       vi.mocked(prCommits).mockResolvedValueOnce({
         commits: [commit("c1", ["base0"]), commit("c2", ["c1"]), commit("c3", ["c2"])],
         truncated_end: null,
       });
-      const store = usePrStore();
+      const store = await storeForPr();
       await store.fetchPrCommits("github", "owner", "repo", 42);
       return store;
     }
@@ -914,7 +1005,12 @@ describe("usePrStore", () => {
         commits: [commit("only")],
         truncated_end: null,
       });
+      vi.mocked(prDetail).mockResolvedValueOnce({
+        ...createPrDetail(42, "当前 PR"),
+        base_sha: "",
+      });
       const store = usePrStore();
+      await store.fetchPrDetail("github", "owner", "repo", 42);
       await store.fetchPrCommits("github", "owner", "repo", 42);
       vi.mocked(prCompareDiff).mockClear();
 

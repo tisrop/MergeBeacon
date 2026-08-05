@@ -71,6 +71,8 @@ watch(
 onUnmounted(() => {
   requestSequence += 1;
 });
+
+defineExpose({ refresh: loadDependencies });
 </script>
 
 <template>
