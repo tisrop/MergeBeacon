@@ -1012,6 +1012,7 @@ mod tests {
                 avatar_url: String::new(),
             }],
             reviewer_statuses: Vec::new(),
+            assignee_statuses: Vec::new(),
             assignees: Vec::new(),
             milestone: Some(PrMilestone { id: serde_json::json!(3), number: Some(3), title: "0.6.0".into() }),
             metadata_permissions: PrMetadataPermissions::default(),

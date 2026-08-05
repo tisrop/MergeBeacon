@@ -66,18 +66,26 @@
 .metadata-reviewer {
   display: inline-flex;
   min-width: 0;
+  padding: 0;
+  border: 0;
   align-items: center;
   gap: var(--space-2);
+  background: transparent;
   color: var(--color-text);
+  font: inherit;
   text-decoration: none;
 }
 
-a.metadata-reviewer:hover .metadata-reviewer-name {
+button.metadata-reviewer {
+  cursor: pointer;
+}
+
+button.metadata-reviewer:hover .metadata-reviewer-name {
   color: var(--color-primary);
   text-decoration: underline;
 }
 
-a.metadata-reviewer:focus-visible {
+button.metadata-reviewer:focus-visible {
   border-radius: var(--radius-sm);
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;

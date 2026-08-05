@@ -191,11 +191,41 @@ describe("PrMetadataPanel", () => {
 
     expect(wrapper.text()).toContain("已批准");
     expect(wrapper.text()).toContain("请求修改");
-    const link = wrapper.get<HTMLAnchorElement>('[data-testid="metadata-reviewer-link"]');
-    expect(link.attributes("href")).toBe(reviewUrl);
-    expect(link.attributes("target")).toBe("_blank");
+    const link = wrapper.get<HTMLButtonElement>('[data-testid="metadata-reviewer-link"]');
+    expect(link.element.tagName).toBe("BUTTON");
+    expect(link.attributes("type")).toBe("button");
+    expect(link.attributes("href")).toBeUndefined();
     await link.trigger("click");
     expect(wrapper.emitted("open-external")).toEqual([[reviewUrl]]);
+  });
+
+  it("展示 Gitee 测试者的测试状态并支持打开测试者主页", async () => {
+    const testerUrl = "https://gitee.com/tester-approved";
+    const approvedTester = { id: 5, login: "tester-approved", name: "Tester", avatar_url: "" };
+    const pendingTester = { id: 6, login: "tester-pending", name: "Tester", avatar_url: "" };
+    const wrapper = mountPanel({
+      platform: "gitee",
+      capabilities: capabilities({ platform: "gitee" }),
+      detail: {
+        ...detail,
+        assignees: [approvedTester, pendingTester],
+        assignee_statuses: [
+          { user: approvedTester, status: "approved", web_url: testerUrl },
+          { user: pendingTester, status: "pending", web_url: null },
+        ],
+      },
+    });
+
+    expect(wrapper.text()).toContain("测试者");
+    expect(wrapper.text()).toContain("测试通过");
+    expect(wrapper.text()).toContain("待测试");
+    const link = wrapper.get<HTMLButtonElement>('[data-testid="metadata-assignee-link"]');
+    expect(link.element.tagName).toBe("BUTTON");
+    expect(link.attributes("type")).toBe("button");
+    expect(link.attributes("href")).toBeUndefined();
+    expect(link.attributes("title")).toBe("在浏览器中打开测试者 tester-approved 的主页");
+    await link.trigger("click");
+    expect(wrapper.emitted("open-external")).toEqual([[testerUrl]]);
   });
 
   it("已挂载时切换英文，并保留远端中文内容", async () => {
