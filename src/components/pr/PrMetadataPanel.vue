@@ -508,13 +508,14 @@ onUnmounted(invalidateOptions);
               :title="
                 isGitee
                   ? t('metadata.openTester', { login: assignee.user.login })
-                  : t('metadata.openReviewer', { login: assignee.user.login })
+                  : t('metadata.openAssignee', { login: assignee.user.login })
               "
               data-testid="metadata-assignee-link"
               @click="openParticipantPage(assignee.web_url)"
             >
               <span class="metadata-reviewer-name">{{ assignee.user.login }}</span>
               <span
+                v-if="isGitee"
                 class="metadata-review-status"
                 :class="`metadata-review-status-${assignee.status}`"
               >
@@ -524,6 +525,7 @@ onUnmounted(invalidateOptions);
             <span v-else class="metadata-reviewer">
               <span class="metadata-reviewer-name">{{ assignee.user.login }}</span>
               <span
+                v-if="isGitee"
                 class="metadata-review-status"
                 :class="`metadata-review-status-${assignee.status}`"
               >

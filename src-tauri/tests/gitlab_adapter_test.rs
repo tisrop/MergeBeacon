@@ -1372,7 +1372,13 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
                 "avatar_url": "",
                 "web_url": "https://git.example.com/reviewer"
             }],
-            "assignees": [{"id": 8, "username": "assignee", "name": "Assignee", "avatar_url": ""}],
+            "assignees": [{
+                "id": 8,
+                "username": "assignee",
+                "name": "Assignee",
+                "avatar_url": "",
+                "web_url": "https://git.example.com/assignee"
+            }],
             "milestone": {"id": 11, "iid": 2, "title": "0.6.0"},
             "web_url": "https://git.example.com/group/repo/-/merge_requests/3"
         })))
@@ -1393,6 +1399,8 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
     assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Approved);
     assert_eq!(detail.reviewer_statuses[0].web_url.as_deref(), Some("https://git.example.com/reviewer"));
     assert_eq!(detail.assignees[0].login, "assignee");
+    assert_eq!(detail.assignee_statuses[0].status, PrReviewStatus::Pending);
+    assert_eq!(detail.assignee_statuses[0].web_url.as_deref(), Some("https://git.example.com/assignee"));
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
 

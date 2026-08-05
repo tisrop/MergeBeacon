@@ -228,6 +228,24 @@ describe("PrMetadataPanel", () => {
     expect(wrapper.emitted("open-external")).toEqual([[testerUrl]]);
   });
 
+  it("GitHub/GitLab 负责人支持点击跳转且不显示审批状态", async () => {
+    const assigneeUrl = "https://github.com/assignee";
+    const wrapper = mountPanel({
+      detail: {
+        ...detail,
+        assignee_statuses: [{ user: assignee, status: "pending", web_url: assigneeUrl }],
+      },
+    });
+
+    const link = wrapper.get<HTMLButtonElement>('[data-testid="metadata-assignee-link"]');
+    expect(link.element.tagName).toBe("BUTTON");
+    expect(link.attributes("type")).toBe("button");
+    expect(link.attributes("title")).toBe("在浏览器中打开负责人 assignee 的主页");
+    expect(link.find(".metadata-review-status").exists()).toBe(false);
+    await link.trigger("click");
+    expect(wrapper.emitted("open-external")).toEqual([[assigneeUrl]]);
+  });
+
   it("已挂载时切换英文，并保留远端中文内容", async () => {
     const wrapper = mountPanel();
 

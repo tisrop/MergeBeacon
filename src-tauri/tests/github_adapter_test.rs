@@ -2455,7 +2455,13 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
             "mergeable": true,
             "draft": true,
             "requested_reviewers": [{"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}],
-            "assignees": [{"id": 3, "login": "assignee", "name": "Assignee", "avatar_url": ""}],
+            "assignees": [{
+                "id": 3,
+                "login": "assignee",
+                "name": "Assignee",
+                "avatar_url": "",
+                "html_url": "https://github.com/assignee"
+            }],
             "milestone": {"id": 9, "number": 4, "title": "0.6.0"},
             "html_url": "https://github.com/octocat/hello-world/pull/42"
         })))
@@ -2478,6 +2484,8 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
         Some("https://github.com/octocat/hello-world/pull/42#pullrequestreview-7")
     );
     assert_eq!(detail.assignees[0].login, "assignee");
+    assert_eq!(detail.assignee_statuses[0].status, PrReviewStatus::Pending);
+    assert_eq!(detail.assignee_statuses[0].web_url.as_deref(), Some("https://github.com/assignee"));
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
 

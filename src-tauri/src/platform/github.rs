@@ -1490,6 +1490,23 @@ impl GitPlatform for GitHubAdapter {
                 }
             }
         }
+        let (assignees, assignee_statuses) = json["assignees"]
+            .as_array()
+            .map(|users| {
+                users
+                    .iter()
+                    .map(|value| {
+                        let user = Self::map_user(value);
+                        let status = PrReviewerStatus {
+                            user: user.clone(),
+                            status: PrReviewStatus::Pending,
+                            web_url: sanitize_web_url(&value["html_url"]),
+                        };
+                        (user, status)
+                    })
+                    .unzip()
+            })
+            .unwrap_or_default();
         let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
