@@ -258,7 +258,7 @@ describe("ReviewList", () => {
     ).flat();
     mocks.reviewCommentsList.mockResolvedValueOnce(comments);
 
-    const wrapper = await mountList();
+    const wrapper = await mountList({}, { stubMarkdownRenderer: true });
 
     expect(wrapper.findAll(".review-thread")).toHaveLength(120);
     expect(wrapper.findAll(".thread-comments li")).toHaveLength(600);
