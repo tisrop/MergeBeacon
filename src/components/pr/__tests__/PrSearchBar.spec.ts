@@ -18,7 +18,7 @@ describe("PrSearchBar", () => {
   beforeEach(() => setAppLocale("zh-CN"));
 
   it.each([
-    ["作者筛选", "所有作者"],
+    ["创建者筛选", "所有创建者"],
     ["标签筛选", "所有标签"],
     ["负责人筛选", "所有负责人"],
     ["评审状态筛选", "所有评审状态"],
@@ -51,11 +51,11 @@ describe("PrSearchBar", () => {
 
     expect(wrapper.get('[aria-label="负责人筛选"]').text()).toContain("所有负责人");
     expect(wrapper.get('[aria-label="评审状态筛选"]').text()).toContain("所有评审状态");
-    expect(wrapper.text()).not.toContain("审查者");
-    expect(wrapper.text()).not.toContain("测试者");
+    expect(wrapper.text()).not.toContain("审查");
+    expect(wrapper.text()).not.toContain("测试");
   });
 
-  it("Gitee 使用审查者和测试者筛选文案并提供用户选择器", async () => {
+  it("Gitee 使用审查和测试筛选文案并提供用户选择器", async () => {
     const wrapper = mount(PrSearchBar, {
       props: {
         platform: "gitee",
@@ -65,19 +65,15 @@ describe("PrSearchBar", () => {
       },
     });
 
-    const testerFilter = wrapper.get('[aria-label="测试者筛选"]');
-    expect(testerFilter.text()).toContain("所有测试者");
+    const testerFilter = wrapper.get('[aria-label="测试筛选"]');
+    expect(testerFilter.text()).toContain("所有测试");
     await testerFilter.trigger("click");
-    expect(wrapper.get('input[aria-label="搜索测试者"]').attributes("placeholder")).toBe(
-      "搜索测试者",
-    );
+    expect(wrapper.get('input[aria-label="搜索测试"]').attributes("placeholder")).toBe("搜索测试");
 
-    const reviewerFilter = wrapper.get('[aria-label="审查者筛选"]');
-    expect(reviewerFilter.text()).toContain("所有审查者");
+    const reviewerFilter = wrapper.get('[aria-label="审查筛选"]');
+    expect(reviewerFilter.text()).toContain("所有审查");
     await reviewerFilter.trigger("click");
-    expect(wrapper.get('input[aria-label="搜索审查者"]').attributes("placeholder")).toBe(
-      "搜索审查者",
-    );
+    expect(wrapper.get('input[aria-label="搜索审查"]').attributes("placeholder")).toBe("搜索审查");
     await wrapper.get('.dropdown-option[data-value="carol"]').trigger("click");
 
     const applied = wrapper.emitted<PrListQuery[]>("apply") ?? [];
@@ -107,7 +103,7 @@ describe("PrSearchBar", () => {
     await titleInput.setValue("parser");
 
     for (const [accessibleName, value] of [
-      ["作者筛选", "octocat"],
+      ["创建者筛选", "octocat"],
       ["标签筛选", "bug"],
       ["负责人筛选", "maintainer"],
       ["评审状态筛选", "approved"],

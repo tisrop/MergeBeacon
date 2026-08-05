@@ -1292,12 +1292,12 @@ describe("PrNewPage", () => {
     );
   });
 
-  it("Gitee 使用审查者和测试者文案且不显示 Draft 选项", async () => {
+  it("Gitee 使用审查和测试文案且不显示 Draft 选项", async () => {
     const { wrapper } = await mountPage("gitee");
 
     expect(wrapper.get("h2").text()).toBe("创建 PR");
-    expect(wrapper.text()).toContain("审查者");
-    expect(wrapper.text()).toContain("测试者");
+    expect(wrapper.text()).toContain("审查");
+    expect(wrapper.text()).toContain("测试");
     expect(wrapper.get('[aria-label="标签"]').attributes("aria-label")).toBe("标签");
     expect(wrapper.text()).not.toContain("创建为 Draft");
   });

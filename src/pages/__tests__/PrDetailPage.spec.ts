@@ -763,7 +763,7 @@ describe("PrDetailPage 关闭权限", () => {
     const button = wrapper.get('[data-testid="close-pr-button"]');
 
     expect(button.attributes("disabled")).toBeDefined();
-    expect(button.attributes("title")).toBe("只有 PR 作者或具备仓库写入权限的成员才能关闭 PR");
+    expect(button.attributes("title")).toBe("只有 PR 创建者或具备仓库写入权限的成员才能关闭 PR");
     await button.trigger("click");
     expect(mocks.prStore.closePr).not.toHaveBeenCalled();
   });

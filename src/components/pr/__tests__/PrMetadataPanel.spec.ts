@@ -199,7 +199,7 @@ describe("PrMetadataPanel", () => {
     expect(wrapper.emitted("open-external")).toEqual([[reviewUrl]]);
   });
 
-  it("展示 Gitee 测试者的测试状态并支持打开测试者主页", async () => {
+  it("展示 Gitee 测试的测试状态并支持打开测试主页", async () => {
     const testerUrl = "https://gitee.com/tester-approved";
     const approvedTester = { id: 5, login: "tester-approved", name: "Tester", avatar_url: "" };
     const pendingTester = { id: 6, login: "tester-pending", name: "Tester", avatar_url: "" };
@@ -216,14 +216,14 @@ describe("PrMetadataPanel", () => {
       },
     });
 
-    expect(wrapper.text()).toContain("测试者");
+    expect(wrapper.text()).toContain("测试");
     expect(wrapper.text()).toContain("测试通过");
     expect(wrapper.text()).toContain("待测试");
     const link = wrapper.get<HTMLButtonElement>('[data-testid="metadata-assignee-link"]');
     expect(link.element.tagName).toBe("BUTTON");
     expect(link.attributes("type")).toBe("button");
     expect(link.attributes("href")).toBeUndefined();
-    expect(link.attributes("title")).toBe("在浏览器中打开测试者 tester-approved 的主页");
+    expect(link.attributes("title")).toBe("在浏览器中打开测试 tester-approved 的主页");
     await link.trigger("click");
     expect(wrapper.emitted("open-external")).toEqual([[testerUrl]]);
   });
@@ -572,7 +572,7 @@ describe("PrMetadataPanel", () => {
     expect(wrapper.get('[role="alert"]').text()).toContain("PR 标题不能超过 255 个字符");
   });
 
-  it("按平台使用参与者名称：Gitee 显示审查者和测试者", async () => {
+  it("按平台使用参与者名称：Gitee 显示审查和测试", async () => {
     const wrapper = mountPanel({
       capabilities: capabilities({
         platform: "gitee",
@@ -580,8 +580,8 @@ describe("PrMetadataPanel", () => {
         supports_pr_assignee_management: true,
       }),
     });
-    expect(wrapper.text()).toContain("审查者");
-    expect(wrapper.text()).toContain("测试者");
+    expect(wrapper.text()).toContain("审查");
+    expect(wrapper.text()).toContain("测试");
     expect(wrapper.text()).not.toContain("Reviewers");
     expect(wrapper.text()).not.toContain("Assignees");
     await wrapper.get('[data-testid="edit-pr-metadata"]').trigger("click");
