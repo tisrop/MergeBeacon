@@ -55,6 +55,8 @@ OpenSpec 变更。`AGENTS.md` 记录项目上下文和操作约束；本文定�
 
 - `src/api/index.ts` 是唯一 Tauri IPC 入口。组件和 Pinia store **禁止**直接调用 `invoke` 或其他
   Tauri command API。
+- `pnpm run check:ipc-contract` 必须保持通过；新增、删除或重命名 command 时必须同时更新后端注册、
+  前端封装和后端专用命令白名单，禁止让任一侧形成孤立声明。
 - 组件负责展示和局部交互，跨页面业务状态放入 Pinia；不得在多个组件复制请求编排逻辑。
 - Pinia store 只能通过 `src/api/index.ts` 访问后端，并保留 loading、error、空状态和重试语义。
 - 禁止未经讨论引入 UI 框架、Tailwind 或第二套状态管理方案。样式复用 CSS 变量和现有手写 CSS。
@@ -67,6 +69,8 @@ OpenSpec 变更。`AGENTS.md` 记录项目上下文和操作约束；本文定�
   `src-tauri/src/platform/`，AI 协议细节放在 `src-tauri/src/ai/`。
 - 新增 Tauri command 时必须同步：命令实现、`src-tauri/src/lib.rs` 注册、`src/api/index.ts`
   封装、TypeScript 类型及测试。
+- Keyring、凭据文件和其他同步文件系统操作不得直接阻塞异步 command；必须使用
+  `tokio::task::spawn_blocking` 或等价的受控阻塞边界，并把 join 失败映射为稳定错误语义。
 - 平台差异通过 `GitPlatform` trait、能力判断或明确枚举表达；禁止在上层散落平台名称字符串分支。
 - 新增 `AppError` 变体时必须同步 `AppError -> String` 转换，并验证用户可理解的中文错误语义。
 
@@ -142,6 +146,9 @@ OpenSpec 变更。`AGENTS.md` 记录项目上下文和操作约束；本文定�
 ## 9. 依赖、配置与规范变更
 
 - 新增依赖前必须确认现有依赖或标准库无法满足，并评估维护状态、许可证、包体积和安全风险。
+- `/pr` 启动首屏必须保持路由静态导入；低频页面和重型功能优先拆分为异步 chunk。入口 JavaScript
+  必须通过 400 KiB 预算门禁；不得只为通过构建直接提高预算，确需调整时必须记录实测启动影响、
+  共享依赖分析和无法继续拆分的原因。
 - 修改网络或资源来源时同步审查 `src-tauri/tauri.conf.json` 的 CSP，不得顺带放宽无关策略。
 - 修改平台能力、用户流程或持久化语义时，必须同步更新相关 OpenSpec proposal/design/tasks；规范不得
   声明尚未实现的能力。
@@ -162,9 +169,7 @@ OpenSpec 变更。`AGENTS.md` 记录项目上下文和操作约束；本文定�
 按变更范围运行检查；提交前完整门禁为：
 
 ```bash
-pnpm run lint
-pnpm run check:frontend-standards
-pnpm run format
+pnpm run check:frontend
 pnpm run build
 pnpm test
 cd src-tauri

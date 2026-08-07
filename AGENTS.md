@@ -16,7 +16,7 @@ Rust/Tauri、跨平台语义、异步生命周期、安全、测试和合并门�
 ```bash
 pnpm run dev              # 仅前端 Vite dev server（port 1420）
 pnpm run tauri -- dev     # 完整 Tauri 桌面应用（dev server + 原生窗口）
-pnpm run build            # vue-tsc --noEmit 类型检查 → vite build
+pnpm run build            # vue-tsc → Vite build → 400 KiB 入口包预算检查
 pnpm run tauri -- build   # 生产构建，产物在 src-tauri/target/release/bundle/
 pnpm run lint             # oxlint 静态检查
 pnpm run lint:fix         # oxlint 安全自动修复
@@ -24,7 +24,9 @@ pnpm run format           # oxfmt 格式检查
 pnpm run format:fix       # oxfmt 格式化
 pnpm run check:version     # package / Cargo / Tauri 版本一致性
 pnpm run check:updater     # updater 公钥、端点和产物配置检查
-pnpm run check:frontend    # 版本/updater + oxlint + oxfmt + 前端规范检查器
+pnpm run check:ipc-contract # 前端 IPC 封装与后端命令注册表一致性
+pnpm run check:bundle-size # dist 入口包、/pr 同步加载与 400 KiB 预算
+pnpm run check:frontend    # 版本/updater/IPC + oxlint + oxfmt + 前端规范检查器
 pnpm test                 # Vitest（Vue Test Utils + jsdom）
 cd src-tauri && cargo fmt --all -- --check
 cd src-tauri && cargo clippy --all-targets -- -D warnings
@@ -33,6 +35,8 @@ cd src-tauri && cargo test github_adapter -- --nocapture
 ```
 
 - `TAURI_DEV_HOST` 环境变量启用网络 HMR（默认仅 `localhost:1420`）。
+- Node.js 24、pnpm 11.20.0 与 Rust 1.96.1 分别由 `.node-version`、`packageManager` 和
+  `rust-toolchain.toml` 固定。
 - 前端 IPC 封装在 `src/api/index.ts`（`invoke("command_name", {...})`）。**不要直接调用 Tauri API**。
 - Vite 配置了 `@/` → `./src/*` 别名。
 
@@ -42,8 +46,9 @@ cd src-tauri && cargo test github_adapter -- --nocapture
 src/                 # Vue 3 前端（Composition API, <script setup lang="ts">）
   api/index.ts       # 唯一 IPC 入口
   types/index.ts     # 前端 TS 类型
+  composables/       # useAsyncList/useAsyncRequest 等可复用请求与 UI 协调逻辑
   stores/            # 11 个 Pinia store（Auth / Capability / Repo / PR / Issue / Notification / 评审状态 / UI / Update）
-  router/index.ts    # 11 条路由记录与登录恢复守卫
+  router/index.ts    # 11 条路由；/pr 首屏同步加载，其他页面按需加载
   pages/             # 9 个页面组件（含 PR/MR 创建/详情页和 Issue 创建/详情页）
   components/        # ai/ command/ diff/ inbox/ issue/ layout/ notification/ pr/ review/ shared/
   main.ts            # 挂载 Pinia + Router；HMR 时阻止恢复到 /settings
@@ -74,6 +79,8 @@ src-tauri/
 - `vault.rs`：平台 Token 优先保存到系统 Keyring（service `com.mergebeacon`，账户
   `git-platform:{platform}`）；不可用时 AES-256-GCM 加密写入 `~/.mergebeacon/config.json`。
   旧 `com.mergepilot` Keyring、`~/.mergepilot/config.json` 和旧明文 Token 均采用“先成功写目标、再删旧值”迁移。不要重新引入明文 Token。
+- Keyring 与凭据文件读写属于阻塞操作；异步 Tauri command 必须通过 `spawn_blocking` 执行，禁止
+  阻塞 Tokio worker。
 - Keyring 依赖必须保留 `apple-native`、`windows-native`、`sync-secret-service` features；无 feature
   时 keyring crate 会退化为不持久化的内存 Mock。
 - `crypto.rs`：AES-256-GCM；密钥 = SHA256（应用固定值 + OS 用户名）。AI API Key 仍使用此方案。
@@ -154,12 +161,16 @@ src-tauri/
   100 列宽。
 - `src/main.ts` 有 `/settings` HMR 保护；原生菜单通过受控 JS bridge 跳转到新建 PR/MR、Issue、
   命令面板、设置、更新检查和诊断等入口，菜单文案必须随当前界面语言同步。
+- `/pr` 是启动首屏，必须在 `src/router/index.ts` 保持静态导入；其他低频页面优先使用路由级动态导入。
+  入口 JavaScript 必须保持在 400 KiB 预算内，除非评审中记录实测启动影响和不可拆分原因。
 - 用户界面文案必须通过 `src/i18n/` 提供简体中文和英文资源，默认使用简体中文；AI 评审 Prompt
   必须按评审开始时捕获的意见语言生成。后端或远端返回的错误正文尚未本地化时仍按不可信文本展示。
 
 ## 测试
 
 - 前端：Vitest + Vue Test Utils + jsdom，测试位于各模块 `__tests__/*.spec.ts`，运行 `pnpm test`。
+- `.github/checks/__tests__/` 覆盖 IPC 契约和入口包体积门禁；修改命令注册、前端 IPC 封装、路由加载
+  策略或包预算时必须同步更新这些测试。
 - Rust：单元测试覆盖 TokenVault、UTF-8 截断、SSE、AI 响应解析、API base、patch、文件内容、
   updater 输入边界、诊断脱敏、单实例与窗口恢复；WireMock 覆盖三个平台 Adapter。
 - 命名集成测试目标：`github_adapter`、`gitlab_adapter`、`gitee_adapter`。
@@ -181,6 +192,8 @@ cargo test
 
 - macOS bundle：`MergeBeacon.app`，identifier：`com.mergebeacon`。
 - 构建前自动执行 `pnpm run build`；前端产物在 `dist/`，Rust/bundle 在 `src-tauri/target/`。
+- Vite 必须生成 `dist/.vite/manifest.json`，供入口模块与包体积门禁读取；不得绕过
+  `check:bundle-size` 或仅为通过检查直接提高预算。
 - 生产 CSP 在 `src-tauri/tauri.conf.json`；修改网络或资源来源时同步审查 CSP，不得放宽远程脚本。
 - macOS entitlement：`src-tauri/mergebeacon.entitlements`。
 

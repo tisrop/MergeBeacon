@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | **English**
 
-[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.96.1-orange.svg)](https://www.rust-lang.org)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue.svg)](https://v2.tauri.app)
 [![Vue](https://img.shields.io/badge/Vue-3.x-42b883.svg)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -210,8 +210,8 @@ reviews through an OpenAI-compatible API.
 | Desktop framework | Tauri 2, Single Instance, Window State, Updater |
 | Frontend | Vue 3, Composition API, Pinia, Vue Router |
 | Frontend build | TypeScript, Vite 6 |
-| Code quality | oxlint + oxfmt + frontend standards checker |
-| Backend | Rust 2021, Tokio, Reqwest |
+| Code quality | oxlint, oxfmt, frontend standards, IPC contract, and entry-bundle gates |
+| Backend | Rust 2021 (toolchain 1.96.1), Tokio, Reqwest |
 | Platform abstraction | `GitPlatform` trait + GitHub / GitLab / Gitee adapters |
 | Diff rendering | Normalized patch, diff2html, highlight.js, code search, and bounded image / video preview |
 | AI | OpenAI-compatible API, SSE streaming, incremental Compare Diff |
@@ -225,7 +225,7 @@ reviews through an OpenAI-compatible API.
 
 - [Node.js](https://nodejs.org/) 24, the version used by project CI
 - pnpm 11 (the exact version is pinned by `packageManager` in `package.json`)
-- [Rust](https://www.rust-lang.org/tools/install) stable
+- [Rust](https://www.rust-lang.org/tools/install) 1.96.1, pinned by `rust-toolchain.toml`
 - The [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system
 
 ### Install and run
@@ -250,7 +250,9 @@ pnpm run dev
 pnpm run tauri -- build
 ```
 
-The build runs `pnpm run build` automatically. Tauri writes artifacts to
+The build runs `pnpm run build` automatically. That script performs TypeScript type checking, creates the
+Vite build, and enforces the entry-bundle budget. The `/pr` launch route remains eagerly loaded, lower-frequency
+pages are split into route chunks, and the entry JavaScript budget is 400 KiB. Tauri writes artifacts to
 `src-tauri/target/release/bundle/`. The macOS `.app` bundle name follows `productName` and is currently
 `MergeBeacon.app`.
 
@@ -431,10 +433,12 @@ mergebeacon/
 │   │   ├── pr/                  # PR cards, filters, and merge-readiness state
 │   │   ├── review/              # Overall review and comment lists
 │   │   └── shared/              # Shared forms and state components
+│   ├── composables/             # Reusable request/list state machines and UI coordination
 │   ├── pages/                   # 9 pages: sign-in, inbox, PR, Issue, and Settings
-│   ├── router/index.ts          # 11 route records and sign-in restoration guard
+│   ├── router/index.ts          # 11 routes; /pr is eager and lower-frequency pages are lazy
 │   ├── stores/                  # 11 Pinia stores for auth, capabilities, repos, PRs, Issues, notifications, and review state
 │   └── types/index.ts           # Shared frontend types
+├── .github/checks/              # Version, updater, IPC, bundle-size, and frontend-standard checks and tests
 ├── src-tauri/
 │   ├── src/
 │   │   ├── ai/                  # OpenAI-compatible client, prompt, and configuration
@@ -455,7 +459,10 @@ mergebeacon/
 ├── AGENTS.md                    # Project context and constraints for AI coding agents
 ├── CODE_STANDARDS.md            # Implementation and review standards
 ├── FRONTEND_STANDARDS.md        # Frontend visual, interaction, and accessibility standards
+├── .node-version                # Node.js major version used locally and in CI
 ├── package.json
+├── pnpm-workspace.yaml          # pnpm workspace configuration
+├── rust-toolchain.toml          # Pinned Rust, clippy, and rustfmt toolchain
 ├── README.en.md                 # English README
 └── README.md                    # Simplified Chinese README
 ```
@@ -484,6 +491,8 @@ pnpm run format
 pnpm run check:frontend-standards
 pnpm run check:version
 pnpm run check:updater
+pnpm run check:ipc-contract
+pnpm run check:bundle-size
 pnpm run check:frontend
 pnpm run lint:fix
 pnpm run format:fix
@@ -494,6 +503,11 @@ cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 ```
+
+`pnpm run check:frontend` runs the version-consistency, updater-security, IPC-contract, lint, format, and
+frontend-standards checks. `pnpm run build` runs the entry-bundle check after the Vite build.
+`check:ipc-contract` compares the wrappers in `src/api/index.ts` with the command registry in
+`src-tauri/src/lib.rs` so missing, duplicate, or stale allowlisted commands fail the gate.
 
 The application currently registers 70 Tauri Commands:
 

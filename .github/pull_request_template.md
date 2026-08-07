@@ -23,10 +23,9 @@
 
 <!-- 说明如何验证你的改动，例如：命令、测试用例、手动操作步骤 -->
 
-- [ ] `pnpm run lint` 通过
-- [ ] `pnpm run check:frontend-standards` 通过
-- [ ] `pnpm run format` 通过
+- [ ] `pnpm run check:frontend` 通过（版本、Updater、IPC、lint、format、前端规范）
 - [ ] `pnpm run build` 通过
+- [ ] `pnpm test` 通过
 - [ ] `cargo test` 通过
 
 ## 关联 Issue
