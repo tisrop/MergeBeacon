@@ -2,12 +2,19 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assertEntryBundleSize, checkBundleSize, findEntryJavaScript } from "../bundle-size.mjs";
+import {
+  assertEntryBundleSize,
+  assertEntryModulesEager,
+  assertEntryRouterImports,
+  checkBundleSize,
+  findEntryJavaScript,
+} from "../bundle-size.mjs";
 
 async function createBuildFixture(entrySize: number) {
   const root = await mkdtemp(join(tmpdir(), "mergebeacon-bundle-size-"));
   await mkdir(join(root, "dist/.vite"), { recursive: true });
   await mkdir(join(root, "dist/assets"), { recursive: true });
+  await mkdir(join(root, "src/router"), { recursive: true });
   await writeFile(
     join(root, "dist/.vite/manifest.json"),
     JSON.stringify({
@@ -18,6 +25,10 @@ async function createBuildFixture(entrySize: number) {
     }),
   );
   await writeFile(join(root, "dist/assets/index-test.js"), Buffer.alloc(entrySize));
+  await writeFile(
+    join(root, "src/router/index.ts"),
+    'import PrListPage from "@/pages/PrListPage.vue";\n',
+  );
   return root;
 }
 
@@ -41,6 +52,30 @@ describe("入口包体积检查", () => {
     ).toThrow("实际找到 2 个");
   });
 
+  it("阻止默认 PR 列表退化为懒加载路由", () => {
+    expect(() =>
+      assertEntryModulesEager({
+        "src/pages/PrListPage.vue": {
+          file: "assets/PrListPage.js",
+          isDynamicEntry: true,
+        },
+      }),
+    ).toThrow("首屏模块不得懒加载：src/pages/PrListPage.vue");
+    expect(() => assertEntryModulesEager({ "index.html": { isEntry: true } })).not.toThrow();
+  });
+
+  it("要求默认 PR 列表在路由中保持静态导入", () => {
+    expect(() =>
+      assertEntryRouterImports('import PrListPage from "@/pages/PrListPage.vue";'),
+    ).not.toThrow();
+    expect(() =>
+      assertEntryRouterImports('const PrListPage = () => import("@/pages/PrListPage.vue");'),
+    ).toThrow('首屏模块必须由路由静态导入：import PrListPage from "@/pages/PrListPage.vue";');
+    expect(() =>
+      assertEntryRouterImports('import PrListPage from "@/pages/PullRequestListPage.vue";'),
+    ).toThrow('首屏模块必须由路由静态导入：import PrListPage from "@/pages/PrListPage.vue";');
+  });
+
   it("入口包不超过预算时通过", () => {
     expect(() => assertEntryBundleSize("assets/index.js", 399 * 1024, 400 * 1024)).not.toThrow();
   });
@@ -59,6 +94,13 @@ describe("入口包体积检查", () => {
       sizeBytes: 128,
       budgetBytes: 256,
     });
+  });
+
+  it("路由缺少静态首屏导入时给出可操作错误", async () => {
+    const root = await createBuildFixture(128);
+    await writeFile(join(root, "src/router/index.ts"), "");
+
+    await expect(checkBundleSize(root)).rejects.toThrow("首屏模块必须由路由静态导入");
   });
 
   it("构建清单不存在时给出可操作错误", async () => {

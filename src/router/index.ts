@@ -1,10 +1,10 @@
 import { createRouter, createWebHistory } from "vue-router";
+import PrListPage from "@/pages/PrListPage.vue";
 import { recordSettingsEntry } from "@/services/settingsReturnNavigation";
 import { useAuthStore } from "@/stores/useAuthStore";
 import type { Platform } from "@/types";
 
 const LoginPage = () => import("@/pages/LoginPage.vue");
-const PrListPage = () => import("@/pages/PrListPage.vue");
 const ReviewInboxPage = () => import("@/pages/ReviewInboxPage.vue");
 const PrNewPage = () => import("@/pages/PrNewPage.vue");
 const PrDetailPage = () => import("@/pages/PrDetailPage.vue");

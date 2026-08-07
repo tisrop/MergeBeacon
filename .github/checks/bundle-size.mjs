@@ -8,6 +8,10 @@ const projectRoot = process.cwd();
 // 其余低频页面和重型功能应优先拆分为异步 chunk。不要仅为新增功能直接提高预算；
 // 若必要的共享依赖确实无法拆分，应记录实测启动影响并在评审中说明调整依据。
 export const ENTRY_JS_BUDGET_BYTES = 400 * 1024;
+export const EAGER_ENTRY_MODULES = ["src/pages/PrListPage.vue"];
+export const EAGER_ENTRY_ROUTER_IMPORTS = [
+  { identifier: "PrListPage", source: "@/pages/PrListPage.vue" },
+];
 
 export function findEntryJavaScript(manifest) {
   const entries = Object.values(manifest).filter(
@@ -20,6 +24,32 @@ export function findEntryJavaScript(manifest) {
   }
 
   return entries[0].file;
+}
+
+export function assertEntryModulesEager(manifest, modules = EAGER_ENTRY_MODULES) {
+  const lazyModules = modules.filter((module) => manifest[module]?.isDynamicEntry === true);
+  if (lazyModules.length > 0) {
+    throw new Error(`首屏模块不得懒加载：${lazyModules.join(", ")}`);
+  }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function assertEntryRouterImports(routerSource, imports = EAGER_ENTRY_ROUTER_IMPORTS) {
+  const missingImports = imports.filter(({ identifier, source }) => {
+    const pattern = new RegExp(
+      `\\bimport\\s+${escapeRegExp(identifier)}\\s+from\\s+["']${escapeRegExp(source)}["']\\s*;`,
+    );
+    return !pattern.test(routerSource);
+  });
+  if (missingImports.length > 0) {
+    const expected = missingImports
+      .map(({ identifier, source }) => `import ${identifier} from "${source}";`)
+      .join(", ");
+    throw new Error(`首屏模块必须由路由静态导入：${expected}`);
+  }
 }
 
 export function assertEntryBundleSize(file, sizeBytes, budgetBytes = ENTRY_JS_BUDGET_BYTES) {
@@ -38,6 +68,17 @@ export async function checkBundleSize(root = projectRoot, budgetBytes = ENTRY_JS
   } catch (error) {
     throw new Error(`无法读取 Vite 构建清单 ${manifestPath}：${error.message}`);
   }
+
+  assertEntryModulesEager(manifest);
+
+  const routerPath = resolve(root, "src/router/index.ts");
+  let routerSource;
+  try {
+    routerSource = await readFile(routerPath, "utf8");
+  } catch (error) {
+    throw new Error(`无法读取路由配置 ${routerPath}：${error.message}`);
+  }
+  assertEntryRouterImports(routerSource);
 
   const entryFile = findEntryJavaScript(manifest);
   const entryPath = resolve(root, "dist", entryFile);
