@@ -115,6 +115,7 @@ impl GitLabAdapter {
             }
             AppError::Json(_) => ("invalid_response", None),
             AppError::NotAuthenticated(_) => ("authentication", None),
+            AppError::InvalidPlatform(_) => ("validation", None),
             AppError::Api(_) => ("platform_api", None),
             AppError::Io(_) => ("io", None),
             AppError::UnsupportedStrategy(_) | AppError::NotImplemented(_) => ("unsupported", None),

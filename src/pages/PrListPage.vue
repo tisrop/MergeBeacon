@@ -149,13 +149,28 @@ function retryFilterOptions() {
   );
 }
 
+function refreshStateCountsOnFocus(): void {
+  if (
+    !auth.isLoggedIn ||
+    !repo.activeRepo ||
+    document.visibilityState === "hidden" ||
+    navigator.onLine === false
+  ) {
+    return;
+  }
+  const { owner, repo: repoName } = repo.activeRepo;
+  void pr.fetchStateCounts(auth.activePlatform, owner, repoName, { forceRefresh: true });
+}
+
 onMounted(() => {
+  window.addEventListener("focus", refreshStateCountsOnFocus);
   if (auth.isLoggedIn) {
     fetchPrs();
   }
 });
 
 onUnmounted(() => {
+  window.removeEventListener("focus", refreshStateCountsOnFocus);
   pr.cancelListStatusSupplement();
 });
 

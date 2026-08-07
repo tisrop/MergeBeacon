@@ -35,7 +35,7 @@ pub async fn review_inbox_list(
     per_page: Option<u32>,
 ) -> CommandResult<Paginated<ReviewInboxItem>> {
     let (category, page, per_page) = parse_request(category.as_deref(), page, per_page)?;
-    let adapter = build_adapter(&platform, &state)?;
+    let adapter = build_adapter(&platform, &state).await?;
     adapter.list_review_inbox(&category, page, per_page).await.map_err(CommandError::from)
 }
 

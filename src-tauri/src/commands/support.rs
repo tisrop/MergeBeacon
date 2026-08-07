@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -118,8 +119,16 @@ pub async fn support_info(
         return Err("不支持的平台，无法生成诊断信息".into());
     }
 
-    let custom_url = state.token_vault.get_custom_url(&platform);
-    let credential_storage = state.token_vault.credential_storage(&platform).map_err(CommandError::from)?;
+    let vault = Arc::clone(&state.token_vault);
+    let credential_platform = platform.clone();
+    let (custom_url, credential_storage) = tokio::task::spawn_blocking(move || {
+        let custom_url = vault.get_custom_url(&credential_platform);
+        let credential_storage = vault.credential_storage(&credential_platform)?;
+        Ok::<_, crate::error::AppError>((custom_url, credential_storage))
+    })
+    .await
+    .map_err(|_| CommandError::from("诊断凭证读取后台任务失败"))?
+    .map_err(CommandError::from)?;
     let ai_config = state.ai_config.get_config().map_err(CommandError::from)?;
 
     Ok(build_support_info(SupportInfoInput {

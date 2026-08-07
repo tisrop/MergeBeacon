@@ -20,7 +20,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Verify release tag matches manifests
         run: node .github/checks/version-consistency.mjs --tag "$GITHUB_REF_NAME"
@@ -128,10 +128,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: pnpm/setup@v2
+        with:
+          install: false
+
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
-          cache: npm
+          node-version-file: .node-version
+          cache: pnpm
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -238,13 +242,13 @@ jobs:
             echo "$PASSWORD_DELIMITER"
           } >> "$GITHUB_ENV"
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       - name: Verify updater signing key
         shell: bash
         run: |
           printf 'MergeBeacon updater signing preflight' > "$RUNNER_TEMP/updater-signing-preflight"
-          npm run tauri -- signer sign "$RUNNER_TEMP/updater-signing-preflight"
+          pnpm run tauri -- signer sign "$RUNNER_TEMP/updater-signing-preflight"
 
       - name: Configure Apple signing env vars (macOS)
         if: startsWith(matrix.platform, 'macos')
@@ -373,7 +377,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Download updater metadata fragments
         uses: actions/download-artifact@v8
@@ -445,7 +449,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Download updater signature verifier
         uses: actions/download-artifact@v8
@@ -652,7 +656,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Add device download guide and publish draft release
         env:

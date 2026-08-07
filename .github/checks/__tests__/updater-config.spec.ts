@@ -87,7 +87,7 @@ describe("updater 配置安全检查", () => {
     const metadata = await readCargoMetadata();
 
     expect(() => assertUpdaterSystemProxy(metadata)).not.toThrow();
-  });
+  }, 30_000);
 
   it("拒绝缺少 system-proxy 的 updater 依赖", () => {
     const metadata = {
@@ -146,6 +146,19 @@ describe("updater 配置安全检查", () => {
     expect(ciWorkflow).toContain("node .github/checks/updater-config.mjs");
     expect(releaseWorkflow).toContain("node .github/checks/updater-config.mjs");
     expect(releaseWorkflow).toContain("name: Verify updater signing key");
-    expect(releaseWorkflow).toContain("npm run tauri -- signer sign");
+    expect(releaseWorkflow).toContain("pnpm run tauri -- signer sign");
+  });
+
+  it("普通 CI 和 Release 使用支持 pnpm 11 的 setup action", async () => {
+    const [ciWorkflow, releaseWorkflow] = await Promise.all([
+      readFile(resolve(".github/workflows/ci.yml"), "utf8"),
+      readFile(resolve(".github/workflows/release.yml"), "utf8"),
+    ]);
+
+    for (const workflow of [ciWorkflow, releaseWorkflow]) {
+      expect(workflow).toContain("uses: pnpm/setup@v2");
+      expect(workflow).toContain("install: false");
+      expect(workflow).not.toContain("pnpm/action-setup");
+    }
   });
 });

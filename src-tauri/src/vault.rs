@@ -20,8 +20,17 @@ pub enum CredentialStorage {
 }
 
 /// Platform token storage backed by the system credential store, with an encrypted config fallback.
+///
+/// Successfully loaded tokens stay in the in-process cache until logout or process exit. Adapter
+/// construction therefore reads the keyring or encrypted config, and decrypts file-backed tokens,
+/// at most once per platform per session.
 pub struct TokenVault {
     session_tokens: RwLock<HashMap<String, String>>,
+    // Loaded once per process and refreshed only by TokenVault custom URL writes/deletes.
+    // External config.json edits are intentionally not observed until the next process start.
+    custom_urls: RwLock<Option<HashMap<String, String>>>,
+    config_path_override: Option<PathBuf>,
+    legacy_config_path_override: Option<PathBuf>,
 }
 
 impl Default for TokenVault {
@@ -32,7 +41,22 @@ impl Default for TokenVault {
 
 impl TokenVault {
     pub fn new() -> Self {
-        Self { session_tokens: RwLock::new(HashMap::new()) }
+        Self {
+            session_tokens: RwLock::new(HashMap::new()),
+            custom_urls: RwLock::new(None),
+            config_path_override: None,
+            legacy_config_path_override: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_config_paths(config_path: PathBuf, legacy_config_path: PathBuf) -> Self {
+        Self {
+            session_tokens: RwLock::new(HashMap::new()),
+            custom_urls: RwLock::new(None),
+            config_path_override: Some(config_path),
+            legacy_config_path_override: Some(legacy_config_path),
+        }
     }
 
     fn cached_token(&self, platform: &str) -> Option<String> {
@@ -62,21 +86,26 @@ impl TokenVault {
         directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".mergebeacon"))
     }
 
-    fn legacy_config_path() -> Option<PathBuf> {
-        directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".mergepilot/config.json"))
+    fn legacy_config_path(&self) -> Option<PathBuf> {
+        self.legacy_config_path_override
+            .clone()
+            .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".mergepilot/config.json")))
     }
 
-    fn config_path() -> Result<PathBuf, AppError> {
+    fn config_path(&self) -> Result<PathBuf, AppError> {
+        if let Some(path) = &self.config_path_override {
+            return Ok(path.clone());
+        }
         Ok(Self::storage_dir()?.join("config.json"))
     }
 
-    fn read_config() -> Result<HashMap<String, String>, AppError> {
-        let path = Self::config_path()?;
+    fn read_config(&self) -> Result<HashMap<String, String>, AppError> {
+        let path = self.config_path()?;
         if !path.exists() {
-            if let Some(legacy_path) = Self::legacy_config_path().filter(|path| path.exists()) {
+            if let Some(legacy_path) = self.legacy_config_path().filter(|path| path.exists()) {
                 let content = fs::read_to_string(&legacy_path)?;
                 let config: HashMap<String, String> = serde_json::from_str(&content)?;
-                Self::write_config(&config)?;
+                self.write_config(&config)?;
                 fs::remove_file(legacy_path)?;
                 return Ok(config);
             }
@@ -86,8 +115,8 @@ impl TokenVault {
         Ok(serde_json::from_str(&content)?)
     }
 
-    fn write_config(config: &HashMap<String, String>) -> Result<(), AppError> {
-        let path = Self::config_path()?;
+    fn write_config(&self, config: &HashMap<String, String>) -> Result<(), AppError> {
+        let path = self.config_path()?;
         Self::write_config_to(&path, config)
     }
 
@@ -133,33 +162,35 @@ impl TokenVault {
         Self::keyring_entry_for(LEGACY_KEYRING_SERVICE, platform)
     }
 
-    fn store_encrypted(platform: &str, token: &str) -> Result<(), AppError> {
-        let mut config = Self::read_config()?;
+    fn store_encrypted(&self, platform: &str, token: &str) -> Result<(), AppError> {
+        let mut config = self.read_config()?;
         let encrypted = encrypt(token).map_err(AppError::Unknown)?;
         config.insert(format!("token_encrypted_{platform}"), encrypted);
         config.remove(&format!("token_{platform}"));
-        Self::write_config(&config)
+        self.write_config(&config)
     }
 
     pub fn store_token(&self, platform: &str, token: &str) -> Result<CredentialStorage, AppError> {
         if Self::keyring_is_persistent() {
             if let Ok(entry) = Self::keyring_entry(platform) {
                 if entry.set_password(token).is_ok() {
-                    let mut config = Self::read_config()?;
+                    let mut config = self.read_config()?;
                     config.remove(&format!("token_encrypted_{platform}"));
                     config.remove(&format!("token_{platform}"));
-                    Self::write_config(&config)?;
+                    self.write_config(&config)?;
                     self.cache_token(platform, token);
                     return Ok(CredentialStorage::SystemKeyring);
                 }
             }
         }
-        Self::store_encrypted(platform, token)?;
+        self.store_encrypted(platform, token)?;
         self.cache_token(platform, token);
         Ok(CredentialStorage::EncryptedFile)
     }
 
     pub fn get_token(&self, platform: &str) -> Result<Option<String>, AppError> {
+        // Keep adapter construction on the memory-only hot path after the first successful load.
+        // `delete_token` invalidates this entry before touching persistent storage.
         if let Some(token) = self.cached_token(platform) {
             return Ok(Some(token));
         }
@@ -186,7 +217,7 @@ impl TokenVault {
             }
         }
 
-        let config = Self::read_config()?;
+        let config = self.read_config()?;
         if let Some(value) = config.get(&format!("token_encrypted_{platform}")) {
             let token = decrypt(value).map_err(AppError::Unknown)?;
             self.cache_token(platform, &token);
@@ -201,7 +232,7 @@ impl TokenVault {
     }
 
     pub fn credential_storage(&self, platform: &str) -> Result<Option<CredentialStorage>, AppError> {
-        let config = Self::read_config()?;
+        let config = self.read_config()?;
         if config.contains_key(&format!("token_encrypted_{platform}"))
             || config.contains_key(&format!("token_{platform}"))
         {
@@ -220,19 +251,45 @@ impl TokenVault {
     }
 
     pub fn store_custom_url(&self, platform: &str, url: &str) -> Result<(), AppError> {
-        let mut config = Self::read_config()?;
+        let mut config = self.read_config()?;
         config.insert(format!("url_{platform}"), url.to_string());
-        Self::write_config(&config)
+        self.write_config(&config)?;
+        self.replace_custom_url_cache(&config);
+        Ok(())
     }
 
     pub fn get_custom_url(&self, platform: &str) -> Option<String> {
-        Self::read_config().ok().and_then(|config| config.get(&format!("url_{platform}")).cloned())
+        if let Some(cached) = self.custom_urls.read().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref() {
+            return cached.get(platform).cloned();
+        }
+
+        let config = self.read_config().ok()?;
+        let custom_urls = Self::custom_urls_from_config(&config);
+        let mut cache = self.custom_urls.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cache.is_none() {
+            *cache = Some(custom_urls);
+        }
+        cache.as_ref()?.get(platform).cloned()
     }
 
     pub fn delete_custom_url(&self, platform: &str) -> Result<(), AppError> {
-        let mut config = Self::read_config()?;
+        let mut config = self.read_config()?;
         config.remove(&format!("url_{platform}"));
-        Self::write_config(&config)
+        self.write_config(&config)?;
+        self.replace_custom_url_cache(&config);
+        Ok(())
+    }
+
+    fn custom_urls_from_config(config: &HashMap<String, String>) -> HashMap<String, String> {
+        config
+            .iter()
+            .filter_map(|(key, value)| key.strip_prefix("url_").map(|platform| (platform.to_string(), value.clone())))
+            .collect()
+    }
+
+    fn replace_custom_url_cache(&self, config: &HashMap<String, String>) {
+        *self.custom_urls.write().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some(Self::custom_urls_from_config(config));
     }
 
     pub fn delete_token(&self, platform: &str) -> Result<(), AppError> {
@@ -253,10 +310,10 @@ impl TokenVault {
                 }
             }
         }
-        let mut config = Self::read_config()?;
+        let mut config = self.read_config()?;
         config.remove(&format!("token_encrypted_{platform}"));
         config.remove(&format!("token_{platform}"));
-        Self::write_config(&config)?;
+        self.write_config(&config)?;
         if let Some(error) = keyring_error {
             return Err(AppError::Unknown(format!("Failed to remove token from system keyring: {error}")));
         }
@@ -314,8 +371,52 @@ fn sync_directory(_path: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::crypto::encrypt;
 
     use super::TokenVault;
+
+    struct TestVault {
+        root: PathBuf,
+        config_path: PathBuf,
+        legacy_config_path: PathBuf,
+        vault: TokenVault,
+    }
+
+    impl TestVault {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after Unix epoch")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!("mergebeacon-vault-test-{}-{nonce}", std::process::id()));
+            let config_path = root.join("current/config.json");
+            let legacy_config_path = root.join("legacy/config.json");
+            std::fs::create_dir_all(config_path.parent().expect("config path should have a parent"))
+                .expect("current config directory should be created");
+            std::fs::create_dir_all(legacy_config_path.parent().expect("legacy path should have a parent"))
+                .expect("legacy config directory should be created");
+            let vault = TokenVault::with_config_paths(config_path.clone(), legacy_config_path.clone());
+            Self { root, config_path, legacy_config_path, vault }
+        }
+
+        fn write_config(path: &Path, config: &HashMap<String, String>) {
+            TokenVault::write_config_to(path, config).expect("test config should be written");
+        }
+
+        fn read_current_config(&self) -> HashMap<String, String> {
+            serde_json::from_slice(&std::fs::read(&self.config_path).expect("current config should be readable"))
+                .expect("current config should be valid JSON")
+        }
+    }
+
+    impl Drop for TestVault {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
 
     #[test]
     fn configured_keyring_backend_persists_across_processes() {
@@ -343,6 +444,25 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_file_token_is_loaded_once_then_reused_from_session_cache() {
+        let fixture = TestVault::new();
+        let platform = format!(
+            "fallback-cache-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after Unix epoch").as_nanos()
+        );
+        let encrypted = encrypt("secret-token").expect("test token should be encrypted");
+        TestVault::write_config(
+            &fixture.config_path,
+            &HashMap::from([(format!("token_encrypted_{platform}"), encrypted)]),
+        );
+
+        assert_eq!(fixture.vault.get_token(&platform).unwrap().as_deref(), Some("secret-token"));
+
+        std::fs::write(&fixture.config_path, b"invalid json").expect("config should be corrupted after the first load");
+        assert_eq!(fixture.vault.get_token(&platform).unwrap().as_deref(), Some("secret-token"));
+    }
+
+    #[test]
     fn config_write_succeeds_in_user_directory() {
         let test_dir = std::env::temp_dir().join(format!(
             "mergebeacon-vault-test-{}-{:?}",
@@ -361,5 +481,75 @@ mod tests {
         assert_eq!(stored, config);
 
         std::fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn custom_url_is_loaded_once_and_reused_from_cache() {
+        let fixture = TestVault::new();
+        TestVault::write_config(
+            &fixture.config_path,
+            &HashMap::from([("url_gitlab".to_string(), "https://gitlab.example/api/v4".to_string())]),
+        );
+
+        assert_eq!(fixture.vault.get_custom_url("gitlab").as_deref(), Some("https://gitlab.example/api/v4"));
+
+        TestVault::write_config(
+            &fixture.config_path,
+            &HashMap::from([("url_gitlab".to_string(), "https://changed.example/api/v4".to_string())]),
+        );
+        assert_eq!(fixture.vault.get_custom_url("gitlab").as_deref(), Some("https://gitlab.example/api/v4"));
+    }
+
+    #[test]
+    fn storing_custom_url_updates_persistence_and_cache() {
+        let fixture = TestVault::new();
+        TestVault::write_config(
+            &fixture.config_path,
+            &HashMap::from([("url_gitlab".to_string(), "https://old.example/api/v4".to_string())]),
+        );
+        assert_eq!(fixture.vault.get_custom_url("gitlab").as_deref(), Some("https://old.example/api/v4"));
+
+        fixture.vault.store_custom_url("gitlab", "https://new.example/api/v4").expect("custom URL should be stored");
+
+        assert_eq!(fixture.vault.get_custom_url("gitlab").as_deref(), Some("https://new.example/api/v4"));
+        assert_eq!(
+            fixture.read_current_config().get("url_gitlab").map(String::as_str),
+            Some("https://new.example/api/v4")
+        );
+    }
+
+    #[test]
+    fn deleting_custom_url_updates_persistence_and_cache() {
+        let fixture = TestVault::new();
+        TestVault::write_config(
+            &fixture.config_path,
+            &HashMap::from([
+                ("url_gitlab".to_string(), "https://gitlab.example/api/v4".to_string()),
+                ("url_gitee".to_string(), "https://gitee.example/api/v5".to_string()),
+            ]),
+        );
+        assert_eq!(fixture.vault.get_custom_url("gitlab").as_deref(), Some("https://gitlab.example/api/v4"));
+
+        fixture.vault.delete_custom_url("gitlab").expect("custom URL should be deleted");
+
+        assert_eq!(fixture.vault.get_custom_url("gitlab"), None);
+        assert_eq!(fixture.vault.get_custom_url("gitee").as_deref(), Some("https://gitee.example/api/v5"));
+        assert!(!fixture.read_current_config().contains_key("url_gitlab"));
+    }
+
+    #[test]
+    fn legacy_custom_url_is_migrated_before_cache_is_populated() {
+        let fixture = TestVault::new();
+        TestVault::write_config(
+            &fixture.legacy_config_path,
+            &HashMap::from([("url_gitlab".to_string(), "https://legacy.example/api/v4".to_string())]),
+        );
+
+        assert_eq!(fixture.vault.get_custom_url("gitlab").as_deref(), Some("https://legacy.example/api/v4"));
+        assert!(fixture.config_path.exists());
+        assert!(!fixture.legacy_config_path.exists());
+
+        std::fs::remove_file(&fixture.config_path).expect("migrated config should be removable");
+        assert_eq!(fixture.vault.get_custom_url("gitlab").as_deref(), Some("https://legacy.example/api/v4"));
     }
 }

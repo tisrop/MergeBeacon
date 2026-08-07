@@ -1161,6 +1161,15 @@ describe("DiffViewer 受控标准 patch", () => {
 
     expect(wrapper.find(".controlled-side-by-side").exists()).toBe(true);
     expect(wrapper.find(".media-preview-grid").exists()).toBe(false);
+
+    await wrapper.get('[aria-label="查找代码"]').trigger("click");
+    expect(wrapper.find(".code-search-pane").exists()).toBe(true);
+
+    await wrapper.findAll(".media-view-toggle button")[1].trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".code-search-pane").exists()).toBe(false);
+    expect(wrapper.find(".media-preview-grid").exists()).toBe(true);
   });
 
   it("新增的 fork SVG 使用 UTF-8 base64 渲染完整样式内容", async () => {

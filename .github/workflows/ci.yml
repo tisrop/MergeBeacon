@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Check application versions
         run: node .github/checks/version-consistency.mjs
@@ -41,30 +41,31 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: pnpm/setup@v2
+        with:
+          install: false
+
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
-          cache: npm
+          node-version-file: .node-version
+          cache: pnpm
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       - name: Lint (oxlint)
-        run: npm run lint
+        run: pnpm run lint
 
       - name: Frontend standards
-        run: npm run check:frontend-standards
+        run: pnpm run check:frontend-standards
 
       - name: Format check (oxfmt)
-        run: npm run format
-
-      - name: Type check
-        run: npx vue-tsc --noEmit
+        run: pnpm run format
 
       - name: Build frontend
-        run: npm run build
+        run: pnpm run build
 
       - name: Unit tests
-        run: npm test
+        run: pnpm test
 
   rust-fmt-clippy:
     needs: changes
@@ -78,7 +79,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/.ghcup || true
           docker system prune -af || true
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.1
         with:
           components: clippy, rustfmt
 
@@ -118,7 +119,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/.ghcup || true
           docker system prune -af || true
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.1
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -140,8 +141,30 @@ jobs:
         working-directory: src-tauri
         run: cargo test --all
 
+  rust-platform-check:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@1.96.1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: ci-rust-platform-check
+
+      - name: Cargo check (${{ matrix.os }})
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
   rust:
-    needs: [changes, rust-fmt-clippy, rust-test]
+    needs: [changes, rust-fmt-clippy, rust-test, rust-platform-check]
     if: always() && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -153,6 +176,10 @@ jobs:
           fi
           if [ "${{ needs.rust-test.result }}" != "success" ]; then
             echo "rust-test result: ${{ needs.rust-test.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.rust-platform-check.result }}" != "success" ]; then
+            echo "rust-platform-check result: ${{ needs.rust-platform-check.result }}"
             exit 1
           fi
 
@@ -173,14 +200,20 @@ jobs:
           filters: |
             frontend:
               - 'src/**'
-              - '.github/checks/frontend-standards.mjs'
+              - '.github/checks/**'
               - '*.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.node-version'
+              - 'vite.config.*'
               - 'AGENTS.md'
               - 'CODE_STANDARDS.md'
               - 'FRONTEND_STANDARDS.md'
               - '.oxlintrc*'
               - '.oxfmtrc*'
               - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
+              - '.husky/**'
             rust:
               - 'src-tauri/**'
               - 'Cargo.toml'

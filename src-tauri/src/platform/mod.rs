@@ -188,6 +188,7 @@ fn compare_page_error_summary(error: &AppError) -> String {
         AppError::Json(_) => "响应 JSON 无效".into(),
         AppError::Io(_) => "本地 IO 失败".into(),
         AppError::NotAuthenticated(_) => "认证失效".into(),
+        AppError::InvalidPlatform(_) => "请求平台无效".into(),
         AppError::Api(message) => [401_u16, 403, 404, 408, 409, 422, 429, 500, 502, 503, 504]
             .into_iter()
             .find(|status| {

@@ -420,7 +420,7 @@ pub async fn pr_list(
     per_page: Option<u32>,
     query: Option<PrListQuery>,
 ) -> CommandResult<Paginated<PrSummary>> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let pr_state = match state_filter.as_deref() {
         Some("closed") => PrState::Closed,
         Some("merged") => PrState::Merged,
@@ -465,7 +465,7 @@ pub async fn pr_list_statuses(
     if numbers.is_empty() {
         return Ok(Vec::new());
     }
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let numbers = numbers.into_iter().collect::<Vec<_>>();
     let registry = state.pr_list_status_tasks.clone();
     let generation = registry.next_generation();
@@ -507,7 +507,7 @@ pub async fn pr_detail(
     repo: String,
     number: u64,
 ) -> CommandResult<PrDetail> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.get_pull_request(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -525,7 +525,7 @@ pub async fn pr_dependencies(
     if number == 0 {
         return Err("PR / MR 编号不能为空".into());
     }
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let candidates = p.list_pr_dependency_candidates(owner, repo, number).await.map_err(CommandError::from)?;
     build_pr_dependency_graph(candidates.items, number, Some(candidates.current), candidates.truncated)
         .map_err(CommandError::from)
@@ -549,7 +549,7 @@ pub async fn pr_merge_queue_status(
     if capabilities.merge_queue_kind.is_none() {
         return Err("当前平台不支持原生 Merge Queue / Merge Train".into());
     }
-    let adapter = build_adapter(&platform, &state)?;
+    let adapter = build_adapter(&platform, &state).await?;
     adapter.get_pr_merge_queue_status(owner, repo, number).await.map_err(CommandError::from)
 }
 
@@ -563,7 +563,7 @@ pub async fn pr_branches(
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
     validate_repo(&owner, &repo)?;
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.list_branches(&owner, &repo).await.map_err(CommandError::from)
 }
 
@@ -577,7 +577,7 @@ pub async fn pr_labels(
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
     validate_repo(&owner, &repo)?;
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.list_labels(&owner, &repo).await.map_err(CommandError::from)
 }
 
@@ -591,7 +591,7 @@ pub async fn pr_templates(
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
     validate_repo(&owner, &repo)?;
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.list_pr_templates(&owner, &repo).await.map_err(CommandError::from)
 }
 
@@ -615,7 +615,7 @@ pub async fn pr_description_image_upload(
     }
     let (file_name, content_type, content) =
         validate_pr_description_image_upload(&file_name, &content_type, &content_base64)?;
-    let adapter = build_adapter(&platform, &state)?;
+    let adapter = build_adapter(&platform, &state).await?;
     adapter
         .upload_pr_description_image(&owner, &repo, &file_name, &content_type, content)
         .await
@@ -632,7 +632,7 @@ pub async fn pr_participant_suggestions(
     let owner = owner.trim().to_string();
     let repo = repo.trim().to_string();
     validate_repo(&owner, &repo)?;
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.list_pr_participant_suggestions(&owner, &repo).await.map_err(CommandError::from)
 }
 
@@ -657,7 +657,7 @@ pub async fn pr_create_preview(
         return Err("当前平台不支持创建 PR / MR".into());
     }
 
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let preview = p.preview_pull_request(&owner, &repo, &request).await.map_err(CommandError::from)?;
     let patches = standardize_patches(&preview.diff, &preview.files);
     Ok(PrCreatePreview {
@@ -697,7 +697,7 @@ pub async fn pr_create(
         return Err("当前平台不支持创建 Draft PR / MR".into());
     }
 
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let number = p.create_pull_request(&owner, &repo, &request).await.map_err(CommandError::from)?;
     let mut detail = match p.get_pull_request(&owner, &repo, number).await {
         Ok(detail) => detail,
@@ -789,7 +789,7 @@ pub async fn pr_metadata_update(
     validate_repo(&owner, &repo)?;
     let update = validate_metadata_update(update)?;
     let capabilities = capabilities_for(&platform).ok_or_else(|| format!("不支持的平台：{platform}"))?;
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let current = p.get_pull_request(&owner, &repo, number).await.map_err(CommandError::from)?;
     if !update.expected_updated_at.trim().is_empty() && current.summary.updated_at != update.expected_updated_at {
         return Err("PR 元数据已在远端更新，请刷新详情后重试".into());
@@ -834,7 +834,7 @@ pub async fn pr_merge_readiness(
     repo: String,
     number: u64,
 ) -> CommandResult<PrMergeReadiness> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.get_merge_readiness(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -846,7 +846,7 @@ pub async fn pr_diff(
     repo: String,
     number: u64,
 ) -> CommandResult<DiffResult> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let (diff, files) = p.get_pr_diff(&owner, &repo, number).await.map_err(CommandError::from)?;
     let patches = standardize_patches(&diff, &files);
     Ok(DiffResult { diff, files, patch_schema_version: PATCH_SCHEMA_VERSION, patches })
@@ -861,7 +861,7 @@ pub async fn pr_commits(
     number: u64,
 ) -> CommandResult<PrCommitList> {
     validate_repo(&owner, &repo)?;
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.list_pr_commits(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -876,7 +876,7 @@ pub async fn pr_compare_diff(
 ) -> CommandResult<DiffResult> {
     validate_compare_request(&owner, &repo, &base_sha, &head_sha)?;
 
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let (diff, files) = p.get_compare_diff(&owner, &repo, &base_sha, &head_sha).await.map_err(CommandError::from)?;
     let patches = standardize_patches(&diff, &files);
     Ok(DiffResult { diff, files, patch_schema_version: PATCH_SCHEMA_VERSION, patches })
@@ -895,7 +895,7 @@ pub async fn pr_file_content(
     validate_repo(&owner, &repo)?;
     crate::file_content::validate_request(&path, &revision).map_err(CommandError::from)?;
     let maximum_content_bytes = crate::file_content::preview_content_limit(&path, media_preview.unwrap_or(false));
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.get_pr_file_content_with_limit(&owner, &repo, &path, &revision, maximum_content_bytes)
         .await
         .map_err(CommandError::from)
@@ -914,7 +914,7 @@ pub async fn pr_merge(
     commit_message: Option<String>,
     close_issues: Option<bool>,
 ) -> CommandResult<PrMergeOutcome> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let pr_detail = p.get_pull_request(&owner, &repo, number).await.map_err(CommandError::from)?;
     let merge_strategy = match strategy.as_str() {
         "squash" => MergeStrategy::Squash,
@@ -949,7 +949,7 @@ pub async fn pr_close(
     repo: String,
     number: u64,
 ) -> CommandResult<PrState> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.close_pull_request(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -961,7 +961,7 @@ pub async fn pr_reopen(
     repo: String,
     number: u64,
 ) -> CommandResult<PrState> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.reopen_pull_request(&owner, &repo, number).await.map_err(CommandError::from)
 }
 

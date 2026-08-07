@@ -380,6 +380,28 @@ describe("PrListPage 截断提示", () => {
     expect(mocks.prStore.fetchPrList).toHaveBeenCalledWith("github", "other", "repo");
   });
 
+  it("窗口重新聚焦时强制静默刷新当前仓库计数，并在卸载后移除监听", async () => {
+    mocks.authStore.isLoggedIn = true;
+    const wrapper = mountPage("github");
+    await flushPromises();
+    mocks.prStore.fetchStateCounts.mockClear();
+
+    window.dispatchEvent(new Event("focus"));
+    await Promise.resolve();
+
+    expect(mocks.prStore.fetchStateCounts).toHaveBeenCalledOnce();
+    expect(mocks.prStore.fetchStateCounts).toHaveBeenCalledWith("github", "team", "repo", {
+      forceRefresh: true,
+    });
+
+    wrapper.unmount();
+    mocks.prStore.fetchStateCounts.mockClear();
+    window.dispatchEvent(new Event("focus"));
+    await Promise.resolve();
+
+    expect(mocks.prStore.fetchStateCounts).not.toHaveBeenCalled();
+  });
+
   it("离开列表页时取消在途的 GitHub 状态补充", () => {
     const wrapper = mountPage("github");
 

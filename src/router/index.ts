@@ -1,17 +1,17 @@
 import { createRouter, createWebHistory } from "vue-router";
-import LoginPage from "@/pages/LoginPage.vue";
 import PrListPage from "@/pages/PrListPage.vue";
-import ReviewInboxPage from "@/pages/ReviewInboxPage.vue";
-import PrDetailPage from "@/pages/PrDetailPage.vue";
-import IssueListPage from "@/pages/IssueListPage.vue";
-import IssueDetailPage from "@/pages/IssueDetailPage.vue";
-import IssueNewPage from "@/pages/IssueNewPage.vue";
-import SettingsPage from "@/pages/SettingsPage.vue";
 import { recordSettingsEntry } from "@/services/settingsReturnNavigation";
 import { useAuthStore } from "@/stores/useAuthStore";
 import type { Platform } from "@/types";
 
+const LoginPage = () => import("@/pages/LoginPage.vue");
+const ReviewInboxPage = () => import("@/pages/ReviewInboxPage.vue");
 const PrNewPage = () => import("@/pages/PrNewPage.vue");
+const PrDetailPage = () => import("@/pages/PrDetailPage.vue");
+const IssueListPage = () => import("@/pages/IssueListPage.vue");
+const IssueNewPage = () => import("@/pages/IssueNewPage.vue");
+const IssueDetailPage = () => import("@/pages/IssueDetailPage.vue");
+const SettingsPage = () => import("@/pages/SettingsPage.vue");
 
 const routes = [
   {

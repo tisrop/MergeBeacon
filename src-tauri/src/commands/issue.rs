@@ -113,7 +113,7 @@ pub async fn issue_list(
     state_filter: Option<String>,
     page: Option<u32>,
 ) -> CommandResult<Paginated<IssueSummary>> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let issue_state = match state_filter.as_deref() {
         Some("closed") => IssueState::Closed,
         Some("all") => IssueState::All,
@@ -130,7 +130,7 @@ pub async fn issue_detail(
     repo: String,
     number: u64,
 ) -> CommandResult<Issue> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.get_issue(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -144,7 +144,7 @@ pub async fn issue_create(
     body: String,
     labels: Vec<String>,
 ) -> CommandResult<Issue> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.create_issue(&owner, &repo, &title, &body, &labels).await.map_err(CommandError::from)
 }
 
@@ -159,7 +159,7 @@ pub async fn issue_metadata_update(
 ) -> CommandResult<Issue> {
     validate_repo(&owner, &repo)?;
     let update = validate_metadata_update(update)?;
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     let current = p.get_issue(&owner, &repo, number).await.map_err(CommandError::from)?;
     ensure_issue_not_stale(&current, &update.expected_updated_at)?;
     let changed_fields = changed_metadata_fields(&current, &update);
@@ -180,7 +180,7 @@ pub async fn issue_comments_list(
     repo: String,
     number: u64,
 ) -> CommandResult<Vec<IssueComment>> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.list_issue_comments(&owner, &repo, number).await.map_err(CommandError::from)
 }
 
@@ -194,7 +194,7 @@ pub async fn issue_comment_add(
     body: String,
 ) -> CommandResult<IssueComment> {
     let body = validate_comment_body(body)?;
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.create_issue_comment(&owner, &repo, number, &body).await.map_err(CommandError::from)
 }
 
@@ -205,7 +205,7 @@ pub async fn issue_templates(
     repo: String,
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<IssueTemplate>> {
-    let p = build_adapter(&platform, &state)?;
+    let p = build_adapter(&platform, &state).await?;
     p.list_issue_templates(&owner, &repo).await.map_err(CommandError::from)
 }
 

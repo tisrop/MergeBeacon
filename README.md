@@ -2,7 +2,7 @@
 
 **简体中文** | [English](README.en.md)
 
-[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.96.1-orange.svg)](https://www.rust-lang.org)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue.svg)](https://v2.tauri.app)
 [![Vue](https://img.shields.io/badge/Vue-3.x-42b883.svg)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -156,8 +156,8 @@
 | 桌面框架 | Tauri 2、Single Instance、Window State、Updater |
 | 前端 | Vue 3、Composition API、Pinia、Vue Router |
 | 前端构建 | TypeScript、Vite 6 |
-| 代码规范 | oxlint + oxfmt + 前端规范检查器 |
-| 后端 | Rust 2021、Tokio、Reqwest |
+| 代码规范 | oxlint、oxfmt、前端规范、IPC 契约与入口包体积门禁 |
+| 后端 | Rust 2021（toolchain 1.96.1）、Tokio、Reqwest |
 | 平台抽象 | `GitPlatform` trait + GitHub / GitLab / Gitee Adapter |
 | Diff 渲染 | 标准化 patch、diff2html、highlight.js、代码搜索与受限图片 / 视频预览 |
 | AI | OpenAI 兼容 API、SSE Streaming、增量 Compare Diff |
@@ -169,8 +169,9 @@
 
 ### 环境要求
 
-- [Node.js](https://nodejs.org/) 20（项目 CI 使用的版本）
-- [Rust](https://www.rust-lang.org/tools/install) stable
+- [Node.js](https://nodejs.org/) 24（项目 CI 使用的版本）
+- pnpm 11（精确版本由 `package.json` 的 `packageManager` 固定）
+- [Rust](https://www.rust-lang.org/tools/install) 1.96.1（由 `rust-toolchain.toml` 固定）
 - 对应操作系统的 [Tauri 2 前置依赖](https://v2.tauri.app/start/prerequisites/)
 
 ### 安装与运行
@@ -179,24 +180,26 @@
 git clone https://github.com/tisrop/mergebeacon.git
 cd mergebeacon
 
-npm install
-npm run tauri -- dev
+pnpm install --frozen-lockfile
+pnpm run tauri -- dev
 ```
 
 仅启动 Web 前端：
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 ### 构建桌面应用
 
 ```bash
-npm run tauri -- build
+pnpm run tauri -- build
 ```
 
-构建前会自动运行 `npm run build`。Tauri 产物写入 `src-tauri/target/release/bundle/`；
-macOS `.app` 包名基于 `productName`，当前为 `MergeBeacon.app`。
+构建前会自动运行 `pnpm run build`。该脚本依次执行 TypeScript 类型检查、Vite 构建和入口包体积
+检查；`/pr` 首屏保持同步加载，其余低频页面按路由拆分，入口 JavaScript 预算为 400 KiB。
+Tauri 产物写入 `src-tauri/target/release/bundle/`；macOS `.app` 包名基于 `productName`，当前为
+`MergeBeacon.app`。
 
 ## 使用说明
 
@@ -344,10 +347,12 @@ mergebeacon/
 │   │   ├── pr/                  # PR 卡片、筛选器与合并就绪状态
 │   │   ├── review/              # 整体评审、评论列表
 │   │   └── shared/              # 共享表单与状态组件
+│   ├── composables/             # 异步请求/分页状态机、下拉定位等可复用逻辑
 │   ├── pages/                   # 9 个页面：登录、收件箱、PR、Issue 与设置
-│   ├── router/index.ts          # 11 条路由记录与登录恢复守卫
+│   ├── router/index.ts          # 11 条路由记录；/pr 同步加载，其余页面按需加载
 │   ├── stores/                  # 11 个 Pinia store：认证、能力、仓库、PR、Issue、通知与评审状态等
 │   └── types/index.ts           # 前端共享类型
+├── .github/checks/              # 版本、Updater、IPC、包体积与前端规范检查器及测试
 ├── src-tauri/
 │   ├── src/
 │   │   ├── ai/                  # OpenAI 兼容客户端、Prompt、配置
@@ -368,7 +373,10 @@ mergebeacon/
 ├── AGENTS.md                    # AI 编码代理的项目上下文与操作约束
 ├── CODE_STANDARDS.md            # 代码实现与评审规范
 ├── FRONTEND_STANDARDS.md        # 前端视觉、交互与可访问性规范
+├── .node-version                # CI 与本地 Node.js 主版本
 ├── package.json
+├── pnpm-workspace.yaml          # pnpm 工作区配置
+├── rust-toolchain.toml          # Rust、clippy 与 rustfmt 固定版本
 ├── README.en.md                 # English README
 └── README.md                    # 简体中文 README
 ```
@@ -387,18 +395,20 @@ Rust / Tauri 架构边界、跨平台行为、异步生命周期、凭据安全�
 
 ```bash
 # 前端类型检查、构建与测试
-npm run build
-npm test
+pnpm run build
+pnpm test
 
 # 代码检查、格式化和项目门禁
-npm run lint
-npm run format
-npm run check:frontend-standards
-npm run check:version
-npm run check:updater
-npm run check:frontend
-npm run lint:fix
-npm run format:fix
+pnpm run lint
+pnpm run format
+pnpm run check:frontend-standards
+pnpm run check:version
+pnpm run check:updater
+pnpm run check:ipc-contract
+pnpm run check:bundle-size
+pnpm run check:frontend
+pnpm run lint:fix
+pnpm run format:fix
 
 # Rust 格式、静态检查与测试
 cd src-tauri
@@ -406,6 +416,10 @@ cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 ```
+
+`pnpm run check:frontend` 会串行执行版本一致性、Updater 安全配置、IPC 契约、lint、format 和前端规范
+检查；`pnpm run build` 会在 Vite 构建后执行入口包体积检查。`check:ipc-contract` 会核对
+`src/api/index.ts` 的前端封装与 `src-tauri/src/lib.rs` 的命令注册表，防止命令遗漏、重复或白名单漂移。
 
 当前注册 70 个 Tauri Commands：
 

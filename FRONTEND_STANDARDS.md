@@ -35,6 +35,10 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 - 跨页面业务状态必须放入 Pinia。组件不得复制 store 已承担的请求、缓存或竞态控制逻辑。
 - `src/api/index.ts` 是唯一 Tauri IPC 入口；组件和 store 禁止直接调用 `invoke` 或其他 Tauri
   command API。
+- `/pr` 是启动首屏，必须在路由中保持静态导入；登录、收件箱、详情、创建、Issue 和设置等低频页面
+  使用路由级动态导入。不得以统一代码风格为由把首屏改成懒加载，或把低频页面重新并入入口包。
+- Vite 构建必须生成 manifest，并通过 400 KiB 入口 JavaScript 预算。新增重型依赖或页面功能时应优先
+  拆分异步 chunk；确需调整预算时必须提供实测启动影响和不可拆分依据。
 - 远端数据、平台能力、异步生命周期和安全规则必须遵循 `CODE_STANDARDS.md`，视觉优化不得改变
   这些语义或以占位数据掩盖缺失能力。
 - 未经讨论禁止引入 UI 框架、Tailwind、CSS-in-JS、图标字体或第二套状态管理方案。
@@ -325,16 +329,15 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 
 ### 12.3 提交门禁
 
-按变更范围运行检查。`npm run check:frontend-standards` 是 GitHub CI 的阻断项，用于检查
+按变更范围运行检查。`pnpm run check:frontend-standards` 是 GitHub CI 的阻断项，用于检查
 Tauri IPC 边界、`v-html`、未批准 UI 框架、焦点轮廓、显式 transition 和 `!important` 等可静态
-识别的硬规则。前端代码或样式变更至少执行：
+识别的硬规则；`check:ipc-contract` 和 `check:bundle-size` 分别保护前后端命令一致性、首屏静态导入
+与入口包预算。前端代码或样式变更至少执行：
 
 ```bash
-npm run lint
-npm run check:frontend-standards
-npm run format
-npm run build
-npm test
+pnpm run check:frontend
+pnpm run build
+pnpm test
 ```
 
 仅修改 Markdown 规范时至少执行 `git diff --check`。提交前还必须确认没有无关生成物、临时截图、

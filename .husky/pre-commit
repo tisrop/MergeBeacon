@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-npm run format:fix
+pnpm run format:fix
 
 TOPLEVEL=$(git rev-parse --show-toplevel)
 
@@ -9,7 +9,7 @@ TOPLEVEL=$(git rev-parse --show-toplevel)
 staged_frontend=$(git diff --staged --name-only --diff-filter=ACM -- 'src/' | grep -E '\.(ts|js|vue|css)$' || true)
 if [ -n "$staged_frontend" ]; then
   echo "Formatting staged frontend files with oxfmt"
-  npx oxfmt src/
+  pnpm exec oxfmt src/
   echo "$staged_frontend" | while IFS= read -r f; do
     git add "$TOPLEVEL/$f" 2>/dev/null || true
   done
