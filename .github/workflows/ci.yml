@@ -41,27 +41,31 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: pnpm/setup@v2
+        with:
+          install: false
+
       - uses: actions/setup-node@v6
         with:
           node-version-file: .node-version
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       - name: Lint (oxlint)
-        run: npm run lint
+        run: pnpm run lint
 
       - name: Frontend standards
-        run: npm run check:frontend-standards
+        run: pnpm run check:frontend-standards
 
       - name: Format check (oxfmt)
-        run: npm run format
+        run: pnpm run format
 
       - name: Build frontend
-        run: npm run build
+        run: pnpm run build
 
       - name: Unit tests
-        run: npm test
+        run: pnpm test
 
   rust-fmt-clippy:
     needs: changes
@@ -198,6 +202,8 @@ jobs:
               - 'src/**'
               - '.github/checks/**'
               - '*.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
               - '.node-version'
               - 'vite.config.*'
               - 'AGENTS.md'
@@ -206,6 +212,8 @@ jobs:
               - '.oxlintrc*'
               - '.oxfmtrc*'
               - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
+              - '.husky/**'
             rust:
               - 'src-tauri/**'
               - 'Cargo.toml'

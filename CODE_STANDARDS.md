@@ -162,11 +162,11 @@ OpenSpec 变更。`AGENTS.md` 记录项目上下文和操作约束；本文定�
 按变更范围运行检查；提交前完整门禁为：
 
 ```bash
-npm run lint
-npm run check:frontend-standards
-npm run format
-npm run build
-npm test
+pnpm run lint
+pnpm run check:frontend-standards
+pnpm run format
+pnpm run build
+pnpm test
 cd src-tauri
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings

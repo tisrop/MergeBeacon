@@ -14,18 +14,18 @@ Rust/Tauri、跨平台语义、异步生命周期、安全、测试和合并门�
 ## 开发者命令
 
 ```bash
-npm run dev              # 仅前端 Vite dev server（port 1420）
-npm run tauri -- dev     # 完整 Tauri 桌面应用（dev server + 原生窗口）
-npm run build            # vue-tsc --noEmit 类型检查 → vite build
-npm run tauri -- build   # 生产构建，产物在 src-tauri/target/release/bundle/
-npm run lint             # oxlint 静态检查
-npm run lint:fix         # oxlint 安全自动修复
-npm run format           # oxfmt 格式检查
-npm run format:fix       # oxfmt 格式化
-npm run check:version     # package / Cargo / Tauri 版本一致性
-npm run check:updater     # updater 公钥、端点和产物配置检查
-npm run check:frontend    # 版本/updater + oxlint + oxfmt + 前端规范检查器
-npm test                 # Vitest（Vue Test Utils + jsdom）
+pnpm run dev              # 仅前端 Vite dev server（port 1420）
+pnpm run tauri -- dev     # 完整 Tauri 桌面应用（dev server + 原生窗口）
+pnpm run build            # vue-tsc --noEmit 类型检查 → vite build
+pnpm run tauri -- build   # 生产构建，产物在 src-tauri/target/release/bundle/
+pnpm run lint             # oxlint 静态检查
+pnpm run lint:fix         # oxlint 安全自动修复
+pnpm run format           # oxfmt 格式检查
+pnpm run format:fix       # oxfmt 格式化
+pnpm run check:version     # package / Cargo / Tauri 版本一致性
+pnpm run check:updater     # updater 公钥、端点和产物配置检查
+pnpm run check:frontend    # 版本/updater + oxlint + oxfmt + 前端规范检查器
+pnpm test                 # Vitest（Vue Test Utils + jsdom）
 cd src-tauri && cargo fmt --all -- --check
 cd src-tauri && cargo clippy --all-targets -- -D warnings
 cd src-tauri && cargo test
@@ -159,7 +159,7 @@ src-tauri/
 
 ## 测试
 
-- 前端：Vitest + Vue Test Utils + jsdom，测试位于各模块 `__tests__/*.spec.ts`，运行 `npm test`。
+- 前端：Vitest + Vue Test Utils + jsdom，测试位于各模块 `__tests__/*.spec.ts`，运行 `pnpm test`。
 - Rust：单元测试覆盖 TokenVault、UTF-8 截断、SSE、AI 响应解析、API base、patch、文件内容、
   updater 输入边界、诊断脱敏、单实例与窗口恢复；WireMock 覆盖三个平台 Adapter。
 - 命名集成测试目标：`github_adapter`、`gitlab_adapter`、`gitee_adapter`。
@@ -168,9 +168,9 @@ src-tauri/
 - 提交前完整执行：
 
 ```bash
-npm run check:frontend
-npm run build
-npm test
+pnpm run check:frontend
+pnpm run build
+pnpm test
 cd src-tauri
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
@@ -180,7 +180,7 @@ cargo test
 ## 构建与部署
 
 - macOS bundle：`MergeBeacon.app`，identifier：`com.mergebeacon`。
-- 构建前自动执行 `npm run build`；前端产物在 `dist/`，Rust/bundle 在 `src-tauri/target/`。
+- 构建前自动执行 `pnpm run build`；前端产物在 `dist/`，Rust/bundle 在 `src-tauri/target/`。
 - 生产 CSP 在 `src-tauri/tauri.conf.json`；修改网络或资源来源时同步审查 CSP，不得放宽远程脚本。
 - macOS entitlement：`src-tauri/mergebeacon.entitlements`。
 

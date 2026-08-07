@@ -170,6 +170,7 @@
 ### 环境要求
 
 - [Node.js](https://nodejs.org/) 24（项目 CI 使用的版本）
+- pnpm 11（精确版本由 `package.json` 的 `packageManager` 固定）
 - [Rust](https://www.rust-lang.org/tools/install) stable
 - 对应操作系统的 [Tauri 2 前置依赖](https://v2.tauri.app/start/prerequisites/)
 
@@ -179,23 +180,23 @@
 git clone https://github.com/tisrop/mergebeacon.git
 cd mergebeacon
 
-npm install
-npm run tauri -- dev
+pnpm install --frozen-lockfile
+pnpm run tauri -- dev
 ```
 
 仅启动 Web 前端：
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 ### 构建桌面应用
 
 ```bash
-npm run tauri -- build
+pnpm run tauri -- build
 ```
 
-构建前会自动运行 `npm run build`。Tauri 产物写入 `src-tauri/target/release/bundle/`；
+构建前会自动运行 `pnpm run build`。Tauri 产物写入 `src-tauri/target/release/bundle/`；
 macOS `.app` 包名基于 `productName`，当前为 `MergeBeacon.app`。
 
 ## 使用说明
@@ -387,18 +388,18 @@ Rust / Tauri 架构边界、跨平台行为、异步生命周期、凭据安全�
 
 ```bash
 # 前端类型检查、构建与测试
-npm run build
-npm test
+pnpm run build
+pnpm test
 
 # 代码检查、格式化和项目门禁
-npm run lint
-npm run format
-npm run check:frontend-standards
-npm run check:version
-npm run check:updater
-npm run check:frontend
-npm run lint:fix
-npm run format:fix
+pnpm run lint
+pnpm run format
+pnpm run check:frontend-standards
+pnpm run check:version
+pnpm run check:updater
+pnpm run check:frontend
+pnpm run lint:fix
+pnpm run format:fix
 
 # Rust 格式、静态检查与测试
 cd src-tauri

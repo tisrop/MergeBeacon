@@ -224,6 +224,7 @@ reviews through an OpenAI-compatible API.
 ### Requirements
 
 - [Node.js](https://nodejs.org/) 24, the version used by project CI
+- pnpm 11 (the exact version is pinned by `packageManager` in `package.json`)
 - [Rust](https://www.rust-lang.org/tools/install) stable
 - The [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system
 
@@ -233,23 +234,23 @@ reviews through an OpenAI-compatible API.
 git clone https://github.com/tisrop/mergebeacon.git
 cd mergebeacon
 
-npm install
-npm run tauri -- dev
+pnpm install --frozen-lockfile
+pnpm run tauri -- dev
 ```
 
 To run only the web frontend:
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 ### Build the desktop application
 
 ```bash
-npm run tauri -- build
+pnpm run tauri -- build
 ```
 
-The build runs `npm run build` automatically. Tauri writes artifacts to
+The build runs `pnpm run build` automatically. Tauri writes artifacts to
 `src-tauri/target/release/bundle/`. The macOS `.app` bundle name follows `productName` and is currently
 `MergeBeacon.app`.
 
@@ -474,18 +475,18 @@ context, updates, or merge outcomes must include regression tests for success, f
 
 ```bash
 # Frontend type checking, build, and tests
-npm run build
-npm test
+pnpm run build
+pnpm test
 
 # Linting, formatting, and project gates
-npm run lint
-npm run format
-npm run check:frontend-standards
-npm run check:version
-npm run check:updater
-npm run check:frontend
-npm run lint:fix
-npm run format:fix
+pnpm run lint
+pnpm run format
+pnpm run check:frontend-standards
+pnpm run check:version
+pnpm run check:updater
+pnpm run check:frontend
+pnpm run lint:fix
+pnpm run format:fix
 
 # Rust formatting, static checks, and tests
 cd src-tauri

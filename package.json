@@ -9,17 +9,17 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build && npm run check:bundle-size",
+    "build": "vue-tsc --noEmit && vite build && pnpm run check:bundle-size",
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "oxlint src/ .github/checks/ --report-unused-disable-directives",
     "check:frontend-standards": "node .github/checks/frontend-standards.mjs",
     "lint:fix": "oxlint src/ .github/checks/ --fix --report-unused-disable-directives",
-    "format": "oxfmt --check src/ .github/checks/ package.json .oxlintrc.json .oxfmtrc.json",
-    "format:fix": "oxfmt src/ .github/checks/ package.json .oxlintrc.json .oxfmtrc.json",
+    "format": "oxfmt --check src/ .github/checks/ package.json pnpm-workspace.yaml .oxlintrc.json .oxfmtrc.json",
+    "format:fix": "oxfmt src/ .github/checks/ package.json pnpm-workspace.yaml .oxlintrc.json .oxfmtrc.json",
     "prepare": "husky",
     "test": "vitest run",
-    "check:frontend": "npm run check:version && npm run check:updater && npm run check:ipc-contract && npm run lint && npm run format && npm run check:frontend-standards",
+    "check:frontend": "pnpm run check:version && pnpm run check:updater && pnpm run check:ipc-contract && pnpm run lint && pnpm run format && pnpm run check:frontend-standards",
     "check:version": "node .github/checks/version-consistency.mjs",
     "check:updater": "node .github/checks/updater-config.mjs",
     "check:bundle-size": "node .github/checks/bundle-size.mjs",
@@ -47,5 +47,6 @@
     "vite": "^6.0.5",
     "vitest": "^4.1.10",
     "vue-tsc": "^2.2.0"
-  }
+  },
+  "packageManager": "pnpm@11.20.0"
 }

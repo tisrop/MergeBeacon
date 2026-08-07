@@ -325,16 +325,16 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 
 ### 12.3 提交门禁
 
-按变更范围运行检查。`npm run check:frontend-standards` 是 GitHub CI 的阻断项，用于检查
+按变更范围运行检查。`pnpm run check:frontend-standards` 是 GitHub CI 的阻断项，用于检查
 Tauri IPC 边界、`v-html`、未批准 UI 框架、焦点轮廓、显式 transition 和 `!important` 等可静态
 识别的硬规则。前端代码或样式变更至少执行：
 
 ```bash
-npm run lint
-npm run check:frontend-standards
-npm run format
-npm run build
-npm test
+pnpm run lint
+pnpm run check:frontend-standards
+pnpm run format
+pnpm run build
+pnpm test
 ```
 
 仅修改 Markdown 规范时至少执行 `git diff --check`。提交前还必须确认没有无关生成物、临时截图、

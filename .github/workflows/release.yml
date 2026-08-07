@@ -128,10 +128,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: pnpm/setup@v2
+        with:
+          install: false
+
       - uses: actions/setup-node@v6
         with:
           node-version-file: .node-version
-          cache: npm
+          cache: pnpm
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -238,13 +242,13 @@ jobs:
             echo "$PASSWORD_DELIMITER"
           } >> "$GITHUB_ENV"
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       - name: Verify updater signing key
         shell: bash
         run: |
           printf 'MergeBeacon updater signing preflight' > "$RUNNER_TEMP/updater-signing-preflight"
-          npm run tauri -- signer sign "$RUNNER_TEMP/updater-signing-preflight"
+          pnpm run tauri -- signer sign "$RUNNER_TEMP/updater-signing-preflight"
 
       - name: Configure Apple signing env vars (macOS)
         if: startsWith(matrix.platform, 'macos')
