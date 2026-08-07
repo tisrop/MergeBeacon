@@ -960,6 +960,7 @@ async function handleSubmit(): Promise<void> {
       assignees: platformCapabilities.value?.supports_pr_assignee_management ? assignees.value : [],
       labels: platformCapabilities.value?.supports_pr_label_management ? labels.value : [],
     });
+    prStore.invalidateStateCounts(platform, target.owner, target.repo);
     repoStore.setActiveRepo(target.owner, target.repo, platform);
     repoStore.setForkContext(null, platform);
     prStore.clearContext();

@@ -37,6 +37,14 @@ import { translate } from "@/i18n";
 import { useAsyncRequest } from "@/composables/useAsyncRequest";
 
 const PAGE_SIZES = [10, 20, 50, 100] as const;
+export const PR_STATE_COUNTS_TTL_MS = 30_000;
+export const PR_STATE_COUNTS_CACHE_MAX_ENTRIES = 32;
+const PR_STATES: PrState[] = ["open", "closed", "merged", "all"];
+
+function emptyStateCounts(): Record<PrState, number> {
+  return { open: 0, closed: 0, merged: 0, all: 0 };
+}
+
 export const DEFAULT_LIST_QUERY: Readonly<Required<PrListQuery>> = {
   title: "",
   author: "",
@@ -81,12 +89,7 @@ export const usePrStore = defineStore("pr", () => {
   });
   const listQuery = ref<PrListQuery>({ ...DEFAULT_LIST_QUERY });
   const hasListQuery = computed(() => !isDefaultPrListQuery(listQuery.value));
-  const stateCounts = ref<Record<PrState, number>>({
-    open: 0,
-    closed: 0,
-    merged: 0,
-    all: 0,
-  });
+  const stateCounts = ref<Record<PrState, number>>(emptyStateCounts());
   let listRequestSequence = 0;
   const detailRequest = useAsyncRequest();
   const diffRequest = useAsyncRequest();
@@ -98,6 +101,12 @@ export const usePrStore = defineStore("pr", () => {
   let listContextKey = "";
   let detailContextKey = "";
   let activeListStatusRequestId: string | null = null;
+  let countsContextKey = "";
+  let countsRefresh: { key: string; promise: Promise<void> } | null = null;
+  const stateCountsCache = new Map<
+    string,
+    { counts: Record<PrState, number>; expiresAt: number }
+  >();
 
   function cancelListStatusSupplement() {
     const requestId = activeListStatusRequestId;
@@ -122,11 +131,13 @@ export const usePrStore = defineStore("pr", () => {
     diffRequest.cancel();
     commitsRequest.cancel();
     countsRequest.cancel();
+    countsRefresh = null;
     readinessRequest.cancel();
     metadataRequest.cancel();
     cancelListStatusSupplement();
     listContextKey = "";
     detailContextKey = "";
+    countsContextKey = "";
     list.value = [];
     currentPr.value = null;
     diff.value = null;
@@ -140,7 +151,7 @@ export const usePrStore = defineStore("pr", () => {
     totalPages.value = 1;
     listTotalCount.value = 0;
     listTruncated.value = false;
-    stateCounts.value = { open: 0, closed: 0, merged: 0, all: 0 };
+    stateCounts.value = emptyStateCounts();
     return filtersChanged;
   }
 
@@ -491,20 +502,122 @@ export const usePrStore = defineStore("pr", () => {
     setListQuery({ ...DEFAULT_LIST_QUERY });
   }
 
-  async function fetchStateCounts(platform: Platform, owner: string, repo: string) {
+  function stateCountsKey(platform: Platform, owner: string, repo: string): string {
+    return `${platform}:${owner}/${repo}`;
+  }
+
+  function readStateCountsCache(
+    key: string,
+  ): { counts: Record<PrState, number>; expiresAt: number } | undefined {
+    const cached = stateCountsCache.get(key);
+    if (!cached) return undefined;
+    // Map 保留插入顺序；命中后重新插入，使最久未使用的条目始终位于首位。
+    stateCountsCache.delete(key);
+    stateCountsCache.set(key, cached);
+    return cached;
+  }
+
+  function writeStateCountsCache(
+    key: string,
+    cached: { counts: Record<PrState, number>; expiresAt: number },
+  ): void {
+    stateCountsCache.delete(key);
+    stateCountsCache.set(key, cached);
+    while (stateCountsCache.size > PR_STATE_COUNTS_CACHE_MAX_ENTRIES) {
+      const oldestKey = stateCountsCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      stateCountsCache.delete(oldestKey);
+    }
+  }
+
+  function invalidateStateCounts(platform: Platform, owner: string, repo: string): void {
+    const key = stateCountsKey(platform, owner, repo);
+    const cached = stateCountsCache.get(key);
+    if (cached) {
+      writeStateCountsCache(key, { ...cached, expiresAt: 0 });
+    }
+    if (countsRefresh?.key === key) {
+      countsRequest.cancel();
+      countsRefresh = null;
+    }
+  }
+
+  async function refreshStateCounts(
+    platform: Platform,
+    owner: string,
+    repo: string,
+    key: string,
+  ): Promise<void> {
     const sequence = countsRequest.beginSilent();
     // 三个平台没有统一的批量状态计数接口；用最小分页并发读取 total_count，
     // 并通过 allSettled 保留单个状态失败时的其他计数。
-    const states: PrState[] = ["open", "closed", "merged", "all"];
-    const results = await Promise.allSettled(
-      states.map((state) => prList(platform, owner, repo, state, 1, 1)),
-    );
-    if (!countsRequest.isCurrent(sequence)) return;
-    results.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        stateCounts.value[states[index]] = result.value.total_count;
+    try {
+      const results = await Promise.allSettled(
+        PR_STATES.map((state) => prList(platform, owner, repo, state, 1, 1)),
+      );
+      if (!countsRequest.isCurrent(sequence)) return;
+
+      const nextCounts = {
+        ...(stateCountsCache.get(key)?.counts ?? emptyStateCounts()),
+      };
+      let successfulStates = 0;
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          nextCounts[PR_STATES[index]] = result.value.total_count;
+          successfulStates += 1;
+        }
+      });
+      if (successfulStates === 0) return;
+
+      writeStateCountsCache(key, {
+        counts: nextCounts,
+        expiresAt: Date.now() + PR_STATE_COUNTS_TTL_MS,
+      });
+      if (countsContextKey === key) {
+        stateCounts.value = { ...nextCounts };
       }
+    } finally {
+      countsRequest.finish(sequence);
+    }
+  }
+
+  async function fetchStateCounts(
+    platform: Platform,
+    owner: string,
+    repo: string,
+    options: { forceRefresh?: boolean } = {},
+  ): Promise<void> {
+    const key = stateCountsKey(platform, owner, repo);
+    if (countsContextKey !== key) {
+      countsRequest.cancel();
+      countsRefresh = null;
+      countsContextKey = key;
+    }
+
+    const cached = readStateCountsCache(key);
+    if (cached) {
+      stateCounts.value = { ...cached.counts };
+      if (!options.forceRefresh && cached.expiresAt > Date.now()) return;
+    } else {
+      stateCounts.value = emptyStateCounts();
+    }
+
+    if (countsRefresh?.key === key) {
+      if (!cached) await countsRefresh.promise;
+      return;
+    }
+
+    const refreshPromise = refreshStateCounts(platform, owner, repo, key).finally(() => {
+      if (countsRefresh?.promise === refreshPromise) countsRefresh = null;
     });
+    countsRefresh = { key, promise: refreshPromise };
+
+    // 有旧值时立即返回并在后台更新；首次加载没有缓存，需要等待计数返回。
+    if (cached) {
+      void refreshPromise;
+    } else {
+      await refreshPromise;
+    }
   }
 
   async function updateMetadata(
@@ -516,12 +629,16 @@ export const usePrStore = defineStore("pr", () => {
   ): Promise<PrMetadataUpdateOutcome | null> {
     const sequence = metadataRequest.beginSilent();
     const contextKey = `${platform}:${owner}/${repo}:${number}`;
+    const previousState = currentPr.value?.summary.state;
     error.value = null;
     try {
       const outcome = await prMetadataUpdate(platform, owner, repo, number, update);
       if (!metadataRequest.isCurrent(sequence) || detailContextKey !== contextKey) return null;
       if (outcome.detail) {
         currentPr.value = outcome.detail;
+        if (previousState && previousState !== outcome.detail.summary.state) {
+          invalidateStateCounts(platform, owner, repo);
+        }
         if (listContextKey === `${platform}:${owner}/${repo}`) {
           const index = list.value.findIndex((item) => item.number === number);
           if (index >= 0) list.value[index] = outcome.detail.summary;
@@ -585,6 +702,7 @@ export const usePrStore = defineStore("pr", () => {
         commitMessage,
         closeIssues,
       );
+      invalidateStateCounts(platform, owner, repo);
       await refreshPrAfterStateChange(platform, owner, repo, number);
       return result;
     } catch (e) {
@@ -600,6 +718,7 @@ export const usePrStore = defineStore("pr", () => {
     if (detailContextKey === contextKey) error.value = null;
     try {
       await prClose(platform, owner, repo, number);
+      invalidateStateCounts(platform, owner, repo);
       await refreshPrAfterStateChange(platform, owner, repo, number);
     } catch (e) {
       if (detailContextKey === contextKey) {
@@ -614,6 +733,7 @@ export const usePrStore = defineStore("pr", () => {
     if (detailContextKey === contextKey) error.value = null;
     try {
       await prReopen(platform, owner, repo, number);
+      invalidateStateCounts(platform, owner, repo);
       await refreshPrAfterStateChange(platform, owner, repo, number);
     } catch (e) {
       if (detailContextKey === contextKey) {
@@ -668,6 +788,7 @@ export const usePrStore = defineStore("pr", () => {
     fetchMergeReadiness,
     updateMetadata,
     fetchStateCounts,
+    invalidateStateCounts,
     setFilter,
     setListQuery,
     clearListQuery,

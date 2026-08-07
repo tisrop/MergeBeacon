@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   prCommits,
   prCompareDiff,
@@ -14,7 +14,13 @@ import {
   prClose,
   prReopen,
 } from "@/api";
-import { DEFAULT_LIST_QUERY, isDefaultPrListQuery, usePrStore } from "@/stores/usePrStore";
+import {
+  DEFAULT_LIST_QUERY,
+  isDefaultPrListQuery,
+  PR_STATE_COUNTS_CACHE_MAX_ENTRIES,
+  PR_STATE_COUNTS_TTL_MS,
+  usePrStore,
+} from "@/stores/usePrStore";
 import type {
   DiffResult,
   Paginated,
@@ -48,6 +54,10 @@ function deferred<T>() {
     reject = fail;
   });
   return { promise, resolve, reject };
+}
+
+function stateCountResponse(totalCount: number): Paginated<PrSummary> {
+  return { items: [], page: 1, total_pages: 1, total_count: totalCount };
 }
 
 function createPrDetail(
@@ -143,6 +153,165 @@ describe("usePrStore", () => {
     vi.mocked(prListStatuses).mockResolvedValue([]);
     vi.mocked(prListStatusesCancel).mockReset();
     vi.mocked(prListStatusesCancel).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("按仓库缓存状态计数并在 TTL 内复用", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-07T00:00:00Z"));
+    vi.mocked(prList)
+      .mockReset()
+      .mockImplementation(async (platform, owner, repo, state) => {
+        const base = `${platform}:${owner}/${repo}` === "github:team/repo" ? 10 : 20;
+        if (!state) throw new Error("状态计数请求必须指定 PR 状态");
+        const offset = { open: 1, closed: 2, merged: 3, all: 4 }[state];
+        return stateCountResponse(base + offset);
+      });
+    const store = usePrStore();
+
+    await store.fetchStateCounts("github", "team", "repo");
+    expect(store.stateCounts).toEqual({ open: 11, closed: 12, merged: 13, all: 14 });
+    expect(prList).toHaveBeenCalledTimes(4);
+
+    await store.fetchStateCounts("github", "team", "repo");
+    expect(prList).toHaveBeenCalledTimes(4);
+
+    await store.fetchStateCounts("github", "other", "repo");
+    expect(store.stateCounts).toEqual({ open: 21, closed: 22, merged: 23, all: 24 });
+    expect(prList).toHaveBeenCalledTimes(8);
+
+    await store.fetchStateCounts("github", "team", "repo");
+    expect(store.stateCounts).toEqual({ open: 11, closed: 12, merged: 13, all: 14 });
+    expect(prList).toHaveBeenCalledTimes(8);
+  });
+
+  it("TTL 内强制刷新时保留旧计数并在后台更新", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-07T00:00:00Z"));
+    vi.mocked(prList).mockReset().mockResolvedValue(stateCountResponse(5));
+    const store = usePrStore();
+    await store.fetchStateCounts("github", "team", "repo");
+
+    const refreshes = Array.from({ length: 4 }, () => deferred<Paginated<PrSummary>>());
+    vi.mocked(prList).mockReset();
+    refreshes.forEach((request) => vi.mocked(prList).mockReturnValueOnce(request.promise));
+
+    await store.fetchStateCounts("github", "team", "repo", { forceRefresh: true });
+
+    expect(store.stateCounts).toEqual({ open: 5, closed: 5, merged: 5, all: 5 });
+    expect(prList).toHaveBeenCalledTimes(4);
+
+    refreshes.forEach((request, index) => request.resolve(stateCountResponse(10 + index)));
+    await Promise.all(refreshes.map((request) => request.promise));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(store.stateCounts).toEqual({ open: 10, closed: 11, merged: 12, all: 13 });
+  });
+
+  it("状态计数缓存按 LRU 淘汰并限制容量", async () => {
+    vi.mocked(prList).mockReset().mockResolvedValue(stateCountResponse(1));
+    const store = usePrStore();
+
+    for (let index = 0; index < PR_STATE_COUNTS_CACHE_MAX_ENTRIES; index += 1) {
+      await store.fetchStateCounts("github", "team", `repo-${index}`);
+    }
+    expect(prList).toHaveBeenCalledTimes(PR_STATE_COUNTS_CACHE_MAX_ENTRIES * 4);
+
+    // 再访问最早的条目，把它提升为最近使用，随后新增仓库应淘汰 repo-1。
+    await store.fetchStateCounts("github", "team", "repo-0");
+    expect(prList).toHaveBeenCalledTimes(PR_STATE_COUNTS_CACHE_MAX_ENTRIES * 4);
+
+    await store.fetchStateCounts("github", "team", `repo-${PR_STATE_COUNTS_CACHE_MAX_ENTRIES}`);
+    expect(prList).toHaveBeenCalledTimes((PR_STATE_COUNTS_CACHE_MAX_ENTRIES + 1) * 4);
+
+    await store.fetchStateCounts("github", "team", "repo-1");
+    expect(prList).toHaveBeenCalledTimes((PR_STATE_COUNTS_CACHE_MAX_ENTRIES + 2) * 4);
+
+    await store.fetchStateCounts("github", "team", "repo-0");
+    expect(prList).toHaveBeenCalledTimes((PR_STATE_COUNTS_CACHE_MAX_ENTRIES + 2) * 4);
+  });
+
+  it("缓存过期后先展示旧计数并在后台更新", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-07T00:00:00Z"));
+    vi.mocked(prList).mockReset().mockResolvedValue(stateCountResponse(5));
+    const store = usePrStore();
+    await store.fetchStateCounts("github", "team", "repo");
+
+    vi.advanceTimersByTime(PR_STATE_COUNTS_TTL_MS + 1);
+    const refreshes = Array.from({ length: 4 }, () => deferred<Paginated<PrSummary>>());
+    vi.mocked(prList).mockReset();
+    refreshes.forEach((request) => vi.mocked(prList).mockReturnValueOnce(request.promise));
+
+    await store.fetchStateCounts("github", "team", "repo");
+
+    expect(store.stateCounts).toEqual({ open: 5, closed: 5, merged: 5, all: 5 });
+    expect(prList).toHaveBeenCalledTimes(4);
+
+    refreshes.forEach((request, index) => request.resolve(stateCountResponse(10 + index)));
+    await Promise.all(refreshes.map((request) => request.promise));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(store.stateCounts).toEqual({ open: 10, closed: 11, merged: 12, all: 13 });
+  });
+
+  it("后台计数刷新全部失败时保留旧值并允许下次重试", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-07T00:00:00Z"));
+    vi.mocked(prList).mockReset().mockResolvedValue(stateCountResponse(7));
+    const store = usePrStore();
+    await store.fetchStateCounts("github", "team", "repo");
+
+    vi.advanceTimersByTime(PR_STATE_COUNTS_TTL_MS + 1);
+    vi.mocked(prList).mockReset().mockRejectedValue(new Error("offline"));
+    await store.fetchStateCounts("github", "team", "repo");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(store.stateCounts).toEqual({ open: 7, closed: 7, merged: 7, all: 7 });
+    expect(prList).toHaveBeenCalledTimes(4);
+
+    await store.fetchStateCounts("github", "team", "repo");
+    expect(prList).toHaveBeenCalledTimes(8);
+  });
+
+  it("仓库切换后忽略迟到的状态计数响应", async () => {
+    const oldRequests = Array.from({ length: 4 }, () => deferred<Paginated<PrSummary>>());
+    vi.mocked(prList).mockReset();
+    oldRequests.forEach((request) => vi.mocked(prList).mockReturnValueOnce(request.promise));
+    const store = usePrStore();
+
+    const oldFetch = store.fetchStateCounts("github", "old", "repo");
+    vi.mocked(prList).mockResolvedValue(stateCountResponse(9));
+    await store.fetchStateCounts("gitlab", "new", "repo");
+
+    oldRequests.forEach((request) => request.resolve(stateCountResponse(99)));
+    await oldFetch;
+
+    expect(store.stateCounts).toEqual({ open: 9, closed: 9, merged: 9, all: 9 });
+  });
+
+  it("状态写操作会让仍在 TTL 内的计数缓存失效", async () => {
+    vi.mocked(prList).mockReset().mockResolvedValue(stateCountResponse(4));
+    vi.mocked(prClose).mockReset().mockResolvedValue("closed");
+    vi.mocked(prDetail)
+      .mockReset()
+      .mockResolvedValueOnce(createPrDetail(42, "待关闭"))
+      .mockResolvedValueOnce(createPrDetail(42, "已关闭", "closed"));
+    const store = usePrStore();
+    await store.fetchStateCounts("github", "team", "repo");
+    await store.fetchPrDetail("github", "team", "repo", 42);
+
+    await store.closePr("github", "team", "repo", 42);
+    vi.mocked(prList).mockClear();
+    await store.fetchStateCounts("github", "team", "repo");
+
+    expect(prList).toHaveBeenCalledTimes(4);
   });
 
   it("清空平台上下文后忽略迟到的列表响应", async () => {

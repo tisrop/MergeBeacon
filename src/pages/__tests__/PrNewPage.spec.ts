@@ -17,6 +17,7 @@ import {
   repoList,
 } from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { usePrStore } from "@/stores/usePrStore";
 import { useRepoStore } from "@/stores/useRepoStore";
 import { setAppLocale } from "@/i18n";
 import { PR_CREATE_WARNING_QUERY, readPrCreateWarnings } from "@/utils/prCreateWarnings";
@@ -721,6 +722,7 @@ describe("PrNewPage", () => {
     incompletePreview.diff.files = [];
     vi.mocked(prCreatePreview).mockResolvedValue(incompletePreview);
     const { wrapper } = await mountPage();
+    const invalidateStateCounts = vi.spyOn(usePrStore(), "invalidateStateCounts");
 
     expect(wrapper.get(".preview-warning").text()).toContain("预览不完整");
     expect(wrapper.get(".preview-warning").text()).toContain("不影响创建 PR");
@@ -730,6 +732,7 @@ describe("PrNewPage", () => {
     await wrapper.get("form").trigger("submit");
     await flushPromises();
     expect(prCreate).toHaveBeenCalledOnce();
+    expect(invalidateStateCounts).toHaveBeenCalledWith("github", "team", "repo");
   });
 
   it("Compare 补页失败时展示可排障的降级提示且仍允许创建", async () => {

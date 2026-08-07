@@ -19,6 +19,9 @@ pub enum AppError {
     #[error("Not authenticated for platform: {0}")]
     NotAuthenticated(String),
 
+    #[error("Unsupported platform: {0}")]
+    InvalidPlatform(String),
+
     #[error("Platform API error: {0}")]
     Api(String),
 
@@ -234,6 +237,11 @@ impl From<AppError> for CommandError {
                 None,
                 "authentication",
             ),
+            // Platform names are caller input. Keep this separate from authentication
+            // state so malformed IPC arguments never trigger login recovery flows.
+            AppError::InvalidPlatform(_) => {
+                Self::new(CommandErrorCode::Validation, "不支持的代码平台", false, None, "validation")
+            }
             AppError::Api(message) => {
                 let lower = message.to_ascii_lowercase();
                 let status = Self::status_from_message(&message);
@@ -427,6 +435,16 @@ mod tests {
         assert_eq!(error.code, CommandErrorCode::Validation);
         assert_eq!(error.http_status, None);
         assert_eq!(error.to_string(), "仓库 owner 和名称不能为空");
+    }
+
+    #[test]
+    fn maps_invalid_platform_to_validation_contract() {
+        let error = CommandError::from(AppError::InvalidPlatform("invalid".into()));
+
+        assert_eq!(error.code, CommandErrorCode::Validation);
+        assert_eq!(error.message, "不支持的代码平台");
+        assert!(!error.retryable);
+        assert_eq!(error.http_status, None);
     }
 
     #[test]

@@ -4,9 +4,12 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
+  "engines": {
+    "node": ">=20 <21"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "vue-tsc --noEmit && vite build && npm run check:bundle-size",
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "oxlint src/ .github/checks/ --report-unused-disable-directives",
@@ -16,9 +19,11 @@
     "format:fix": "oxfmt src/ .github/checks/ package.json .oxlintrc.json .oxfmtrc.json",
     "prepare": "husky",
     "test": "vitest run",
-    "check:frontend": "npm run check:version && npm run check:updater && npm run lint && npm run format && npm run check:frontend-standards",
+    "check:frontend": "npm run check:version && npm run check:updater && npm run check:ipc-contract && npm run lint && npm run format && npm run check:frontend-standards",
     "check:version": "node .github/checks/version-consistency.mjs",
-    "check:updater": "node .github/checks/updater-config.mjs"
+    "check:updater": "node .github/checks/updater-config.mjs",
+    "check:bundle-size": "node .github/checks/bundle-size.mjs",
+    "check:ipc-contract": "node .github/checks/ipc-contract.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.2.0",
