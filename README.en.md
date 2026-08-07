@@ -12,7 +12,7 @@ A cross-platform desktop client for PR review and Issue management, built with
 manage PR / MR inboxes, diffs, manual reviews, merges, and Issues, with optional AI-assisted
 reviews through an OpenAI-compatible API.
 
-> Current application version: `0.13.0`
+> Current application version: `0.14.0`
 
 ## Screenshots
 
