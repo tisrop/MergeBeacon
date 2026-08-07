@@ -15,9 +15,9 @@ Rust/Tauri、跨平台语义、异步生命周期、安全、测试和合并门�
 
 ```bash
 pnpm run dev              # 仅前端 Vite dev server（port 1420）
-pnpm run tauri -- dev     # 完整 Tauri 桌面应用（dev server + 原生窗口）
+pnpm run tauri dev        # 完整 Tauri 桌面应用（dev server + 原生窗口）
 pnpm run build            # vue-tsc → Vite build → 400 KiB 入口包预算检查
-pnpm run tauri -- build   # 生产构建，产物在 src-tauri/target/release/bundle/
+pnpm run tauri build      # 生产构建，产物在 src-tauri/target/release/bundle/
 pnpm run lint             # oxlint 静态检查
 pnpm run lint:fix         # oxlint 安全自动修复
 pnpm run format           # oxfmt 格式检查

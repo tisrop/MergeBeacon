@@ -235,7 +235,7 @@ git clone https://github.com/tisrop/mergebeacon.git
 cd mergebeacon
 
 pnpm install --frozen-lockfile
-pnpm run tauri -- dev
+pnpm run tauri dev
 ```
 
 To run only the web frontend:
@@ -247,7 +247,7 @@ pnpm run dev
 ### Build the desktop application
 
 ```bash
-pnpm run tauri -- build
+pnpm run tauri build
 ```
 
 The build runs `pnpm run build` automatically. That script performs TypeScript type checking, creates the

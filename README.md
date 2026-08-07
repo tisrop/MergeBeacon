@@ -181,7 +181,7 @@ git clone https://github.com/tisrop/mergebeacon.git
 cd mergebeacon
 
 pnpm install --frozen-lockfile
-pnpm run tauri -- dev
+pnpm run tauri dev
 ```
 
 仅启动 Web 前端：
@@ -193,7 +193,7 @@ pnpm run dev
 ### 构建桌面应用
 
 ```bash
-pnpm run tauri -- build
+pnpm run tauri build
 ```
 
 构建前会自动运行 `pnpm run build`。该脚本依次执行 TypeScript 类型检查、Vite 构建和入口包体积
