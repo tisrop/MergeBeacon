@@ -223,7 +223,7 @@ reviews through an OpenAI-compatible API.
 
 ### Requirements
 
-- [Node.js](https://nodejs.org/) 20, the version used by project CI
+- [Node.js](https://nodejs.org/) 24, the version used by project CI
 - [Rust](https://www.rust-lang.org/tools/install) stable
 - The [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system
 

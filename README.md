@@ -169,7 +169,7 @@
 
 ### 环境要求
 
-- [Node.js](https://nodejs.org/) 20（项目 CI 使用的版本）
+- [Node.js](https://nodejs.org/) 24（项目 CI 使用的版本）
 - [Rust](https://www.rust-lang.org/tools/install) stable
 - 对应操作系统的 [Tauri 2 前置依赖](https://v2.tauri.app/start/prerequisites/)
 

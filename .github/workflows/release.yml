@@ -20,7 +20,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Verify release tag matches manifests
         run: node .github/checks/version-consistency.mjs --tag "$GITHUB_REF_NAME"
@@ -130,7 +130,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
           cache: npm
 
       - name: Install Rust stable
@@ -373,7 +373,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Download updater metadata fragments
         uses: actions/download-artifact@v8
@@ -445,7 +445,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Download updater signature verifier
         uses: actions/download-artifact@v8
@@ -652,7 +652,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Add device download guide and publish draft release
         env:
