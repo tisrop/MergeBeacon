@@ -16,6 +16,7 @@ export function usePrSearchBar(
         query.value.label,
         query.value.reviews,
         query.value.assignee,
+        query.value.reviewer,
         query.value.sort !== "updated_desc",
       ].filter(Boolean).length,
   );
@@ -61,6 +62,12 @@ export function usePrSearchBar(
     applyFilters();
   }
 
+  function setReviewer(value: string) {
+    if (draft.reviewer === value) return;
+    draft.reviewer = value;
+    applyFilters();
+  }
+
   function setReviews(value: string) {
     const reviews = (value || null) as PrReviewFilter | null;
     if (draft.reviews === reviews) return;
@@ -85,6 +92,7 @@ export function usePrSearchBar(
     setAuthor,
     setLabel,
     setAssignee,
+    setReviewer,
     setReviews,
     setSort,
   };

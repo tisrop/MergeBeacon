@@ -57,7 +57,7 @@
 }
 .search-filters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(112px, 1fr)) minmax(150px, 1fr) minmax(140px, 0.9fr) auto;
+  grid-template-columns: repeat(4, minmax(112px, 1fr)) repeat(2, minmax(140px, 1fr)) auto;
   gap: var(--space-2);
   align-items: end;
 }
@@ -128,12 +128,7 @@
   .search-filters {
     grid-template-columns: repeat(3, minmax(120px, 1fr));
   }
-  .select-field,
-  .sort-field {
-    grid-row: 2;
-  }
   .clear-filters {
-    grid-row: 2;
     justify-self: start;
   }
 }

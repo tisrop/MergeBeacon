@@ -364,6 +364,9 @@ impl GiteeAdapter {
         let assignee_matches = query.assignee.is_empty()
             || matches_user_list("testers", &query.assignee)
             || matches_user_list("assignees", &query.assignee);
+        let reviewer_matches = query.reviewer.is_empty()
+            || matches_user_list("assignees", &query.reviewer)
+            || matches_user_list("api_reviewers", &query.reviewer);
         let review_progress = Self::inbox_acceptance_progress(
             pr,
             &[("assignees_number", "assignees"), ("api_reviewers_number", "api_reviewers")],
@@ -382,7 +385,13 @@ impl GiteeAdapter {
             Some(PrReviewFilter::ChangesRequested) => false,
         };
 
-        state_matches && title_matches && author_matches && label_matches && assignee_matches && review_matches
+        state_matches
+            && title_matches
+            && author_matches
+            && label_matches
+            && assignee_matches
+            && reviewer_matches
+            && review_matches
     }
 
     fn inbox_relationship(filter_name: &str) -> ReviewInboxRelationship {
@@ -1173,6 +1182,27 @@ impl GitPlatform for GiteeAdapter {
                 }
             }
         }
+        let (assignees, assignee_statuses) = json["testers"]
+            .as_array()
+            .map(|users| {
+                users
+                    .iter()
+                    .map(|user| {
+                        let mapped = Self::map_user(user);
+                        let status = PrReviewerStatus {
+                            user: mapped.clone(),
+                            status: match user["accept"].as_bool() {
+                                Some(true) => PrReviewStatus::Approved,
+                                Some(false) => PrReviewStatus::Pending,
+                                None => PrReviewStatus::Unknown,
+                            },
+                            web_url: sanitize_web_url(&user["html_url"]),
+                        };
+                        (mapped, status)
+                    })
+                    .unzip()
+            })
+            .unwrap_or_default();
         Ok(PrDetail {
             summary,
             body: json["body"].as_str().unwrap_or("").to_string(),
@@ -1186,10 +1216,8 @@ impl GitPlatform for GiteeAdapter {
             draft: None,
             reviewers,
             reviewer_statuses,
-            assignees: json["testers"]
-                .as_array()
-                .map(|users| users.iter().map(Self::map_user).collect())
-                .unwrap_or_default(),
+            assignees,
+            assignee_statuses,
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
             web_url: sanitize_web_url(&json["html_url"]),

@@ -9,6 +9,7 @@ const emptyQuery = (): PrListQuery => ({
   label: "",
   reviews: null,
   assignee: "",
+  reviewer: "",
   sort: "updated_desc",
 });
 
@@ -43,9 +44,10 @@ describe("usePrSearchBar", () => {
     search.setLabel("bug");
     search.setAssignee("maintainer");
     search.setReviews("approved");
+    search.setReviewer("reviewer");
     search.setSort("comments_desc");
 
-    expect(onApply).toHaveBeenCalledTimes(5);
+    expect(onApply).toHaveBeenCalledTimes(6);
     expect(onApply).toHaveBeenNthCalledWith(1, {
       ...committed,
       author: "octocat",
@@ -56,6 +58,7 @@ describe("usePrSearchBar", () => {
       label: "bug",
       assignee: "maintainer",
       reviews: "approved",
+      reviewer: "reviewer",
       sort: "comments_desc",
     });
     expect(search.titleDraft.value).toBe("pending");

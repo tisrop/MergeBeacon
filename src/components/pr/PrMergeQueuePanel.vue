@@ -109,6 +109,8 @@ watch(
 onUnmounted(() => {
   requestSequence += 1;
 });
+
+defineExpose({ refresh: loadStatus });
 </script>
 
 <template>

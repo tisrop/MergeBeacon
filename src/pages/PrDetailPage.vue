@@ -49,6 +49,10 @@ interface AiReviewPanelHandle {
   startReview: () => Promise<void> | void;
 }
 
+interface RefreshablePanelHandle {
+  refresh: () => Promise<void> | void;
+}
+
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
@@ -97,6 +101,7 @@ const tabsRef = ref<HTMLElement | null>(null);
 const isMergeContextVisible = computed(() => uiSettings.isPrDependenciesVisible);
 let aiReviewScrollTop: number | null = null;
 let commitsRequested = false;
+let pageMounted = false;
 
 function ensurePrCommits(): void {
   if (
@@ -219,11 +224,14 @@ function handleReviewCommentLocate(path: string, line: number | null, side: Diff
 const reviewListRef = ref<InstanceType<typeof ReviewList> | null>(null);
 const reviewFormRef = ref<InstanceType<typeof ReviewForm> | null>(null);
 const aiPanelRef = ref<AiReviewPanelHandle | null>(null);
+const dependencyPanelRef = ref<RefreshablePanelHandle | null>(null);
+const mergeQueuePanelRef = ref<RefreshablePanelHandle | null>(null);
 let pendingAiReviewStart = false;
 const reviewThreadSummary = ref<ReviewThreadSummary | null>(null);
 const unviewedFileCount = ref(0);
 const commentError = ref("");
 const commentSuccess = ref(false);
+const refreshing = ref(false);
 
 const selectedStrategy = ref<MergeStrategy>("merge");
 const closeRelatedIssues = ref(false);
@@ -276,9 +284,11 @@ const mergeButtonLabel = computed(() => {
 });
 
 watch(
-  () => pr.currentPr,
-  (val) => {
-    if (val) commitMessage.value = defaultCommitMessage.value;
+  () => pr.currentPr?.summary.number ?? null,
+  (currentNumber, previousNumber) => {
+    if (currentNumber !== null && currentNumber !== previousNumber) {
+      commitMessage.value = defaultCommitMessage.value;
+    }
   },
   { immediate: true },
 );
@@ -550,6 +560,45 @@ async function handleAddComment(
   }
 }
 
+async function handleRefresh(): Promise<void> {
+  if (
+    !pageMounted ||
+    refreshing.value ||
+    pr.detailLoading ||
+    operating.value ||
+    metadataSaving.value
+  ) {
+    return;
+  }
+
+  refreshing.value = true;
+  titleLinkError.value = "";
+  metadataStatus.value = "";
+  metadataError.value = "";
+  commentError.value = "";
+  mergeWarning.value = "";
+  const previousRevision = pr.currentPr?.summary.updated_at ?? null;
+  try {
+    const loaded = await pr.refreshPrDetail(platform, owner, repo, number);
+    if (!pageMounted || !loaded || pr.currentPr?.summary.number !== number) return;
+
+    commitsRequested = true;
+    await nextTick();
+    if (!pageMounted || pr.currentPr?.summary.number !== number) return;
+    const revisionChanged = pr.currentPr.summary.updated_at !== previousRevision;
+    await Promise.allSettled([
+      pr.fetchPrDiff(platform, owner, repo, number),
+      pr.fetchMergeReadiness(platform, owner, repo, number),
+      pr.fetchPrCommits(platform, owner, repo, number),
+      Promise.resolve(reviewListRef.value?.refresh()),
+      Promise.resolve(revisionChanged ? undefined : dependencyPanelRef.value?.refresh()),
+      Promise.resolve(revisionChanged ? undefined : mergeQueuePanelRef.value?.refresh()),
+    ]);
+  } finally {
+    if (pageMounted) refreshing.value = false;
+  }
+}
+
 function handleAppCommand(event: Event): void {
   const detail = (event as CustomEvent<AppCommandDetail>).detail;
   if (!detail) return;
@@ -578,6 +627,7 @@ function handleAppCommand(event: Event): void {
 }
 
 onMounted(async () => {
+  pageMounted = true;
   window.addEventListener(APP_COMMAND_EVENT, handleAppCommand);
   if (route.query[PR_CREATE_WARNING_QUERY] === "1") {
     const createWarnings = readPrCreateWarnings(platform, owner, repo, number);
@@ -594,8 +644,10 @@ onMounted(async () => {
   }
   const capabilityRequest = capabilityStore.load(platform).catch(() => null);
   await pr.fetchPrDetail(platform, owner, repo, number);
+  if (!pageMounted) return;
   if (pr.currentPr?.summary.number === number) {
     await nextTick();
+    if (!pageMounted) return;
     void Promise.allSettled([
       pr.fetchPrDiff(platform, owner, repo, number),
       pr.fetchMergeReadiness(platform, owner, repo, number),
@@ -603,12 +655,16 @@ onMounted(async () => {
     if (activeTab.value === "diff") ensurePrCommits();
   }
   void capabilityRequest.then(() => {
+    if (!pageMounted) return;
     if (!platformCapabilities.value?.merge_strategies.includes(selectedStrategy.value)) {
       selectedStrategy.value = platformCapabilities.value?.merge_strategies[0] ?? "merge";
     }
   });
 });
-onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand));
+onUnmounted(() => {
+  pageMounted = false;
+  window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand);
+});
 </script>
 
 <template>
@@ -657,6 +713,32 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
             <div class="skeleton skeleton-title" />
             <div class="skeleton skeleton-subtitle" />
           </div>
+          <button
+            :class="['pr-refresh-button', { loading: refreshing }]"
+            type="button"
+            :title="t(refreshing ? 'prDetail.refreshing' : 'prDetail.refresh')"
+            :aria-label="t(refreshing ? 'prDetail.refreshing' : 'prDetail.refresh')"
+            :aria-busy="refreshing"
+            :disabled="refreshing || pr.detailLoading || operating || metadataSaving"
+            data-testid="refresh-pr-detail"
+            @click="handleRefresh"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5" />
+              <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5" />
+            </svg>
+            <span>{{ t(refreshing ? "prDetail.refreshingShort" : "prDetail.refresh") }}</span>
+          </button>
         </div>
         <p v-if="titleLinkError" class="error-msg" role="alert" data-testid="pr-title-link-error">
           {{ titleLinkError }}
@@ -986,6 +1068,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
         >
           <PrMergeQueuePanel
             v-if="uiSettings.isPrDependenciesVisible && uiSettings.isMergeQueueVisible"
+            ref="mergeQueuePanelRef"
             :platform="platform"
             :owner="owner"
             :repo="repo"
@@ -995,6 +1078,7 @@ onUnmounted(() => window.removeEventListener(APP_COMMAND_EVENT, handleAppCommand
           />
           <PrDependenciesPanel
             v-if="uiSettings.isPrDependenciesVisible"
+            ref="dependencyPanelRef"
             :platform="platform"
             :owner="owner"
             :repo="repo"

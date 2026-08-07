@@ -131,6 +131,7 @@ export interface PrListQuery {
   label: string;
   reviews: PrReviewFilter | null;
   assignee: string;
+  reviewer: string;
   sort: PrListSort;
 }
 
@@ -229,6 +230,7 @@ export interface PrDetail {
   reviewers: User[];
   reviewer_statuses?: PrReviewerStatus[];
   assignees: User[];
+  assignee_statuses?: PrReviewerStatus[];
   milestone: PrMilestone | null;
   metadata_permissions: PrMetadataPermissions;
   web_url?: string | null;

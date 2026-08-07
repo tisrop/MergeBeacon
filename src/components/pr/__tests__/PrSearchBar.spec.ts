@@ -10,6 +10,7 @@ const query = (): PrListQuery => ({
   label: "",
   reviews: null,
   assignee: "",
+  reviewer: "",
   sort: "updated_desc",
 });
 
@@ -17,10 +18,11 @@ describe("PrSearchBar", () => {
   beforeEach(() => setAppLocale("zh-CN"));
 
   it.each([
-    ["作者筛选", "所有作者"],
+    ["创建者筛选", "所有创建者"],
     ["标签筛选", "所有标签"],
     ["负责人筛选", "所有负责人"],
     ["评审状态筛选", "所有评审状态"],
+    ["待评审人筛选", "所有待评审人"],
     ["Pull Request 排序", "最近更新"],
   ])("点击 %s 可以展开下拉选项", async (accessibleName, selectedLabel) => {
     const wrapper = mount(PrSearchBar, { props: { query: query() } });
@@ -39,42 +41,64 @@ describe("PrSearchBar", () => {
     const wrapper = mount(PrSearchBar, { props: { query: query() } });
 
     expect(wrapper.find("label .app-select").exists()).toBe(false);
-    expect(wrapper.findAll(".app-select")).toHaveLength(5);
+    expect(wrapper.findAll(".app-select")).toHaveLength(6);
     expect(wrapper.findAll('.search-filters input[type="text"]')).toHaveLength(0);
   });
 
-  it.each(["github", "gitlab"] as const)("%s 使用评审状态和负责人筛选语义", (platform) => {
+  it("GitHub 使用待评审人语义", () => {
     const wrapper = mount(PrSearchBar, {
-      props: { platform, query: query() },
+      props: {
+        platform: "github",
+        query: query(),
+        reviewerOptions: [{ value: "reviewer", label: "reviewer" }],
+      },
     });
 
     expect(wrapper.get('[aria-label="负责人筛选"]').text()).toContain("所有负责人");
     expect(wrapper.get('[aria-label="评审状态筛选"]').text()).toContain("所有评审状态");
-    expect(wrapper.text()).not.toContain("审查者");
-    expect(wrapper.text()).not.toContain("测试者");
+    expect(wrapper.get('[aria-label="待评审人筛选"]').text()).toContain("所有待评审人");
+    expect(wrapper.text()).not.toContain("评审者");
   });
 
-  it("Gitee 使用审查者和测试者筛选文案并禁用不支持的要求更改", async () => {
+  it("GitLab 使用评审者语义", () => {
     const wrapper = mount(PrSearchBar, {
-      props: { platform: "gitee", query: query() },
+      props: {
+        platform: "gitlab",
+        query: query(),
+        reviewerOptions: [{ value: "reviewer", label: "reviewer" }],
+      },
     });
 
-    const testerFilter = wrapper.get('[aria-label="测试者筛选"]');
-    expect(testerFilter.text()).toContain("所有测试者");
+    expect(wrapper.get('[aria-label="负责人筛选"]').text()).toContain("所有负责人");
+    expect(wrapper.get('[aria-label="评审状态筛选"]').text()).toContain("所有评审状态");
+    expect(wrapper.get('[aria-label="评审者筛选"]').text()).toContain("所有评审者");
+    expect(wrapper.text()).not.toContain("审查");
+    expect(wrapper.text()).not.toContain("测试");
+  });
+
+  it("Gitee 使用审查和测试筛选文案并提供用户选择器", async () => {
+    const wrapper = mount(PrSearchBar, {
+      props: {
+        platform: "gitee",
+        query: query(),
+        reviewerOptions: [{ value: "carol", label: "carol" }],
+        assigneeOptions: [{ value: "maintainer", label: "maintainer" }],
+      },
+    });
+
+    const testerFilter = wrapper.get('[aria-label="测试筛选"]');
+    expect(testerFilter.text()).toContain("所有测试");
     await testerFilter.trigger("click");
-    expect(wrapper.get('input[aria-label="搜索测试者"]').attributes("placeholder")).toBe(
-      "搜索测试者",
-    );
+    expect(wrapper.get('input[aria-label="搜索测试"]').attributes("placeholder")).toBe("搜索测试");
 
-    const reviewerFilter = wrapper.get('[aria-label="审查者状态筛选"]');
-    expect(reviewerFilter.text()).toContain("所有审查状态");
+    const reviewerFilter = wrapper.get('[aria-label="审查筛选"]');
+    expect(reviewerFilter.text()).toContain("所有审查");
     await reviewerFilter.trigger("click");
+    expect(wrapper.get('input[aria-label="搜索审查"]').attributes("placeholder")).toBe("搜索审查");
+    await wrapper.get('.dropdown-option[data-value="carol"]').trigger("click");
 
-    const option = wrapper.get<HTMLButtonElement>(
-      '.dropdown-option[data-value="changes_requested"]',
-    );
-    expect(option.text()).toBe("要求更改（Gitee 不支持）");
-    expect(option.element.disabled).toBe(true);
+    const applied = wrapper.emitted<PrListQuery[]>("apply") ?? [];
+    expect(applied.at(-1)?.[0]).toEqual({ ...query(), reviewer: "carol" });
   });
 
   it("Gitee 英文界面使用 Reviewers 和 Testers", () => {
@@ -84,8 +108,17 @@ describe("PrSearchBar", () => {
     });
 
     expect(wrapper.get('[aria-label="Tester filter"]').text()).toContain("All testers");
-    expect(wrapper.get('[aria-label="Reviewer status filter"]').text()).toContain(
-      "All review states",
+    expect(wrapper.get('[aria-label="Reviewer filter"]').text()).toContain("All reviewers");
+  });
+
+  it("GitHub 英文界面使用 Requested reviewer", () => {
+    setAppLocale("en-US");
+    const wrapper = mount(PrSearchBar, {
+      props: { platform: "github", query: query() },
+    });
+
+    expect(wrapper.get('[aria-label="Requested reviewer filter"]').text()).toContain(
+      "All requested reviewers",
     );
   });
 
@@ -96,16 +129,18 @@ describe("PrSearchBar", () => {
         authorOptions: [{ value: "octocat", label: "octocat" }],
         labelOptions: [{ value: "bug", label: "bug" }],
         assigneeOptions: [{ value: "maintainer", label: "maintainer" }],
+        reviewerOptions: [{ value: "reviewer", label: "reviewer" }],
       },
     });
     const titleInput = wrapper.get<HTMLInputElement>("#pr-title-search");
     await titleInput.setValue("parser");
 
     for (const [accessibleName, value] of [
-      ["作者筛选", "octocat"],
+      ["创建者筛选", "octocat"],
       ["标签筛选", "bug"],
       ["负责人筛选", "maintainer"],
       ["评审状态筛选", "approved"],
+      ["待评审人筛选", "reviewer"],
       ["Pull Request 排序", "comments_desc"],
     ]) {
       await wrapper.get(`[aria-label="${accessibleName}"]`).trigger("click");
@@ -113,14 +148,15 @@ describe("PrSearchBar", () => {
     }
 
     const appliedQueries = wrapper.emitted<PrListQuery[]>("apply") ?? [];
-    expect(appliedQueries).toHaveLength(5);
+    expect(appliedQueries).toHaveLength(6);
     expect(appliedQueries[0][0]).toEqual({ ...query(), author: "octocat" });
-    expect(appliedQueries[4][0]).toEqual({
+    expect(appliedQueries[5][0]).toEqual({
       ...query(),
       author: "octocat",
       label: "bug",
       assignee: "maintainer",
       reviews: "approved",
+      reviewer: "reviewer",
       sort: "comments_desc",
     });
     expect(titleInput.element.value).toBe("parser");
@@ -134,6 +170,7 @@ describe("PrSearchBar", () => {
       label: "bug",
       assignee: "maintainer",
       reviews: "approved",
+      reviewer: "reviewer",
       sort: "comments_desc",
     });
   });

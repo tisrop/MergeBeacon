@@ -396,20 +396,21 @@ impl GitLabAdapter {
         }
     }
 
+    async fn resolve_user_id(&self, login: &str) -> Result<Option<u64>, AppError> {
+        let encoded = urlencoding::encode(login);
+        let url = format!("{}/users?username={}", self.base_url, encoded);
+        let users = self.get_json::<Value>(&url).await?;
+        Ok(users.as_array().and_then(|users| {
+            users.iter().find(|user| user["username"].as_str() == Some(login)).and_then(|user| user["id"].as_u64())
+        }))
+    }
+
     async fn resolve_user_ids(&self, logins: &[String]) -> Result<Vec<u64>, AppError> {
         let mut ids = Vec::with_capacity(logins.len());
         for login in logins {
-            let encoded = urlencoding::encode(login);
-            let url = format!("{}/users?username={}", self.base_url, encoded);
-            let users = self.get_json::<Value>(&url).await?;
-            let id = users
-                .as_array()
-                .and_then(|users| {
-                    users
-                        .iter()
-                        .find(|user| user["username"].as_str() == Some(login))
-                        .and_then(|user| user["id"].as_u64())
-                })
+            let id = self
+                .resolve_user_id(login)
+                .await?
                 .ok_or_else(|| AppError::Api(format!("GitLab 中不存在用户：{login}")))?;
             ids.push(id);
         }
@@ -590,6 +591,7 @@ impl GitLabAdapter {
                 labels.iter().filter_map(Value::as_str).any(|label| label.eq_ignore_ascii_case(&query.label))
             });
         let assignee_matches = query.assignee.is_empty() || matches_user_list("assignees", &query.assignee);
+        let reviewer_matches = query.reviewer.is_empty() || matches_user_list("reviewers", &query.reviewer);
         let review_matches = match query.reviews {
             None => true,
             Some(PrReviewFilter::None) => mr["reviewers"].as_array().is_none_or(Vec::is_empty),
@@ -611,7 +613,7 @@ impl GitLabAdapter {
             }
         };
 
-        title_matches && author_matches && label_matches && assignee_matches && review_matches
+        title_matches && author_matches && label_matches && assignee_matches && reviewer_matches && review_matches
     }
 
     fn supports_server_paged_pr_search(query: &PrListQuery) -> bool {
@@ -622,7 +624,13 @@ impl GitLabAdapter {
             )
     }
 
-    fn pr_search_params(state: &PrState, query: &PrListQuery, page: u32, per_page: u32) -> Vec<(&'static str, String)> {
+    fn pr_search_params(
+        state: &PrState,
+        query: &PrListQuery,
+        reviewer_id: Option<u64>,
+        page: u32,
+        per_page: u32,
+    ) -> Vec<(&'static str, String)> {
         let state_param = match state {
             PrState::All => "all",
             PrState::Merged => "merged",
@@ -640,6 +648,9 @@ impl GitLabAdapter {
         }
         if !query.assignee.is_empty() {
             params.push(("assignee_username", query.assignee.clone()));
+        }
+        if let Some(reviewer_id) = reviewer_id {
+            params.push(("reviewer_id", reviewer_id.to_string()));
         }
         if !query.label.is_empty() {
             params.push(("labels", query.label.clone()));
@@ -665,6 +676,7 @@ impl GitLabAdapter {
         url: &str,
         state: &PrState,
         query: &PrListQuery,
+        reviewer_id: Option<u64>,
         page: u32,
         per_page: u32,
     ) -> Result<GitLabPrSearchPage, AppError> {
@@ -674,7 +686,7 @@ impl GitLabAdapter {
             .get(url)
             .header("PRIVATE-TOKEN", &self.token)
             .header("User-Agent", "mergebeacon")
-            .query(&Self::pr_search_params(state, query, page, per_page))
+            .query(&Self::pr_search_params(state, query, reviewer_id, page, per_page))
             .send()
             .await?;
         let status = response.status();
@@ -1036,13 +1048,23 @@ impl GitPlatform for GitLabAdapter {
             return self.list_pull_requests(owner, repo, state, page, per_page).await;
         }
 
-        let project_id = encode_project_id(owner, repo);
-        let url = format!("{}/projects/{project_id}/merge_requests", self.base_url);
         let page = page.max(1);
         let per_page = per_page.clamp(1, 100);
+        let reviewer_id = if query.reviewer.is_empty() {
+            None
+        } else {
+            match self.resolve_user_id(&query.reviewer).await? {
+                Some(id) => Some(id),
+                None => {
+                    return Ok(Paginated { items: Vec::new(), page, total_pages: 1, total_count: 0, truncated: None });
+                }
+            }
+        };
+        let project_id = encode_project_id(owner, repo);
+        let url = format!("{}/projects/{project_id}/merge_requests", self.base_url);
 
         if Self::supports_server_paged_pr_search(query) {
-            let remote = self.fetch_pr_search_page(&url, state, query, page, per_page).await?;
+            let remote = self.fetch_pr_search_page(&url, state, query, reviewer_id, page, per_page).await?;
             let total_pages = remote.total_pages.unwrap_or(page).max(1);
             let total_count = remote.total_count.unwrap_or_else(|| {
                 if remote.items.len() < per_page as usize || page >= total_pages {
@@ -1055,7 +1077,7 @@ impl GitPlatform for GitLabAdapter {
             return Ok(Paginated { items, page, total_pages, total_count, truncated: None });
         }
 
-        let first_page = self.fetch_pr_search_page(&url, state, query, 1, REMOTE_PAGE_SIZE).await?;
+        let first_page = self.fetch_pr_search_page(&url, state, query, reviewer_id, 1, REMOTE_PAGE_SIZE).await?;
         let first_page_len = first_page.items.len();
         let mut candidates = first_page.items;
         let max_remote_pages = (SEARCH_RESULT_LIMIT as u32).div_ceil(REMOTE_PAGE_SIZE);
@@ -1064,7 +1086,9 @@ impl GitPlatform for GitLabAdapter {
         if let Some(total_pages) = first_page.total_pages {
             let last_page = total_pages.min(max_remote_pages);
             let pages = stream::iter(2..=last_page)
-                .map(|remote_page| self.fetch_pr_search_page(&url, state, query, remote_page, REMOTE_PAGE_SIZE))
+                .map(|remote_page| {
+                    self.fetch_pr_search_page(&url, state, query, reviewer_id, remote_page, REMOTE_PAGE_SIZE)
+                })
                 .buffered(4)
                 .collect::<Vec<_>>()
                 .await;
@@ -1075,7 +1099,8 @@ impl GitPlatform for GitLabAdapter {
         } else if first_page_len == REMOTE_PAGE_SIZE as usize {
             let mut remote_page = 2_u32;
             loop {
-                let remote = self.fetch_pr_search_page(&url, state, query, remote_page, REMOTE_PAGE_SIZE).await?;
+                let remote =
+                    self.fetch_pr_search_page(&url, state, query, reviewer_id, remote_page, REMOTE_PAGE_SIZE).await?;
                 let fetched = remote.items.len();
                 candidates.extend(remote.items);
                 if candidates.len() >= SEARCH_RESULT_LIMIT {
@@ -1255,6 +1280,23 @@ impl GitPlatform for GitLabAdapter {
                 }
             }
         }
+        let (assignees, assignee_statuses) = json["assignees"]
+            .as_array()
+            .map(|users| {
+                users
+                    .iter()
+                    .map(|value| {
+                        let user = Self::map_user(value);
+                        let status = PrReviewerStatus {
+                            user: user.clone(),
+                            status: PrReviewStatus::Pending,
+                            web_url: sanitize_web_url(&value["web_url"]),
+                        };
+                        (user, status)
+                    })
+                    .unzip()
+            })
+            .unwrap_or_default();
         let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
@@ -1269,10 +1311,8 @@ impl GitPlatform for GitLabAdapter {
             draft: json["draft"].as_bool().or_else(|| json["work_in_progress"].as_bool()),
             reviewers,
             reviewer_statuses,
-            assignees: json["assignees"]
-                .as_array()
-                .map(|users| users.iter().map(Self::map_user).collect())
-                .unwrap_or_default(),
+            assignees,
+            assignee_statuses,
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
             web_url: sanitize_web_url(&json["web_url"]),

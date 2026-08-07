@@ -1110,6 +1110,161 @@ async fn test_gitlab_closed_pr_list_omits_live_status_summary() {
 }
 
 #[tokio::test]
+async fn test_gitlab_filters_merge_requests_by_reviewer() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users"))
+        .and(query_param("username", "hubot"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 7,
+            "username": "hubot"
+        }])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests"))
+        .and(query_param("state", "opened"))
+        .and(query_param("reviewer_id", "7"))
+        .and(query_param("order_by", "updated_at"))
+        .and(query_param("sort", "desc"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "20"))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("x-total-pages", "1").insert_header("x-total", "1").set_body_json(
+                serde_json::json!([{
+                    "iid": 17,
+                    "title": "Reviewed by Hubot",
+                    "author": gitlab_user(),
+                    "reviewers": [{ "id": 7, "username": "hubot" }],
+                    "state": "opened",
+                    "merged_at": null,
+                    "created_at": "2026-08-01T10:00:00Z",
+                    "updated_at": "2026-08-02T10:00:00Z",
+                    "labels": []
+                }]),
+            ),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".into()).with_base_url(mock_server.uri());
+    let query = PrListQuery { reviewer: "hubot".into(), ..PrListQuery::default() };
+    let result = adapter
+        .search_pull_requests("group", "repo", &PrState::Open, &query, 1, 20)
+        .await
+        .expect("should filter merge requests by reviewer");
+
+    assert_eq!(result.total_count, 1);
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].number, 17);
+}
+
+#[tokio::test]
+async fn test_gitlab_unknown_reviewer_returns_empty_page() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users"))
+        .and(query_param("username", "missing-reviewer"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".into()).with_base_url(mock_server.uri());
+    let query = PrListQuery { title: "fix".into(), reviewer: "missing-reviewer".into(), ..PrListQuery::default() };
+    let result = adapter
+        .search_pull_requests("group", "repo", &PrState::Open, &query, 1, 20)
+        .await
+        .expect("an unknown reviewer should produce an empty result");
+
+    assert!(result.items.is_empty());
+    assert_eq!(result.page, 1);
+    assert_eq!(result.total_pages, 1);
+    assert_eq!(result.total_count, 0);
+    let requests = mock_server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url.path(), "/api/v4/users");
+}
+
+#[tokio::test]
+async fn test_gitlab_applies_reviewer_during_client_side_review_filtering() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users"))
+        .and(query_param("username", "hubot"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+            "id": 7,
+            "username": "hubot"
+        }])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/group%2Frepo/merge_requests"))
+        .and(query_param("state", "opened"))
+        .and(query_param("reviewer_id", "7"))
+        .and(query_param("order_by", "updated_at"))
+        .and(query_param("sort", "desc"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "100"))
+        .respond_with(ResponseTemplate::new(200).insert_header("x-total-pages", "1").set_body_json(serde_json::json!([
+            {
+                "iid": 21,
+                "title": "Matching reviewer and review state",
+                "author": gitlab_user(),
+                "reviewers": [{ "id": 7, "username": "hubot" }],
+                "state": "opened",
+                "merged_at": null,
+                "created_at": "2026-08-01T10:00:00Z",
+                "updated_at": "2026-08-03T10:00:00Z",
+                "labels": [],
+                "detailed_merge_status": "mergeable"
+            },
+            {
+                "iid": 22,
+                "title": "Wrong reviewer",
+                "author": gitlab_user(),
+                "reviewers": [{ "id": 8, "username": "someone-else" }],
+                "state": "opened",
+                "merged_at": null,
+                "created_at": "2026-08-01T10:00:00Z",
+                "updated_at": "2026-08-02T10:00:00Z",
+                "labels": [],
+                "detailed_merge_status": "mergeable"
+            },
+            {
+                "iid": 23,
+                "title": "Wrong review state",
+                "author": gitlab_user(),
+                "reviewers": [{ "id": 7, "username": "hubot" }],
+                "state": "opened",
+                "merged_at": null,
+                "created_at": "2026-08-01T10:00:00Z",
+                "updated_at": "2026-08-01T10:00:00Z",
+                "labels": [],
+                "detailed_merge_status": "not_approved"
+            }
+        ])))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitLabAdapter::new(HttpClient::new(), "test-token".into()).with_base_url(mock_server.uri());
+    let query =
+        PrListQuery { reviews: Some(PrReviewFilter::Approved), reviewer: "hubot".into(), ..PrListQuery::default() };
+    let result = adapter
+        .search_pull_requests("group", "repo", &PrState::Open, &query, 1, 20)
+        .await
+        .expect("should apply reviewer and review state filters");
+
+    assert_eq!(result.total_count, 1);
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].number, 21);
+}
+
+#[tokio::test]
 async fn test_gitlab_searches_filters_sorts_and_paginates_merge_requests() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -1193,6 +1348,7 @@ async fn test_gitlab_searches_filters_sorts_and_paginates_merge_requests() {
         label: "bug".into(),
         reviews: Some(PrReviewFilter::Approved),
         assignee: "bob".into(),
+        reviewer: String::new(),
         sort: PrListSort::CommentsDesc,
     };
     let result = adapter
@@ -1252,6 +1408,7 @@ async fn test_gitlab_uses_server_pagination_for_supported_pr_filters() {
         label: "bug".into(),
         reviews: None,
         assignee: "".into(),
+        reviewer: String::new(),
         sort: PrListSort::UpdatedDesc,
     };
     let result = adapter
@@ -1359,7 +1516,13 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
                 "avatar_url": "",
                 "web_url": "https://git.example.com/reviewer"
             }],
-            "assignees": [{"id": 8, "username": "assignee", "name": "Assignee", "avatar_url": ""}],
+            "assignees": [{
+                "id": 8,
+                "username": "assignee",
+                "name": "Assignee",
+                "avatar_url": "",
+                "web_url": "https://git.example.com/assignee"
+            }],
             "milestone": {"id": 11, "iid": 2, "title": "0.6.0"},
             "web_url": "https://git.example.com/group/repo/-/merge_requests/3"
         })))
@@ -1380,6 +1543,8 @@ async fn test_gitlab_pr_detail_exposes_base_and_head_revisions() {
     assert_eq!(detail.reviewer_statuses[0].status, PrReviewStatus::Approved);
     assert_eq!(detail.reviewer_statuses[0].web_url.as_deref(), Some("https://git.example.com/reviewer"));
     assert_eq!(detail.assignees[0].login, "assignee");
+    assert_eq!(detail.assignee_statuses[0].status, PrReviewStatus::Pending);
+    assert_eq!(detail.assignee_statuses[0].web_url.as_deref(), Some("https://git.example.com/assignee"));
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
 
@@ -2507,6 +2672,7 @@ async fn test_gitlab_updates_merge_request_metadata() {
             avatar_url: "".into(),
         }],
         reviewer_statuses: Vec::new(),
+        assignee_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(3),
             login: "old-assignee".into(),
@@ -2582,6 +2748,7 @@ async fn test_gitlab_clears_merge_request_milestone_with_zero_id() {
         draft: Some(false),
         reviewers: Vec::new(),
         reviewer_statuses: Vec::new(),
+        assignee_statuses: Vec::new(),
         assignees: Vec::new(),
         milestone: Some(PrMilestone { id: serde_json::json!(7), number: Some(7), title: "0.6.0".into() }),
         metadata_permissions: PrMetadataPermissions::default(),

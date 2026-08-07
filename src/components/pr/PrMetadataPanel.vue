@@ -107,6 +107,18 @@ const reviewStatusLabels = computed<Record<PrReviewStatus, string>>(() => ({
   dismissed: t("metadata.reviewDismissed"),
   unknown: t("metadata.reviewUnknown"),
 }));
+const assigneeStatusLabels = computed<Record<PrReviewStatus, string>>(() =>
+  isGitee.value
+    ? {
+        pending: t("metadata.testPending"),
+        approved: t("metadata.testApproved"),
+        changes_requested: t("metadata.reviewChangesRequested"),
+        commented: t("metadata.reviewCommented"),
+        dismissed: t("metadata.reviewDismissed"),
+        unknown: t("metadata.testUnknown"),
+      }
+    : reviewStatusLabels.value,
+);
 const reviewerEntries = computed(() => {
   if (props.detail.reviewer_statuses?.length) return props.detail.reviewer_statuses;
   return props.detail.reviewers.map((user) => ({
@@ -115,6 +127,9 @@ const reviewerEntries = computed(() => {
     web_url: null,
   }));
 });
+const assigneeEntries = computed(() =>
+  props.detail.assignee_statuses?.length ? props.detail.assignee_statuses : null,
+);
 
 const closingIssuePattern =
   /(?:^|[\s,])(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[\s:]+#(\d+)\b/gi;
@@ -161,7 +176,7 @@ function handleDescriptionLinkClick(payload: { href: string }): void {
   emit("open-link", payload.href);
 }
 
-function openReviewerPage(url: string): void {
+function openParticipantPage(url: string): void {
   emit("open-external", url);
 }
 
@@ -454,15 +469,13 @@ onUnmounted(invalidateOptions);
         }}</span>
         <span v-else class="metadata-value metadata-reviewer-list">
           <template v-for="reviewer in reviewerEntries" :key="reviewer.user.login">
-            <a
+            <button
               v-if="reviewer.web_url"
               class="metadata-reviewer"
-              :href="reviewer.web_url"
-              target="_blank"
-              rel="noopener noreferrer"
+              type="button"
               :title="t('metadata.openReviewer', { login: reviewer.user.login })"
               data-testid="metadata-reviewer-link"
-              @click.prevent="openReviewerPage(reviewer.web_url)"
+              @click="openParticipantPage(reviewer.web_url)"
             >
               <span class="metadata-reviewer-name">{{ reviewer.user.login }}</span>
               <span
@@ -471,7 +484,7 @@ onUnmounted(invalidateOptions);
               >
                 {{ reviewStatusLabels[reviewer.status] }}
               </span>
-            </a>
+            </button>
             <span v-else class="metadata-reviewer">
               <span class="metadata-reviewer-name">{{ reviewer.user.login }}</span>
               <span
@@ -486,7 +499,42 @@ onUnmounted(invalidateOptions);
       </div>
       <div v-if="capabilities?.supports_pr_assignee_management" class="metadata-item">
         <span class="metadata-label">{{ participantLabels.assignees }}</span>
-        <span class="metadata-value">
+        <span v-if="assigneeEntries?.length" class="metadata-value metadata-reviewer-list">
+          <template v-for="assignee in assigneeEntries" :key="assignee.user.login">
+            <button
+              v-if="assignee.web_url"
+              class="metadata-reviewer"
+              type="button"
+              :title="
+                isGitee
+                  ? t('metadata.openTester', { login: assignee.user.login })
+                  : t('metadata.openAssignee', { login: assignee.user.login })
+              "
+              data-testid="metadata-assignee-link"
+              @click="openParticipantPage(assignee.web_url)"
+            >
+              <span class="metadata-reviewer-name">{{ assignee.user.login }}</span>
+              <span
+                v-if="isGitee"
+                class="metadata-review-status"
+                :class="`metadata-review-status-${assignee.status}`"
+              >
+                {{ assigneeStatusLabels[assignee.status] }}
+              </span>
+            </button>
+            <span v-else class="metadata-reviewer">
+              <span class="metadata-reviewer-name">{{ assignee.user.login }}</span>
+              <span
+                v-if="isGitee"
+                class="metadata-review-status"
+                :class="`metadata-review-status-${assignee.status}`"
+              >
+                {{ assigneeStatusLabels[assignee.status] }}
+              </span>
+            </span>
+          </template>
+        </span>
+        <span v-else class="metadata-value">
           {{
             detail.assignees
               .map((user) => user.login)

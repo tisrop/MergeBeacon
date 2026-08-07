@@ -54,6 +54,7 @@ const mocks = vi.hoisted(() => ({
       label: "",
       reviews: null,
       assignee: "",
+      reviewer: "",
       sort: "updated_desc",
     },
     hasListQuery: false,
@@ -156,6 +157,7 @@ describe("PrListPage 截断提示", () => {
       label: "",
       reviews: null,
       assignee: "",
+      reviewer: "",
       sort: "updated_desc",
     };
     mocks.prStore.fetchPrList.mockReset();

@@ -43,6 +43,7 @@ export const DEFAULT_LIST_QUERY: Readonly<Required<PrListQuery>> = {
   label: "",
   reviews: null,
   assignee: "",
+  reviewer: "",
   sort: "updated_desc",
 };
 
@@ -261,6 +262,9 @@ export const usePrStore = defineStore("pr", () => {
     const sequence = detailRequest.begin();
     const contextKey = `${platform}:${owner}/${repo}:${number}`;
     if (detailContextKey !== contextKey) {
+      diffRequest.cancel();
+      commitsRequest.cancel();
+      readinessRequest.cancel();
       currentPr.value = null;
       diff.value = null;
       commits.value = [];
@@ -290,11 +294,47 @@ export const usePrStore = defineStore("pr", () => {
     }
   }
 
+  async function refreshPrDetail(
+    platform: Platform,
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<boolean> {
+    const contextKey = `${platform}:${owner}/${repo}:${number}`;
+    if (detailContextKey !== contextKey) {
+      return fetchPrDetail(platform, owner, repo, number);
+    }
+
+    const sequence = detailRequest.beginSilent();
+    error.value = null;
+    try {
+      const result = await prDetail(platform, owner, repo, number);
+      if (!detailRequest.isCurrent(sequence) || detailContextKey !== contextKey) return false;
+      currentPr.value = result;
+      return true;
+    } catch (requestError) {
+      if (!detailRequest.isCurrent(sequence) || detailContextKey !== contextKey) return false;
+      const message = typeof requestError === "string" ? requestError : String(requestError);
+      const notFound = /\b404\b|not found/i.test(message);
+      if (notFound) currentPr.value = null;
+      error.value = notFound
+        ? translate("pr.detailNotFound", { repository: `${owner}/${repo}`, number })
+        : message;
+      return false;
+    } finally {
+      detailRequest.finish(sequence);
+    }
+  }
+
   async function fetchPrDiff(platform: Platform, owner: string, repo: string, number: number) {
+    const contextKey = `${platform}:${owner}/${repo}:${number}`;
+    if (detailContextKey !== contextKey) return;
+
     const sequence = diffRequest.begin();
     try {
       const result = await prDiff(platform, owner, repo, number);
-      if (diffRequest.isCurrent(sequence)) diff.value = result;
+      if (!diffRequest.isCurrent(sequence) || detailContextKey !== contextKey) return;
+      diff.value = result;
     } finally {
       diffRequest.finish(sequence);
     }
@@ -310,11 +350,14 @@ export const usePrStore = defineStore("pr", () => {
   }
 
   async function fetchPrCommits(platform: Platform, owner: string, repo: string, number: number) {
+    const contextKey = `${platform}:${owner}/${repo}:${number}`;
+    if (detailContextKey !== contextKey) return;
+
     const sequence = commitsRequest.begin();
     commitsError.value = null;
     try {
       const result = await prCommits(platform, owner, repo, number);
-      if (!commitsRequest.isCurrent(sequence)) return;
+      if (!commitsRequest.isCurrent(sequence) || detailContextKey !== contextKey) return;
       // 提交列表变化后旧下标会指向别的提交，直接回到整体 Diff，避免展示错位的区间。
       const changed =
         result.commits.length !== commits.value.length ||
@@ -323,7 +366,7 @@ export const usePrStore = defineStore("pr", () => {
       commitsTruncatedEnd.value = result.truncated_end;
       if (changed) resetCommitSelection();
     } catch (requestError) {
-      if (!commitsRequest.isCurrent(sequence)) return;
+      if (!commitsRequest.isCurrent(sequence) || detailContextKey !== contextKey) return;
       commits.value = [];
       commitsTruncatedEnd.value = null;
       commitsError.value = typeof requestError === "string" ? requestError : String(requestError);
@@ -438,6 +481,7 @@ export const usePrStore = defineStore("pr", () => {
       label: query.label.trim(),
       reviews: query.reviews,
       assignee: query.assignee.trim(),
+      reviewer: query.reviewer.trim(),
       sort: query.sort,
     };
     filters.value.page = 1;
@@ -616,6 +660,7 @@ export const usePrStore = defineStore("pr", () => {
     cancelListStatusSupplement,
     fetchPrList,
     fetchPrDetail,
+    refreshPrDetail,
     fetchPrDiff,
     fetchPrCommits,
     selectCommitRange,

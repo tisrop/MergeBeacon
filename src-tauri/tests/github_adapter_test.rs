@@ -638,7 +638,7 @@ async fn test_github_search_prs_uses_filters_sort_and_server_pagination() {
         .and(path("/search/issues"))
         .and(query_param(
             "q",
-            r#"repo:octocat/hello-world is:pr is:open "parser fix" in:title author:"dev one" label:"help wanted" review:approved assignee:"hubot""#,
+            r#"repo:octocat/hello-world is:pr is:open "parser fix" in:title author:"dev one" label:"help wanted" review:approved assignee:"hubot" review-requested:"reviewer one""#,
         ))
         .and(query_param("sort", "comments"))
         .and(query_param("order", "desc"))
@@ -664,6 +664,7 @@ async fn test_github_search_prs_uses_filters_sort_and_server_pagination() {
                 label: "help wanted".into(),
                 reviews: Some(PrReviewFilter::Approved),
                 assignee: "hubot".into(),
+                reviewer: "reviewer one".into(),
                 sort: PrListSort::CommentsDesc,
             },
             2,
@@ -2443,7 +2444,13 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
             "mergeable": true,
             "draft": true,
             "requested_reviewers": [{"id": 2, "login": "reviewer", "name": "Reviewer", "avatar_url": ""}],
-            "assignees": [{"id": 3, "login": "assignee", "name": "Assignee", "avatar_url": ""}],
+            "assignees": [{
+                "id": 3,
+                "login": "assignee",
+                "name": "Assignee",
+                "avatar_url": "",
+                "html_url": "https://github.com/assignee"
+            }],
             "milestone": {"id": 9, "number": 4, "title": "0.6.0"},
             "html_url": "https://github.com/octocat/hello-world/pull/42"
         })))
@@ -2466,6 +2473,8 @@ async fn test_github_pr_detail_exposes_base_and_head_revisions() {
         Some("https://github.com/octocat/hello-world/pull/42#pullrequestreview-7")
     );
     assert_eq!(detail.assignees[0].login, "assignee");
+    assert_eq!(detail.assignee_statuses[0].status, PrReviewStatus::Pending);
+    assert_eq!(detail.assignee_statuses[0].web_url.as_deref(), Some("https://github.com/assignee"));
     assert_eq!(detail.milestone.as_ref().map(|value| value.title.as_str()), Some("0.6.0"));
 }
 
@@ -2867,6 +2876,7 @@ async fn test_github_updates_pull_request_metadata() {
             avatar_url: "".into(),
         }],
         reviewer_statuses: Vec::new(),
+        assignee_statuses: Vec::new(),
         assignees: vec![User {
             id: serde_json::json!(3),
             login: "old-assignee".into(),

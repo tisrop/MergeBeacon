@@ -16,6 +16,7 @@ const props = withDefaults(
     authorOptions?: SelectOption[];
     labelOptions?: SelectOption[];
     assigneeOptions?: SelectOption[];
+    reviewerOptions?: SelectOption[];
   }>(),
   {
     platform: "github",
@@ -23,6 +24,7 @@ const props = withDefaults(
     authorOptions: () => [],
     labelOptions: () => [],
     assigneeOptions: () => [],
+    reviewerOptions: () => [],
   },
 );
 const emit = defineEmits<{ apply: [query: PrListQuery]; clear: []; retryOptions: [] }>();
@@ -42,30 +44,36 @@ const assigneeLabels = computed(() =>
         search: t("pr.searchAssignee"),
       },
 );
-const reviewLabels = computed(() =>
-  props.platform === "gitee"
-    ? {
-        field: t("pr.giteeReviewers"),
-        all: t("pr.allGiteeReviewStates"),
-        aria: t("pr.giteeReviewerFilterAria"),
-      }
-    : {
-        field: t("pr.reviews"),
-        all: t("pr.allReviewStates"),
-        aria: t("pr.reviewsFilterAria"),
-      },
-);
+const reviewerLabels = computed(() => {
+  if (props.platform === "github") {
+    return {
+      field: t("pr.requestedReviewer"),
+      all: t("pr.allRequestedReviewers"),
+      aria: t("pr.requestedReviewerFilterAria"),
+      search: t("pr.searchRequestedReviewer"),
+    };
+  }
+  if (props.platform === "gitee") {
+    return {
+      field: t("pr.giteeReviewers"),
+      all: t("pr.allGiteeReviewers"),
+      aria: t("pr.giteeReviewerUserFilterAria"),
+      search: t("pr.searchGiteeReviewers"),
+    };
+  }
+  return {
+    field: t("pr.reviewer"),
+    all: t("pr.allReviewers"),
+    aria: t("pr.reviewerFilterAria"),
+    search: t("pr.searchReviewer"),
+  };
+});
 const reviewOptions = computed<SelectOption[]>(() => [
-  { value: "", label: reviewLabels.value.all },
+  { value: "", label: t("pr.allReviewStates") },
   { value: "none", label: t("pr.noReview") },
   { value: "required", label: t("pr.reviewRequired") },
   { value: "approved", label: t("pr.reviewApproved") },
-  {
-    value: "changes_requested",
-    label:
-      props.platform === "gitee" ? t("pr.changesRequestedUnsupported") : t("pr.changesRequested"),
-    disabled: props.platform === "gitee",
-  },
+  { value: "changes_requested", label: t("pr.changesRequested") },
 ]);
 const sortOptions = computed<SelectOption[]>(() => [
   { value: "best_match", label: t("pr.bestMatch") },
@@ -90,6 +98,7 @@ const {
   setAuthor,
   setLabel,
   setAssignee,
+  setReviewer,
   setReviews,
   setSort,
 } = usePrSearchBar(
@@ -154,6 +163,27 @@ const {
           @update:model-value="setLabel"
         />
       </div>
+      <div v-if="platform !== 'gitee'" class="filter-field select-field">
+        <span>{{ t("pr.reviews") }}</span>
+        <AppSelect
+          :aria-label="t('pr.reviewsFilterAria')"
+          :model-value="draft.reviews ?? ''"
+          :options="reviewOptions"
+          @update:model-value="setReviews"
+        />
+      </div>
+      <div class="filter-field select-field">
+        <span>{{ reviewerLabels.field }}</span>
+        <AppSelect
+          :aria-label="reviewerLabels.aria"
+          searchable
+          :search-placeholder="reviewerLabels.search"
+          :disabled="optionsLoading"
+          :model-value="draft.reviewer"
+          :options="withAllOption(reviewerLabels.all, reviewerOptions)"
+          @update:model-value="setReviewer"
+        />
+      </div>
       <div class="filter-field select-field">
         <span>{{ assigneeLabels.field }}</span>
         <AppSelect
@@ -164,15 +194,6 @@ const {
           :model-value="draft.assignee"
           :options="withAllOption(assigneeLabels.all, assigneeOptions)"
           @update:model-value="setAssignee"
-        />
-      </div>
-      <div class="filter-field select-field">
-        <span>{{ reviewLabels.field }}</span>
-        <AppSelect
-          :aria-label="reviewLabels.aria"
-          :model-value="draft.reviews ?? ''"
-          :options="reviewOptions"
-          @update:model-value="setReviews"
         />
       </div>
       <div class="filter-field select-field sort-field">

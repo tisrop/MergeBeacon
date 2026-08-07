@@ -555,6 +555,9 @@ impl GitHubAdapter {
         if !filters.assignee.is_empty() {
             qualifiers.push(format!("assignee:{}", Self::search_value(&filters.assignee)));
         }
+        if !filters.reviewer.is_empty() {
+            qualifiers.push(format!("review-requested:{}", Self::search_value(&filters.reviewer)));
+        }
         qualifiers.join(" ")
     }
 
@@ -1485,6 +1488,23 @@ impl GitPlatform for GitHubAdapter {
                 }
             }
         }
+        let (assignees, assignee_statuses) = json["assignees"]
+            .as_array()
+            .map(|users| {
+                users
+                    .iter()
+                    .map(|value| {
+                        let user = Self::map_user(value);
+                        let status = PrReviewerStatus {
+                            user: user.clone(),
+                            status: PrReviewStatus::Pending,
+                            web_url: sanitize_web_url(&value["html_url"]),
+                        };
+                        (user, status)
+                    })
+                    .unzip()
+            })
+            .unwrap_or_default();
         let metadata_permissions = self.metadata_permissions(owner, repo, &summary.author.login).await;
         Ok(PrDetail {
             summary,
@@ -1499,10 +1519,8 @@ impl GitPlatform for GitHubAdapter {
             draft: json["draft"].as_bool(),
             reviewers,
             reviewer_statuses,
-            assignees: json["assignees"]
-                .as_array()
-                .map(|users| users.iter().map(Self::map_user).collect())
-                .unwrap_or_default(),
+            assignees,
+            assignee_statuses,
             milestone: Self::metadata_milestone(&json["milestone"]),
             metadata_permissions,
             web_url: sanitize_web_url(&json["html_url"]),
@@ -2958,6 +2976,7 @@ mod pr_search_tests {
             label: "help wanted".into(),
             reviews: Some(PrReviewFilter::ChangesRequested),
             assignee: "hubot".into(),
+            reviewer: String::new(),
             sort: PrListSort::CommentsDesc,
         };
 

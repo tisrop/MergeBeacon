@@ -54,6 +54,7 @@ const mocks = vi.hoisted(() => ({
     diffLoading: false,
     error: null as string | null,
     fetchPrDetail: vi.fn().mockResolvedValue(true),
+    refreshPrDetail: vi.fn().mockResolvedValue(true),
     fetchPrDiff: vi.fn().mockResolvedValue(undefined),
     fetchPrCommits: vi.fn().mockResolvedValue(undefined),
     selectCommitRange: vi.fn().mockResolvedValue(undefined),
@@ -420,6 +421,124 @@ describe("PrDetailPage 关闭权限", () => {
     expect(mocks.prStore.fetchPrCommits).not.toHaveBeenCalled();
   });
 
+  it("整体刷新会保留页面挂载并刷新详情、Diff、提交、合并状态和已挂载面板", async () => {
+    const reviewRefresh = vi.fn().mockResolvedValue(undefined);
+    const dependencyRefresh = vi.fn().mockResolvedValue(undefined);
+    const queueRefresh = vi.fn().mockResolvedValue(undefined);
+    const refreshableStub = (testId: string, refresh: () => Promise<void>) =>
+      defineComponent({
+        setup(_props, { expose }) {
+          expose({ refresh });
+          return {};
+        },
+        template: `<section data-testid="${testId}" />`,
+      });
+    const wrapper = mountPage({
+      ReviewList: refreshableStub("review-list", reviewRefresh),
+      PrDependenciesPanel: refreshableStub("dependencies-panel", dependencyRefresh),
+      PrMergeQueuePanel: refreshableStub("merge-queue-panel", queueRefresh),
+    });
+    await flushPromises();
+    await selectTab(wrapper, "依赖关系");
+    await flushPromises();
+
+    const commitRange = { startIndex: 0, endIndex: 1 };
+    mocks.prStore.commitRange = commitRange;
+    mocks.prStore.refreshPrDetail.mockClear();
+    mocks.prStore.fetchPrDiff.mockClear();
+    mocks.prStore.fetchPrCommits.mockClear();
+    mocks.prStore.fetchMergeReadiness.mockClear();
+    mocks.prStore.resetCommitSelection.mockClear();
+    reviewRefresh.mockClear();
+    dependencyRefresh.mockClear();
+    queueRefresh.mockClear();
+
+    const button = wrapper.get('[data-testid="refresh-pr-detail"]');
+    expect(button.attributes("title")).toBe("刷新");
+    await button.trigger("click");
+    await flushPromises();
+
+    expect(mocks.prStore.refreshPrDetail).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.resetCommitSelection).not.toHaveBeenCalled();
+    expect(mocks.prStore.commitRange).toEqual(commitRange);
+    expect(mocks.prStore.fetchPrDiff).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.fetchPrCommits).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.fetchMergeReadiness).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(reviewRefresh).toHaveBeenCalledTimes(1);
+    expect(dependencyRefresh).toHaveBeenCalledTimes(1);
+    expect(queueRefresh).toHaveBeenCalledTimes(1);
+    expect(wrapper.get('[data-testid="refresh-pr-detail"]').attributes("aria-busy")).toBe("false");
+  });
+
+  it("刷新返回 404 后移除过期详情和操作按钮", async () => {
+    mocks.prStore.refreshPrDetail.mockImplementationOnce(async () => {
+      mocks.prStore.currentPr = null;
+      mocks.prStore.error = "找不到 owner/repo #42，该 PR / MR 可能不存在，或当前 Token 无权访问。";
+      return false;
+    });
+    const wrapper = mountPage();
+    await flushPromises();
+    expect(wrapper.find(".pr-actions").exists()).toBe(true);
+
+    await wrapper.get('[data-testid="refresh-pr-detail"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".pr-actions").exists()).toBe(false);
+    expect(wrapper.get(".error-box").text()).toContain("找不到 owner/repo #42");
+  });
+
+  it("刷新同一 PR 时保留用户填写的合并提交信息", async () => {
+    mocks.prStore.refreshPrDetail.mockImplementationOnce(async () => {
+      mocks.prStore.currentPr = {
+        ...detail,
+        source_branch: "refreshed-feature",
+        summary: { ...detail.summary, updated_at: "2026-08-05T11:00:00Z" },
+      };
+      return true;
+    });
+    const wrapper = mountPage({
+      ReviewList: defineComponent({
+        setup(_props, { expose }) {
+          expose({ refresh: vi.fn().mockResolvedValue(undefined) });
+          return {};
+        },
+        template: "<section />",
+      }),
+    });
+    await flushPromises();
+    const commitMessage = wrapper.get<HTMLInputElement>(".merge-commit-message");
+    await commitMessage.setValue("保留我的自定义合并信息");
+
+    await wrapper.get('[data-testid="refresh-pr-detail"]').trigger("click");
+    await flushPromises();
+
+    expect(commitMessage.element.value).toBe("保留我的自定义合并信息");
+  });
+
+  it("刷新详情在页面卸载后不再启动后续请求", async () => {
+    const refreshRequest = deferred<boolean>();
+    mocks.prStore.refreshPrDetail.mockReturnValueOnce(refreshRequest.promise);
+    const wrapper = mountPage();
+    await flushPromises();
+
+    mocks.prStore.refreshPrDetail.mockClear();
+    mocks.prStore.fetchPrDiff.mockClear();
+    mocks.prStore.fetchPrCommits.mockClear();
+    mocks.prStore.fetchMergeReadiness.mockClear();
+    mocks.prStore.resetCommitSelection.mockClear();
+
+    await wrapper.get('[data-testid="refresh-pr-detail"]').trigger("click");
+    wrapper.unmount();
+    refreshRequest.resolve(true);
+    await flushPromises();
+
+    expect(mocks.prStore.refreshPrDetail).toHaveBeenCalledWith("github", "owner", "repo", 42);
+    expect(mocks.prStore.resetCommitSelection).not.toHaveBeenCalled();
+    expect(mocks.prStore.fetchPrDiff).not.toHaveBeenCalled();
+    expect(mocks.prStore.fetchPrCommits).not.toHaveBeenCalled();
+    expect(mocks.prStore.fetchMergeReadiness).not.toHaveBeenCalled();
+  });
+
   it("首次打开 Diff 页签时才加载提交列表", async () => {
     const wrapper = mountPage();
     await flushPromises();
@@ -644,7 +763,7 @@ describe("PrDetailPage 关闭权限", () => {
     const button = wrapper.get('[data-testid="close-pr-button"]');
 
     expect(button.attributes("disabled")).toBeDefined();
-    expect(button.attributes("title")).toBe("只有 PR 作者或具备仓库写入权限的成员才能关闭 PR");
+    expect(button.attributes("title")).toBe("只有 PR 创建者或具备仓库写入权限的成员才能关闭 PR");
     await button.trigger("click");
     expect(mocks.prStore.closePr).not.toHaveBeenCalled();
   });
