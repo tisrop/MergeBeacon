@@ -56,7 +56,7 @@ fi
 
 echo "==> Building the feature-gated restart timing probe"
 cd "$REPO_ROOT"
-pnpm run tauri -- build \
+pnpm run tauri build \
   --debug \
   --features restart-timing-test \
   --bundles app \

@@ -248,7 +248,7 @@ jobs:
         shell: bash
         run: |
           printf 'MergeBeacon updater signing preflight' > "$RUNNER_TEMP/updater-signing-preflight"
-          pnpm run tauri -- signer sign "$RUNNER_TEMP/updater-signing-preflight"
+          pnpm run tauri signer sign "$RUNNER_TEMP/updater-signing-preflight"
 
       - name: Configure Apple signing env vars (macOS)
         if: startsWith(matrix.platform, 'macos')
