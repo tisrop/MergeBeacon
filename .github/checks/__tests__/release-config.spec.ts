@@ -22,4 +22,11 @@ describe("Release notes 分类配置", () => {
 
     expect(workflow).toContain('-f configuration_file_path=".github/release.yml"');
   });
+
+  it("构建前显式安装矩阵指定的 Rust target", async () => {
+    const workflow = await readFile(".github/workflows/release.yml", "utf8");
+
+    expect(workflow).toContain('run: rustup target add "${{ matrix.target }}"');
+    expect(workflow).not.toContain("targets: ${{ matrix.target }}");
+  });
 });
