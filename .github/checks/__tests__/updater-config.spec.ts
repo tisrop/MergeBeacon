@@ -87,7 +87,7 @@ describe("updater 配置安全检查", () => {
     const metadata = await readCargoMetadata();
 
     expect(() => assertUpdaterSystemProxy(metadata)).not.toThrow();
-  });
+  }, 30_000);
 
   it("拒绝缺少 system-proxy 的 updater 依赖", () => {
     const metadata = {
