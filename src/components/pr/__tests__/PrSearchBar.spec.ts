@@ -22,6 +22,7 @@ describe("PrSearchBar", () => {
     ["标签筛选", "所有标签"],
     ["负责人筛选", "所有负责人"],
     ["评审状态筛选", "所有评审状态"],
+    ["待评审人筛选", "所有待评审人"],
     ["Pull Request 排序", "最近更新"],
   ])("点击 %s 可以展开下拉选项", async (accessibleName, selectedLabel) => {
     const wrapper = mount(PrSearchBar, { props: { query: query() } });
@@ -40,17 +41,37 @@ describe("PrSearchBar", () => {
     const wrapper = mount(PrSearchBar, { props: { query: query() } });
 
     expect(wrapper.find("label .app-select").exists()).toBe(false);
-    expect(wrapper.findAll(".app-select")).toHaveLength(5);
+    expect(wrapper.findAll(".app-select")).toHaveLength(6);
     expect(wrapper.findAll('.search-filters input[type="text"]')).toHaveLength(0);
   });
 
-  it.each(["github", "gitlab"] as const)("%s 使用评审状态和负责人筛选语义", (platform) => {
+  it("GitHub 使用待评审人语义", () => {
     const wrapper = mount(PrSearchBar, {
-      props: { platform, query: query() },
+      props: {
+        platform: "github",
+        query: query(),
+        reviewerOptions: [{ value: "reviewer", label: "reviewer" }],
+      },
     });
 
     expect(wrapper.get('[aria-label="负责人筛选"]').text()).toContain("所有负责人");
     expect(wrapper.get('[aria-label="评审状态筛选"]').text()).toContain("所有评审状态");
+    expect(wrapper.get('[aria-label="待评审人筛选"]').text()).toContain("所有待评审人");
+    expect(wrapper.text()).not.toContain("评审者");
+  });
+
+  it("GitLab 使用评审者语义", () => {
+    const wrapper = mount(PrSearchBar, {
+      props: {
+        platform: "gitlab",
+        query: query(),
+        reviewerOptions: [{ value: "reviewer", label: "reviewer" }],
+      },
+    });
+
+    expect(wrapper.get('[aria-label="负责人筛选"]').text()).toContain("所有负责人");
+    expect(wrapper.get('[aria-label="评审状态筛选"]').text()).toContain("所有评审状态");
+    expect(wrapper.get('[aria-label="评审者筛选"]').text()).toContain("所有评审者");
     expect(wrapper.text()).not.toContain("审查");
     expect(wrapper.text()).not.toContain("测试");
   });
@@ -90,6 +111,17 @@ describe("PrSearchBar", () => {
     expect(wrapper.get('[aria-label="Reviewer filter"]').text()).toContain("All reviewers");
   });
 
+  it("GitHub 英文界面使用 Requested reviewer", () => {
+    setAppLocale("en-US");
+    const wrapper = mount(PrSearchBar, {
+      props: { platform: "github", query: query() },
+    });
+
+    expect(wrapper.get('[aria-label="Requested reviewer filter"]').text()).toContain(
+      "All requested reviewers",
+    );
+  });
+
   it("下拉筛选改变时立即搜索，标题仍需提交表单后才生效", async () => {
     const wrapper = mount(PrSearchBar, {
       props: {
@@ -97,6 +129,7 @@ describe("PrSearchBar", () => {
         authorOptions: [{ value: "octocat", label: "octocat" }],
         labelOptions: [{ value: "bug", label: "bug" }],
         assigneeOptions: [{ value: "maintainer", label: "maintainer" }],
+        reviewerOptions: [{ value: "reviewer", label: "reviewer" }],
       },
     });
     const titleInput = wrapper.get<HTMLInputElement>("#pr-title-search");
@@ -107,6 +140,7 @@ describe("PrSearchBar", () => {
       ["标签筛选", "bug"],
       ["负责人筛选", "maintainer"],
       ["评审状态筛选", "approved"],
+      ["待评审人筛选", "reviewer"],
       ["Pull Request 排序", "comments_desc"],
     ]) {
       await wrapper.get(`[aria-label="${accessibleName}"]`).trigger("click");
@@ -114,14 +148,15 @@ describe("PrSearchBar", () => {
     }
 
     const appliedQueries = wrapper.emitted<PrListQuery[]>("apply") ?? [];
-    expect(appliedQueries).toHaveLength(5);
+    expect(appliedQueries).toHaveLength(6);
     expect(appliedQueries[0][0]).toEqual({ ...query(), author: "octocat" });
-    expect(appliedQueries[4][0]).toEqual({
+    expect(appliedQueries[5][0]).toEqual({
       ...query(),
       author: "octocat",
       label: "bug",
       assignee: "maintainer",
       reviews: "approved",
+      reviewer: "reviewer",
       sort: "comments_desc",
     });
     expect(titleInput.element.value).toBe("parser");
@@ -135,6 +170,7 @@ describe("PrSearchBar", () => {
       label: "bug",
       assignee: "maintainer",
       reviews: "approved",
+      reviewer: "reviewer",
       sort: "comments_desc",
     });
   });

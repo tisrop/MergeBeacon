@@ -44,22 +44,32 @@ const assigneeLabels = computed(() =>
         search: t("pr.searchAssignee"),
       },
 );
-const reviewerLabels = computed(() =>
-  props.platform === "gitee"
-    ? {
-        field: t("pr.giteeReviewers"),
-        all: t("pr.allGiteeReviewers"),
-        aria: t("pr.giteeReviewerUserFilterAria"),
-        search: t("pr.searchGiteeReviewers"),
-      }
-    : {
-        field: t("pr.reviews"),
-        all: t("pr.allReviewStates"),
-        aria: t("pr.reviewsFilterAria"),
-      },
-);
+const reviewerLabels = computed(() => {
+  if (props.platform === "github") {
+    return {
+      field: t("pr.requestedReviewer"),
+      all: t("pr.allRequestedReviewers"),
+      aria: t("pr.requestedReviewerFilterAria"),
+      search: t("pr.searchRequestedReviewer"),
+    };
+  }
+  if (props.platform === "gitee") {
+    return {
+      field: t("pr.giteeReviewers"),
+      all: t("pr.allGiteeReviewers"),
+      aria: t("pr.giteeReviewerUserFilterAria"),
+      search: t("pr.searchGiteeReviewers"),
+    };
+  }
+  return {
+    field: t("pr.reviewer"),
+    all: t("pr.allReviewers"),
+    aria: t("pr.reviewerFilterAria"),
+    search: t("pr.searchReviewer"),
+  };
+});
 const reviewOptions = computed<SelectOption[]>(() => [
-  { value: "", label: reviewerLabels.value.all },
+  { value: "", label: t("pr.allReviewStates") },
   { value: "none", label: t("pr.noReview") },
   { value: "required", label: t("pr.reviewRequired") },
   { value: "approved", label: t("pr.reviewApproved") },
@@ -153,10 +163,18 @@ const {
           @update:model-value="setLabel"
         />
       </div>
+      <div v-if="platform !== 'gitee'" class="filter-field select-field">
+        <span>{{ t("pr.reviews") }}</span>
+        <AppSelect
+          :aria-label="t('pr.reviewsFilterAria')"
+          :model-value="draft.reviews ?? ''"
+          :options="reviewOptions"
+          @update:model-value="setReviews"
+        />
+      </div>
       <div class="filter-field select-field">
         <span>{{ reviewerLabels.field }}</span>
         <AppSelect
-          v-if="platform === 'gitee'"
           :aria-label="reviewerLabels.aria"
           searchable
           :search-placeholder="reviewerLabels.search"
@@ -164,13 +182,6 @@ const {
           :model-value="draft.reviewer"
           :options="withAllOption(reviewerLabels.all, reviewerOptions)"
           @update:model-value="setReviewer"
-        />
-        <AppSelect
-          v-else
-          :aria-label="reviewerLabels.aria"
-          :model-value="draft.reviews ?? ''"
-          :options="reviewOptions"
-          @update:model-value="setReviews"
         />
       </div>
       <div class="filter-field select-field">

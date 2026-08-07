@@ -433,6 +433,7 @@ pub async fn pr_list(
         (&mut query.author, "作者"),
         (&mut query.label, "标签"),
         (&mut query.assignee, "Assignee"),
+        (&mut query.reviewer, "评审者"),
     ] {
         *value = value.trim().to_string();
         if value.chars().count() > 100 {
