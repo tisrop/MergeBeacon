@@ -51,7 +51,7 @@ describe("Release 下载引导", () => {
     expect(() => parseArguments(["release.json"])).toThrow("命令参数无效：release.json");
   });
 
-  it("按设备生成安装包徽章表格，统计安装包下载量并排除 latest.json", () => {
+  it("按设备生成安装包徽章表格，不重复展示 Assets 已有的下载统计", () => {
     const body = buildReleaseDownloadGuide({
       body: "## What's Changed\n\n- 新功能",
       assets: releaseAssets(),
@@ -74,21 +74,7 @@ describe("Release 下载引导", () => {
     expect(body).toContain("img.shields.io/badge/RPM-x64-1793D1");
     expect(body).toContain("MergeBeacon_0.10.0_aarch64.dmg");
     expect(body).toContain("MergeBeacon_0.10.0_x64-portable.zip");
-    const downloadCounts = {
-      "MergeBeacon_0.10.0_aarch64.dmg": "downloads",
-      "MergeBeacon_0.10.0_x64.dmg": "downloads",
-      "MergeBeacon_0.10.0_x64_en-US.msi": "manual%20%2B%20in-app",
-      "MergeBeacon_0.10.0_x64-setup.exe": "manual%20%2B%20in-app",
-      "MergeBeacon_0.10.0_x64-portable.zip": "manual%20%2B%20app%20update",
-      "MergeBeacon_0.10.0_amd64.AppImage": "manual%20%2B%20in-app",
-      "MergeBeacon_0.10.0_amd64.deb": "downloads",
-      "MergeBeacon_0.10.0-1.x86_64.rpm": "downloads",
-    };
-    for (const [name, label] of Object.entries(downloadCounts)) {
-      expect(body).toContain(
-        `img.shields.io/github/downloads/tisrop/MergeBeacon/v0.10.0/${name}?label=${label}&cacheSeconds=300&style=flat-square`,
-      );
-    }
+    expect(body).not.toContain("img.shields.io/github/downloads");
     expect(body).not.toContain("/releases/download/v0.10.0/latest.json");
     expect(body).not.toContain("/v0.10.0/latest.json?label=");
     expect(body).not.toContain("**In-app updater downloads:**");
@@ -104,7 +90,7 @@ describe("Release 下载引导", () => {
     });
 
     expect(body).toContain("/releases/download/v0.10.0/rc%201/");
-    expect(body).toContain("/github/downloads/tisrop/MergeBeacon/v0.10.0%2Frc%201/");
+    expect(body).not.toContain("img.shields.io/github/downloads");
   });
 
   it("重复执行时替换已有下载引导而不是继续追加", () => {

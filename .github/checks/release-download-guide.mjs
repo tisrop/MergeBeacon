@@ -50,18 +50,6 @@ function downloadBadgeLink({ label, detail, color, logo, repository, tag, asset 
   return `[![${label} ${detail}](${badgeUrl})](${assetUrl(repository, tag, asset)})`;
 }
 
-function downloadCountBadge(repository, tag, asset, label = "downloads") {
-  const [owner, name] = repository.split("/");
-  const badgeUrl = [
-    "https://img.shields.io/github/downloads",
-    encodeURIComponent(owner),
-    encodeURIComponent(name),
-    encodeURIComponent(tag),
-    encodeURIComponent(asset.name),
-  ].join("/");
-  return `![${label}](${badgeUrl}?label=${encodeURIComponent(label)}&cacheSeconds=300&style=flat-square)`;
-}
-
 function stripExistingGuide(body) {
   const start = body.indexOf(GUIDE_START);
   const end = body.indexOf(GUIDE_END);
@@ -108,20 +96,18 @@ export function buildReleaseDownloadGuide({ body, assets, repository, tag }) {
   const linuxDeb = optionalUniqueAsset(assets, "Linux DEB", (name) => /\.deb$/i.test(name));
   const linuxRpm = optionalUniqueAsset(assets, "Linux RPM", (name) => /\.rpm$/i.test(name));
 
-  const badge = (label, detail, color, logo, asset, countLabel = "downloads") =>
-    `${downloadBadgeLink({ label, detail, color, logo, repository, tag, asset })} ${downloadCountBadge(repository, tag, asset, countLabel)}`;
+  const badge = (label, detail, color, logo, asset) =>
+    downloadBadgeLink({ label, detail, color, logo, repository, tag, asset });
   const macDownloads = [
     badge("DMG", "Apple Silicon", "555555", "apple", macArm),
     badge("DMG", "Intel", "555555", "apple", macIntel),
   ];
   const windowsDownloads = [
-    badge("MSI", "x64", "0078D4", "windows11", windowsMsi, "manual + in-app"),
-    badge("EXE", "x64", "0078D4", "windows11", windowsExe, "manual + in-app"),
-    badge("ZIP", "x64", "0078D4", "windows11", windowsPortable, "manual + app update"),
+    badge("MSI", "x64", "0078D4", "windows11", windowsMsi),
+    badge("EXE", "x64", "0078D4", "windows11", windowsExe),
+    badge("ZIP", "x64", "0078D4", "windows11", windowsPortable),
   ];
-  const linuxDownloads = [
-    badge("AppImage", "x64", "1793D1", "linux", linuxAppImage, "manual + in-app"),
-  ];
+  const linuxDownloads = [badge("AppImage", "x64", "1793D1", "linux", linuxAppImage)];
   if (linuxDeb) {
     linuxDownloads.push(badge("DEB", "x64", "1793D1", "linux", linuxDeb));
   }
