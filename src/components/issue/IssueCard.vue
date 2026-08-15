@@ -1,12 +1,19 @@
 <script setup lang="ts">
-import type { IssueSummary } from "@/types";
+import { computed } from "vue";
+import type { IssueState, IssueSummary } from "@/types";
 import { labelTagColorClass } from "@/utils/labelColorClass";
 import { useI18n } from "@/i18n";
 
-defineProps<{
+const props = defineProps<{
   issue: IssueSummary;
 }>();
 const { locale, t } = useI18n();
+
+const stateLabels = computed<Record<IssueState, string>>(() => ({
+  open: t("issue.open"),
+  closed: t("issue.closed"),
+  all: "",
+}));
 </script>
 
 <template>
@@ -20,7 +27,7 @@ const { locale, t } = useI18n();
     <div class="issue-content">
       <div class="issue-card-top">
         <span class="issue-title">{{ issue.title }}</span>
-        <span class="badge" :class="`badge-${issue.state}`">{{ issue.state }}</span>
+        <span class="badge" :class="`badge-${issue.state}`">{{ stateLabels[issue.state] }}</span>
       </div>
       <div class="issue-meta">
         <span class="issue-number">#{{ issue.number }}</span>
