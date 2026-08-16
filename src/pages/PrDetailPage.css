@@ -86,7 +86,7 @@
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   padding-left: var(--space-1);
   padding-right: var(--space-1);
-  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  border-left: 1px solid color-mix(in srgb, var(--color-text-inverse) 22%, transparent);
 }
 
 .merge-dropdown {

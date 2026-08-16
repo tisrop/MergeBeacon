@@ -171,6 +171,11 @@ export const zhCN = {
   "settings.errorLogsUnavailable": "近期错误日志暂不可用",
   "settings.interfaceDescription": "配置应用语言、评审详情与平台切换器中显示的内容。",
   "settings.interfaceTitle": "界面设置",
+  "settings.theme": "主题",
+  "settings.themeHint": "跟随系统，或在浅色与深色之间固定选择；切换后立即生效。",
+  "settings.themeSystem": "跟随系统",
+  "settings.themeLight": "浅色",
+  "settings.themeDark": "深色",
   "settings.latestVersion": "当前已是最新版本。",
   "settings.mergeQueue": "显示 Merge Queue / Merge Train",
   "settings.mergeQueueDisabledHint": "需先开启依赖关系，才能展示平台原生合并队列状态。",
@@ -1386,6 +1391,11 @@ export const enUS: Record<MessageKey, string> = {
   "settings.interfaceDescription":
     "Configure the app language and content shown in review details and the platform switcher.",
   "settings.interfaceTitle": "Interface",
+  "settings.theme": "Theme",
+  "settings.themeHint": "Follow the system or pin light/dark; changes apply immediately.",
+  "settings.themeSystem": "Follow system",
+  "settings.themeLight": "Light",
+  "settings.themeDark": "Dark",
   "settings.latestVersion": "You are using the latest version.",
   "settings.mergeQueue": "Show Merge Queue / Merge Train",
   "settings.mergeQueueDisabledHint":

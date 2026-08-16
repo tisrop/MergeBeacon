@@ -25,7 +25,7 @@
   flex-direction: column;
   justify-content: center;
   padding: clamp(var(--space-8), 5vw, var(--space-12));
-  color: var(--color-text-inverse);
+  color: var(--color-on-brand);
   background: var(--gradient-beacon);
 }
 
@@ -59,7 +59,7 @@
 
 .login-intro > p:not(.intro-title) {
   max-width: 380px;
-  color: rgba(247, 249, 252, 0.72);
+  color: color-mix(in srgb, var(--color-on-brand) 72%, transparent);
   line-height: 1.7;
 }
 
@@ -68,7 +68,7 @@
   gap: var(--space-3);
   margin-top: var(--space-8);
   list-style: none;
-  color: rgba(247, 249, 252, 0.84);
+  color: color-mix(in srgb, var(--color-on-brand) 84%, transparent);
   font-size: var(--font-size-sm);
 }
 
@@ -149,8 +149,8 @@ h1 {
 .btn-spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: var(--color-text-inverse);
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
   border-radius: 50%;
   animation: icon-spin 0.6s linear infinite;
 }

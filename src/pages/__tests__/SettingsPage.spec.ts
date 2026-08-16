@@ -12,6 +12,7 @@ import {
   restartAfterUpdate,
 } from "@/api";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { setThemeMode } from "@/theme";
 import SettingsPage from "../SettingsPage.vue";
 
 const storage = new Map<string, string>();
@@ -93,6 +94,27 @@ describe("SettingsPage 诊断信息", () => {
     await button.trigger("click");
 
     expect(routerMocks.replace).toHaveBeenCalledWith("/pr");
+  });
+
+  it("切换主题立即应用并持久化", async () => {
+    const wrapper = mountPage();
+
+    const trigger = wrapper.get("#interface-theme");
+    expect(trigger.text()).toContain("跟随系统");
+
+    await trigger.trigger("click");
+    const darkOption = wrapper
+      .findAll(".dropdown-option")
+      .find((option) => option.text() === "深色");
+    expect(darkOption).toBeDefined();
+    await darkOption!.trigger("click");
+    await flushPromises();
+
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(storage.get("mergebeacon:theme")).toBe("dark");
+
+    setThemeMode("system");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
   it("首载或深链没有来源记录且未登录时回到当前平台的登录页", async () => {

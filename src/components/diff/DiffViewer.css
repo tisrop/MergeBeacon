@@ -251,6 +251,22 @@
   --d2h-del-border-color: var(--diff-remove-line);
   --d2h-del-highlight-bg-color: var(--diff-remove-line);
   --d2h-change-del-color: var(--diff-remove-bg);
+  /* 通用呈现变量映射到应用 Token，避免 d2h 内置浅色默认在暗色主题下失效 */
+  --d2h-bg-color: var(--color-surface-subtle);
+  --d2h-border-color: var(--color-border);
+  --d2h-dim-color: var(--color-text-tertiary);
+  --d2h-line-border-color: var(--color-border-light);
+  --d2h-file-header-bg-color: var(--color-surface-subtle);
+  --d2h-file-header-border-color: var(--color-border);
+  --d2h-empty-placeholder-bg-color: var(--color-surface-subtle);
+  --d2h-empty-placeholder-border-color: var(--color-border-light);
+  --d2h-info-bg-color: var(--color-surface-hover);
+  --d2h-info-border-color: var(--color-border-light);
+  --d2h-ins-label-color: var(--color-success);
+  --d2h-del-label-color: var(--color-danger);
+  --d2h-change-label-color: var(--color-warning);
+  --d2h-moved-label-color: var(--color-primary);
+  --d2h-selected-color: var(--color-primary-light);
 
   width: 100%;
   min-width: 0;
@@ -273,7 +289,7 @@
 }
 
 .diff2html-container :deep(mark.diff-search-match.active) {
-  background: color-mix(in srgb, var(--diff-search-match-active) 88%, #fff 12%);
+  background: color-mix(in srgb, var(--diff-search-match-active) 88%, var(--color-surface));
   box-shadow: none;
   color: inherit;
   font-weight: inherit;
@@ -570,8 +586,8 @@
   margin: 0;
   padding: 6px var(--space-3);
   border-bottom: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-danger-light, #fff1f0) 70%, var(--color-surface));
-  color: var(--color-danger, #cf222e);
+  background: color-mix(in srgb, var(--color-danger-light) 70%, var(--color-surface));
+  color: var(--color-danger);
   font-size: var(--font-size-xs);
 }
 

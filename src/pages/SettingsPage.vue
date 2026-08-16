@@ -19,6 +19,7 @@ import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
 import AppSelect from "@/components/shared/AppSelect.vue";
 import type { Platform } from "@/types";
 import { useI18n, type AppLocale } from "@/i18n";
+import { setThemeMode, useTheme, type ThemeMode } from "@/theme";
 
 const auth = useAuthStore();
 const updates = useUpdateStore();
@@ -46,6 +47,17 @@ const localeOptions = computed(() => [
 const selectedLocale = computed<AppLocale>({
   get: () => locale.value,
   set: (value) => uiSettings.setLocale(value),
+});
+
+const { mode: themeMode } = useTheme();
+const themeOptions = computed(() => [
+  { value: "system", label: t("settings.themeSystem") },
+  { value: "light", label: t("settings.themeLight") },
+  { value: "dark", label: t("settings.themeDark") },
+]);
+const selectedTheme = computed<ThemeMode>({
+  get: () => themeMode.value,
+  set: (value) => setThemeMode(value),
 });
 
 const platformList: { value: Platform; label: string }[] = [
@@ -245,6 +257,22 @@ async function copyRecentErrorLogs() {
             size="sm"
             :aria-label="t('language.interface')"
             :options="localeOptions"
+          />
+        </div>
+        <div class="setting-row">
+          <span>
+            <label class="setting-label" for="interface-theme">
+              {{ t("settings.theme") }}
+            </label>
+            <span class="setting-hint">{{ t("settings.themeHint") }}</span>
+          </span>
+          <AppSelect
+            id="interface-theme"
+            v-model="selectedTheme"
+            class="language-select"
+            size="sm"
+            :aria-label="t('settings.theme')"
+            :options="themeOptions"
           />
         </div>
         <div class="setting-row">

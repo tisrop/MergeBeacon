@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   /* Color system: calm, high-density desktop workspace */
   --color-bg: #f3f5f8;
   --color-bg-accent: #e8edf4;
@@ -21,6 +22,8 @@
   --color-brand-accent: #62dfcc;
   --color-brand-accent-strong: #159b8a;
   --color-brand-accent-soft: #e5f8f4;
+  /* 品牌渐变表面上的文字：品牌渐变两主题恒定，此 Token 不随主题翻转 */
+  --color-on-brand: #f7f9fc;
   --color-beacon-indigo: #6f84e8;
   --color-beacon-navy: #111d32;
   --gradient-beacon: linear-gradient(145deg, #213858 0%, #111d32 58%, #203b70 100%);
@@ -120,6 +123,76 @@
   /* Layout */
   --sidebar-width: 272px;
   --header-height: 72px;
+}
+
+/* 暗色主题：由 src/theme 在 <html data-theme> 上应用；仅覆盖颜色语义，
+   间距、圆角、字号、动效与层阶与浅色共用。品牌渐变（登录页/标志）在两主题下保持一致。 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #101217;
+  --color-bg-accent: #171b22;
+  --color-surface: #1f232b;
+  --color-surface-raised: #282d39;
+  --color-surface-subtle: #191c23;
+  --color-surface-hover: #2c323e;
+  --color-border: #393f4b;
+  --color-border-light: #2e343f;
+  --color-border-strong: #646e7f;
+  --color-text: #eaecf0;
+  --color-text-secondary: #adb2b9;
+  --color-text-tertiary: #838891;
+  --color-text-inverse: #10131a;
+  --color-primary: #7fa6ee;
+  --color-primary-hover: #8cb0f0;
+  --color-primary-active: #6285d3;
+  --color-primary-light: #293a5a;
+  --color-primary-border: #5e7fbf;
+  --color-brand-accent: #62dfcc;
+  --color-brand-accent-strong: #8be8da;
+  --color-brand-accent-soft: #12332d;
+  --color-platform-gitlab-bg: #2e201b;
+  --color-platform-gitlab-border: #4a3028;
+  --color-platform-gitlab-text: #eba17f;
+  --color-platform-gitee-bg: #2f1d1d;
+  --color-platform-gitee-border: #4a2c2c;
+  --color-platform-gitee-text: #ef8f8f;
+  --color-focus: #94abef;
+  --color-focus-ring: rgba(148, 171, 239, 0.3);
+  --color-control-selected: #2b3c60;
+  --color-control-highlight: #2a303b;
+  --color-overlay: rgba(0, 0, 0, 0.66);
+  --color-danger: #ec8b81;
+  --color-danger-light: #4a2a34;
+  --color-danger-border: #9e5c69;
+  --color-success: #4fc9ab;
+  --color-success-hover: #6bd6bb;
+  --color-success-light: #1e4034;
+  --color-success-border: #357a62;
+  --color-warning: #d9a03f;
+  --color-warning-light: #3b2f1d;
+  --color-warning-border: #8a6a2a;
+
+  /* Diff colors（暗色下的新增/删除底与行标） */
+  --diff-add-bg: #193830;
+  --diff-add-line: #1f4a3d;
+  --diff-remove-bg: #402430;
+  --diff-remove-line: #53303a;
+
+  /* AI severity colors */
+  --severity-critical: #e5807a;
+  --severity-major: #d9993f;
+  --severity-minor: #7ea6e8;
+  --severity-info: #4fc3d4;
+
+  /* 暗色下黑色投影需显著加深才能维持浮层“明显高于页面内容”（FRONTEND_STANDARDS §3.4） */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.58);
+  --shadow-xl: 0 32px 80px rgba(0, 0, 0, 0.66);
+  --shadow-btn: 0 1px 1px rgba(0, 0, 0, 0.2);
+  --shadow-btn-hover: 0 3px 10px rgba(0, 0, 0, 0.35);
+  --shadow-input-inset: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-brand-mark: 0 5px 14px rgba(0, 0, 0, 0.45);
 }
 
 * {
@@ -279,6 +352,11 @@ button {
   background: var(--color-primary-light);
   border-color: var(--color-primary-border);
   color: var(--color-primary);
+}
+
+/* 暗色下 outline 按钮底色与卡片表面同值会相融，注入主色浅调保证可辨识 */
+:root[data-theme="dark"] .btn-outline {
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
 }
 
 .btn-success {
@@ -606,6 +684,17 @@ textarea.input {
   100% {
     background-position: -200% 0;
   }
+}
+
+/* 暗色下 shimmer 幅度需更宽才可感知（border-light 与 surface-hover 过近） */
+:root[data-theme="dark"] .skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-hover) 25%,
+    var(--color-border) 50%,
+    var(--color-surface-hover) 75%
+  );
+  background-size: 200% 100%;
 }
 
 .skeleton-card {
