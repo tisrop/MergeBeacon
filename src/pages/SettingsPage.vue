@@ -19,6 +19,7 @@ import MarkdownRenderer from "@/components/shared/MarkdownRenderer.vue";
 import AppSelect from "@/components/shared/AppSelect.vue";
 import type { Platform } from "@/types";
 import { useI18n, type AppLocale } from "@/i18n";
+import { setThemeMode, useTheme, type ThemeMode } from "@/theme";
 
 const auth = useAuthStore();
 const updates = useUpdateStore();
@@ -46,6 +47,17 @@ const localeOptions = computed(() => [
 const selectedLocale = computed<AppLocale>({
   get: () => locale.value,
   set: (value) => uiSettings.setLocale(value),
+});
+
+const { mode: themeMode } = useTheme();
+const themeOptions = computed(() => [
+  { value: "system", label: t("settings.themeSystem") },
+  { value: "light", label: t("settings.themeLight") },
+  { value: "dark", label: t("settings.themeDark") },
+]);
+const selectedTheme = computed<ThemeMode>({
+  get: () => themeMode.value,
+  set: (value) => setThemeMode(value),
 });
 
 const platformList: { value: Platform; label: string }[] = [
@@ -186,13 +198,13 @@ async function copyRecentErrorLogs() {
 <template>
   <AppLayout>
     <template #header>
-      <div class="settings-header page-heading">
+      <div class="page-heading">
         <div>
           <h2>{{ t("settings.title") }}</h2>
           <p>{{ t("settings.description") }}</p>
         </div>
         <button
-          class="settings-close-button"
+          class="btn-icon"
           type="button"
           :title="t('settings.close')"
           :aria-label="t('settings.close')"
@@ -245,6 +257,22 @@ async function copyRecentErrorLogs() {
             size="sm"
             :aria-label="t('language.interface')"
             :options="localeOptions"
+          />
+        </div>
+        <div class="setting-row">
+          <span>
+            <label class="setting-label" for="interface-theme">
+              {{ t("settings.theme") }}
+            </label>
+            <span class="setting-hint">{{ t("settings.themeHint") }}</span>
+          </span>
+          <AppSelect
+            id="interface-theme"
+            v-model="selectedTheme"
+            class="language-select"
+            size="sm"
+            :aria-label="t('settings.theme')"
+            :options="themeOptions"
           />
         </div>
         <div class="setting-row">
@@ -376,7 +404,8 @@ async function copyRecentErrorLogs() {
           </div>
           <button
             type="button"
-            class="check-update-button"
+            class="btn"
+            data-testid="check-update"
             :disabled="
               isCheckingUpdate || isInstallingUpdate || isUpdateInstalled || isRestartingUpdate
             "
@@ -435,7 +464,8 @@ async function copyRecentErrorLogs() {
             <template v-if="isUpdateInstalled">
               <button
                 type="button"
-                class="install-update-button"
+                class="btn btn-primary"
+                data-testid="install-update"
                 :aria-busy="isRestartingUpdate"
                 :disabled="isRestartingUpdate"
                 @click="restartApp"
@@ -447,7 +477,8 @@ async function copyRecentErrorLogs() {
               <span class="install-warning">{{ t("settings.workWarning") }}</span>
               <button
                 type="button"
-                class="install-update-button"
+                class="btn btn-primary"
+                data-testid="install-update"
                 :disabled="isInstallingUpdate"
                 @click="installUpdate"
               >
@@ -455,7 +486,8 @@ async function copyRecentErrorLogs() {
               </button>
               <button
                 type="button"
-                class="cancel-install-button"
+                class="btn"
+                data-testid="cancel-install"
                 @click="cancelInstallConfirmation"
               >
                 {{ t("settings.cancelInstall") }}
@@ -464,7 +496,8 @@ async function copyRecentErrorLogs() {
             <button
               v-else
               type="button"
-              class="install-update-button"
+              class="btn btn-primary"
+              data-testid="install-update"
               :disabled="isInstallingUpdate"
               @click="installUpdate"
             >
@@ -493,7 +526,8 @@ async function copyRecentErrorLogs() {
           <div class="support-actions">
             <button
               type="button"
-              class="copy-support-button"
+              class="btn"
+              data-testid="copy-support"
               :disabled="isCopyingSupportInfo"
               @click="copySupportInfo"
             >
@@ -501,7 +535,8 @@ async function copyRecentErrorLogs() {
             </button>
             <button
               type="button"
-              class="copy-support-button"
+              class="btn"
+              data-testid="copy-error-logs"
               :disabled="isCopyingErrorLogs"
               @click="copyRecentErrorLogs"
             >

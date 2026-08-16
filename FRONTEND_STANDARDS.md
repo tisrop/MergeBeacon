@@ -27,6 +27,9 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
    只依赖颜色区分。
 6. **跨平台一致**：macOS、Windows、Linux 上应保持相同的信息架构与操作语义，同时允许系统字体、
    字体渲染和原生窗口行为存在合理差异。
+7. **浅色 / 深色双主题**：应用提供浅色与深色两套完整主题，默认跟随系统，可在设置页固定。两个
+   主题必须保持相同的信息层级、语义色含义和状态可辨识度；品牌渐变（登录页品牌区、应用标志）
+   在两个主题下保持一致。
 
 ## 2. 前端架构边界
 
@@ -60,6 +63,12 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 
 - 全局 Token 统一定义在 `src/style.css` 的 `:root` 中。组件必须优先使用已有 Token，禁止复制
   已有颜色、间距、圆角、阴影或动效数值。
+- 颜色 Token 采用双主题定义：浅色值在 `:root`，深色值在 `:root[data-theme="dark"]`，由
+  `src/theme` 在 `<html data-theme>` 上应用（`color-scheme` 随之切换）。**新增或修改颜色 Token
+  必须同时给出两个主题的值**，并保证正文对比度可达；间距、圆角、字号、动效和层阶 Token 两主题
+  共用。
+- 组件不得自行假设浅色背景：禁止仅依赖白色/黑色字面量或与主题相关的 rgba 叠加；需要随主题
+  反转的叠色必须基于 Token 或 `currentColor` 推导（例如 `color-mix(in srgb, currentColor N%, transparent)`）。
 - 只有跨页面复用且语义稳定的值才能提升为全局 Token；单个组件的局部尺寸应保留在组件作用域内。
 - Token 必须按语义命名，不使用 `blue-500`、`space-small-2` 等依赖具体外观或顺序的名称。
 - 修改现有 Token 时必须检查全部使用点，确认不会破坏 Diff、严重级别、焦点或平台状态语义。
@@ -80,22 +89,29 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 | 焦点 | `--color-focus` | 键盘焦点，不得被品牌色替代 |
 | 语义状态 | `--color-success*`、`--color-warning*`、`--color-danger*` | 成功、警告、危险 |
 | Diff | `--diff-add-*`、`--diff-remove-*` | 新增和删除代码，语义不可互换 |
+| Diff 搜索高亮 | `--diff-search-match`、`--diff-search-match-active` | Diff 内查找匹配与当前项 |
 | AI 严重级别 | `--severity-critical/major/minor/info` | 评审问题等级 |
+| 平台标识 | `--color-platform-gitlab-*`、`--color-platform-gitee-*` | 收件箱等处的平台徽章；GitHub 使用中性表面 Token |
 
 要求：
 
-- 文本和关键控件必须保持清晰对比度；弱化信息不得弱到影响阅读。
+- 文本和关键控件必须保持清晰对比度；弱化信息不得弱到影响阅读。浅色与深色主题都需满足。
 - 危险操作必须同时使用文字或图标表达，不得只显示红色。
 - 品牌薄荷绿、成功绿、Diff 新增绿虽然接近，但必须保持不同的 Token 和用途。
 - 新增颜色前必须证明现有语义色无法表达；禁止在多个组件中散落相近的十六进制颜色。
+- 深色主题下纯色主操作按钮使用较亮的主色底配深色文字（`--color-text-inverse` 在深色主题为
+  深色墨色），这是有意设计；不要在组件内为按钮单独改写文字色。
 
 ### 3.3 字体与排版
 
 - 正文使用 `--font-sans`；代码、Diff、提交哈希、行号和技术标识使用 `--font-mono`。
 - `--font-sans` 必须使用操作系统与本地 CJK 字体栈，不得为桌面应用从远程站点加载 Web Font；
   这样可保证离线启动、跨平台回退和首屏稳定性。
-- 基础字号为 `14px`，基础行高为 `1.5`。正文不得小于 `12px`，主要交互文字通常不得小于
-  `13px`。
+- 字号必须使用 `--font-size-*` 阶梯（`2xs 10 / xs 11 / sm 12 / md 13 / base 14 / lg 15 /
+  xl 18 / 2xl 21`），禁止在组件中新增硬编码 `font-size: Npx`。确需超出阶梯的展示型字号
+  （如登录页品牌区）应保留在对应页面并注释说明，不得扩散到全局。
+- 基础字号为 `--font-size-base`，基础行高为 `1.5`。正文不得小于 `--font-size-sm`，主要交互
+  文字通常不得小于 `--font-size-md`。
 - 标题层级必须通过字号、字重和间距共同表达。一个页面只应有一个视觉主标题。
 - 按钮和标签可使用 `600` 字重；长正文避免全段粗体。
 - 远端标题、仓库名、分支名、模型 ID 和错误正文必须支持安全换行、截断或省略，不能撑破布局；
@@ -105,10 +121,15 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 
 - 使用基于 `4px` 的 `--space-1/2/3/4/5/6/8/10/12` 间距阶梯。
 - 同组元素使用较小间距，组与组之间使用较大间距；禁止为对齐问题连续添加任意像素补丁。
-- 使用 `--radius-sm/md/lg/xl`。表单和按钮通常使用 `md`，卡片通常使用 `lg`，品牌或大型容器
-  才使用 `xl`。
-- 使用 `--shadow-sm/md/lg/xl` 表达层级。常规卡片和列表行默认只依赖边框与表面差异，不使用阴影；
-  菜单、命令面板等浮层可使用阴影并应明显高于页面内容。禁止用重阴影代替边框或信息分组。
+- 使用 `--radius-sm/md/lg/xl`（胶囊和圆形使用 `--radius-full`）。表单和按钮通常使用 `md`，
+  卡片通常使用 `lg`，品牌或大型容器才使用 `xl`。
+- 使用 `--shadow-sm/md/lg/xl` 表达层级；控件级阴影使用 `--shadow-btn`、`--shadow-btn-hover`、
+  `--shadow-input-inset`，品牌标志使用 `--shadow-brand-mark`。常规卡片和列表行默认只依赖边框与
+  表面差异，不使用阴影；菜单、命令面板等浮层可使用阴影并应明显高于页面内容。禁止用重阴影
+  代替边框或信息分组。
+- 跨组件层叠顺序必须使用 `--z-*` 阶梯（`combobox 40 / dropdown 50 / sticky 100 / panel 120 /
+  command-palette 1000 / modal 1100 / quick-popup 10000`）；组件内部的局部层叠（1–10）可保留
+  局部数值。
 
 ### 3.5 动效
 
@@ -122,7 +143,7 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 - 应用采用桌面优先布局，默认窗口为 `1280 × 800`，最小支持窗口为 `900 × 600`；新页面必须在
   这两种尺寸下可用。
 - 全局布局使用 `--sidebar-width: 272px` 和 `--header-height: 72px`；`900px` 以下侧栏收窄为
-  `232px`。修改这些值属于设计系统
+  `224px`。修改这些值属于设计系统
   变更，必须检查侧边栏、页头、滚动容器和窄窗口行为。
 - 页面内容区应沿用布局容器提供的内边距和滚动边界。禁止页面自行创建不必要的全窗口滚动层。
 - 在 `900px` 临界宽度附近必须检查导航、页头和主体内容；窄布局可以压缩间距或重排，但不得
@@ -146,12 +167,26 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 
 新增界面必须先复用或扩展以下能力，不得创建外观相同但行为不一致的副本：
 
-- 全局类：`.card`、`.card-hover`；
-- 按钮类：`.btn`、`.btn-primary`、`.btn-success`、`.btn-danger`、`.btn-reopen`、`.btn-sm`；
-- 表单类：`.input`；
-- 浮层类：`.dropdown-panel`、`.dropdown-option`；
-- 状态与工具类：`.badge-*`、`.skeleton`、`.text-secondary`、`.font-mono`；
-- 共享组件：`src/components/shared/AppSelect.vue`、`BrandMark.vue`。
+- 卡片与列表：`.card`、`.card-hover`、`.list` 级容器参考现有页面列表布局；
+- 按钮类：`.btn`、`.btn-primary`、`.btn-success`、`.btn-danger`、`.btn-reopen`、`.btn-outline`、
+  `.btn-sm`；图标按钮 `.btn-icon`（加载态加 `is-loading`）；轻量文字操作 `.btn-ghost`；
+  旋转动画统一使用 `.is-spinning`，禁止再定义局部 spin keyframes；
+- 表单类：`.input`、`.field`、`.field-label`、`.field-hint`、`.field-error`、`.required`、
+  `.form-actions`（卡内 footer 式提交区）；
+- 页签类：下划线式 `.tab-list` + `.tab`；分段胶囊式 `.tab-segmented` + `.tab`；
+- 状态呈现：`.state-panel`（整块空/加载态）、`.empty-state`（配合 state-panel）、
+  `.empty-state-quiet`（列表内轻量空位）、`.error-box/.error-title/.error-msg`（块状错误）、
+  `.error-box-inline`（单行内联错误）、`.skeleton`、`.skeleton-card`；
+- 徽章与胶囊：状态徽章 `.badge-*`；行内摘要 `.chip` 及
+  `.chip-accent/success/danger/warning/muted/strong`；仓库标签 `.label-tag`（颜色由
+  `--label-tag-background/foreground` 动态钩子注入）；
+- 页头结构：`.page-heading`（含 `h1/h2/p` 排版）与右侧 `.header-actions`；页面不得另造页头
+  包装类；
+- 设置行与开关：`.setting-row`、`.setting-label`、`.setting-hint`、`.toggle`；
+- 工具类：`.text-secondary`、`.font-mono`、`.sr-only`；
+- 共享组件：`src/components/shared/` 下的 `AppSelect.vue`、`AppMultiSelect.vue`、
+  `BrandMark.vue`、`CloseConfirmDialog.vue`、`MarkdownRenderer.vue`。下拉面板样式属于
+  `AppSelect`/`AppMultiSelect` 的组件作用域，不在全局维护第二份。
 
 扩展共享基础能力时，必须保持原有 API 和状态兼容，或同步迁移全部使用点并增加相应测试。
 
@@ -290,8 +325,10 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 
 - 选择器保持扁平，优先使用单一类名；禁止依赖脆弱的深层 DOM 结构或过高特异性。
 - 禁止使用 `!important`，全局 reduced-motion 覆盖等明确的无障碍兜底除外。
-- 禁止 `transition: all`；禁止以大量任意 `z-index` 竞争层级。新增全局层级前应定义清晰用途。
-- 若已有 Token，不得硬编码重复值。局部颜色也必须先确认不是全局语义状态。
+- 禁止 `transition: all`；禁止以大量任意 `z-index` 竞争层级。跨组件层级必须使用 `--z-*` Token，
+  新增全局层级前应定义清晰用途。
+- 若已有 Token，不得硬编码重复值；字号必须使用 `--font-size-*`，局部颜色也必须先确认不是全局
+  语义状态。
 - CSS 必须处理长文本、空内容、不同语言长度、系统字体和缩放，不得只按演示数据调布局。
 - 浏览器实验属性必须提供可接受降级；桌面 WebView 差异不得导致关键内容或操作不可用。
 - 删除组件或状态时必须同步清理失效样式，禁止长期保留不可达选择器。
@@ -318,6 +355,7 @@ CSS、静态资源和前端测试。它是 [`CODE_STANDARDS.md`](CODE_STANDARDS.
 修改页面、组件或全局样式后，至少检查：
 
 - 默认窗口 `1280 × 800` 与最小窗口 `900 × 600`；
+- 浅色与深色两个主题（设置页可固定主题；涉及 Token 变更时两个主题都必须检查）；
 - 首次加载、已有数据刷新、空数据、失败、重试和禁用状态；
 - 长仓库名、分支名、模型 ID、中文错误和超长代码行；
 - 鼠标 hover/active 与键盘 Tab、Enter/Space、Escape；

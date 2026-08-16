@@ -30,58 +30,12 @@
 }
 
 .dependency-heading h3 {
-  font-size: 16px;
-}
-
-.inferred-badge,
-.current-badge,
-.blocker-badge,
-.state-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.inferred-badge {
-  border: 1px solid var(--color-border);
-  color: var(--color-text-tertiary);
+  font-size: var(--font-size-lg);
 }
 
 .refresh-status {
   color: var(--color-text-tertiary);
-  font-size: 12px;
-}
-
-.refresh-button {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-}
-
-.refresh-button:hover:not(:disabled) {
-  border-color: var(--color-primary-border);
-  color: var(--color-primary);
-}
-
-.refresh-button.loading svg {
-  animation: dependency-refresh-spin 0.8s linear infinite;
-}
-
-@keyframes dependency-refresh-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  font-size: var(--font-size-sm);
 }
 
 .dependency-loading {
@@ -106,7 +60,7 @@
 .dependency-empty {
   padding: var(--space-3);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .dependency-error {
@@ -123,7 +77,7 @@
   margin-bottom: var(--space-4);
   border: 1px solid var(--color-warning);
   background: var(--color-warning-light);
-  color: var(--color-warning-text, var(--color-warning));
+  color: var(--color-warning);
 }
 
 .dependency-empty {
@@ -138,12 +92,12 @@
 }
 
 .order-heading h4 {
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .order-heading span {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .dependency-flow {
@@ -182,7 +136,7 @@
   border-radius: 50%;
   background: var(--color-surface);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 700;
 }
 
@@ -214,7 +168,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   text-decoration: none;
   text-overflow: ellipsis;
@@ -237,37 +191,12 @@
   gap: var(--space-1);
 }
 
-.current-badge {
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-}
-
-.blocker-badge {
-  background: var(--color-warning-light);
-  color: var(--color-warning-text, var(--color-warning));
-}
-
-.state-badge.open {
-  background: var(--color-success-light);
-  color: var(--color-success);
-}
-
-.state-badge.closed {
-  background: var(--color-danger-light);
-  color: var(--color-danger);
-}
-
-.state-badge.merged {
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-}
-
 .branch-chain {
   min-width: 0;
   gap: var(--space-2);
   margin-top: var(--space-2);
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .branch-chain code {
@@ -280,7 +209,7 @@
   gap: var(--space-1);
   margin-top: var(--space-2);
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .parent-links span {
@@ -295,11 +224,5 @@
 
   .node-title {
     width: 100%;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .refresh-button.loading svg {
-    animation: none;
   }
 }

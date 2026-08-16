@@ -211,7 +211,7 @@ function mountPage(stubs: Record<string, unknown> = {}) {
 }
 
 async function selectTab(wrapper: VueWrapper, label: string): Promise<void> {
-  const button = wrapper.findAll(".tabs button").find((item) => item.text() === label);
+  const button = wrapper.findAll(".tab-list button").find((item) => item.text() === label);
   expect(button).toBeDefined();
   await button!.trigger("click");
 }
@@ -272,7 +272,7 @@ describe("PrDetailPage 关闭权限", () => {
   it("中文界面将 Open PR 状态显示为打开", () => {
     const wrapper = mountPage();
 
-    expect(wrapper.get(".pr-state-badge").text()).toBe("打开");
+    expect(wrapper.get(".badge").text()).toBe("打开");
   });
 
   it("已挂载时切换英文，并保留远端 PR 标题", async () => {
@@ -557,7 +557,7 @@ describe("PrDetailPage 关闭权限", () => {
     const wrapper = mountPage();
 
     expect(wrapper.find(".loading-state").exists()).toBe(false);
-    expect(wrapper.find(".tabs").exists()).toBe(true);
+    expect(wrapper.find(".tab-list").exists()).toBe(true);
     expect(wrapper.text()).toContain(detail.summary.title);
   });
 
@@ -699,7 +699,9 @@ describe("PrDetailPage 关闭权限", () => {
         },
       });
       await flushPromises();
-      const aiTab = wrapper.findAll(".tabs button").find((button) => button.text() === "AI 评审");
+      const aiTab = wrapper
+        .findAll(".tab-list button")
+        .find((button) => button.text() === "AI 评审");
       await aiTab?.trigger("click");
       await wrapper.get('[data-testid="locate"]').trigger("click");
 
@@ -875,7 +877,7 @@ describe("PrDetailPage 关闭权限", () => {
       },
     });
     const tab = (label: string) =>
-      wrapper.findAll(".tabs button").find((button) => button.text() === label)!;
+      wrapper.findAll(".tab-list button").find((button) => button.text() === label)!;
 
     await tab("AI 评审").trigger("click");
     await wrapper.get<HTMLInputElement>('[data-testid="ai-review-result"]').setValue("已完成评审");
@@ -891,7 +893,7 @@ describe("PrDetailPage 关闭权限", () => {
   it("按评审意见、依赖关系、Diff 和 AI 评审排列页签", () => {
     const wrapper = mountPage();
 
-    expect(wrapper.findAll(".tabs button").map((button) => button.text())).toEqual([
+    expect(wrapper.findAll(".tab-list button").map((button) => button.text())).toEqual([
       "评审意见",
       "依赖关系",
       "Diff",
@@ -905,9 +907,9 @@ describe("PrDetailPage 关闭权限", () => {
       ReviewList: { template: '<section data-testid="review-list" />' },
     });
     const reviewsTab = wrapper
-      .findAll(".tabs button")
+      .findAll(".tab-list button")
       .find((button) => button.text() === "评审意见");
-    const diffTab = wrapper.findAll(".tabs button").find((button) => button.text() === "Diff");
+    const diffTab = wrapper.findAll(".tab-list button").find((button) => button.text() === "Diff");
 
     const reviewContent = wrapper.get('[data-testid="pr-metadata"]').element.parentElement!;
     const reviewChildren = Array.from(reviewContent.children);
@@ -932,7 +934,7 @@ describe("PrDetailPage 关闭权限", () => {
       },
     });
     const tab = (label: string) =>
-      wrapper.findAll(".tabs button").find((button) => button.text() === label)!;
+      wrapper.findAll(".tab-list button").find((button) => button.text() === label)!;
 
     expect(wrapper.find('[data-testid="dependency-marker"]').exists()).toBe(false);
     await tab("依赖关系").trigger("click");
@@ -956,7 +958,7 @@ describe("PrDetailPage 关闭权限", () => {
       },
     });
     const dependenciesTab = wrapper
-      .findAll(".tabs button")
+      .findAll(".tab-list button")
       .find((button) => button.text() === "依赖关系");
 
     await dependenciesTab!.trigger("click");
@@ -971,7 +973,7 @@ describe("PrDetailPage 关闭权限", () => {
       PrMergeQueuePanel: { template: '<span data-testid="merge-queue-panel" />' },
     });
 
-    expect(wrapper.findAll(".tabs button").map((button) => button.text())).not.toContain(
+    expect(wrapper.findAll(".tab-list button").map((button) => button.text())).not.toContain(
       "依赖关系",
     );
     expect(wrapper.find('[data-testid="dependency-panel"]').exists()).toBe(false);
@@ -986,7 +988,7 @@ describe("PrDetailPage 关闭权限", () => {
     await flushPromises();
 
     const reviewsTab = wrapper
-      .findAll(".tabs button")
+      .findAll(".tab-list button")
       .find((button) => button.text() === "评审意见");
     expect(reviewsTab?.classes()).toContain("active");
     expect(wrapper.get('[data-testid="app-layout"]').attributes("data-focus-mode")).toBe("false");
@@ -999,7 +1001,7 @@ describe("PrDetailPage 关闭权限", () => {
       PrMergeQueuePanel: { template: '<span data-testid="merge-queue-panel" />' },
     });
     const dependenciesTab = wrapper
-      .findAll(".tabs button")
+      .findAll(".tab-list button")
       .find((button) => button.text() === "依赖关系");
 
     await dependenciesTab!.trigger("click");
@@ -1016,7 +1018,7 @@ describe("PrDetailPage 关闭权限", () => {
       PrMergeQueuePanel: { template: '<span data-testid="merge-queue-panel" />' },
     });
 
-    expect(wrapper.findAll(".tabs button").map((button) => button.text())).toEqual([
+    expect(wrapper.findAll(".tab-list button").map((button) => button.text())).toEqual([
       "评审意见",
       "Diff",
       "AI 评审",
@@ -1055,11 +1057,11 @@ describe("PrDetailPage 关闭权限", () => {
         </section>`,
       },
     });
-    const aiTab = wrapper.findAll(".tabs button").find((button) => button.text() === "AI 评审");
+    const aiTab = wrapper.findAll(".tab-list button").find((button) => button.text() === "AI 评审");
     expect(aiTab).toBeDefined();
     await aiTab!.trigger("click");
     const contentBody = wrapper.get<HTMLElement>(".content-body");
-    const tabs = wrapper.get<HTMLElement>(".tabs");
+    const tabs = wrapper.get<HTMLElement>(".tab-list");
     contentBody.element.scrollTop = 480;
     contentBody.element.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
     tabs.element.getBoundingClientRect = () => ({ top: -480 }) as DOMRect;
@@ -1067,14 +1069,14 @@ describe("PrDetailPage 关闭权限", () => {
     await wrapper.get('[data-testid="locate-ai-suggestion"]').trigger("click");
 
     const returnToAiButton = wrapper
-      .findAll(".tabs button")
+      .findAll(".tab-list button")
       .find((button) => button.text() === "返回 AI 评审");
     expect(returnToAiButton).toBeDefined();
     expect(contentBody.element.scrollTop).toBe(0);
     expect(wrapper.get('[data-testid="diff-location-request"]').text()).toContain("src/main.ts:18");
     expect(
       wrapper
-        .findAll(".tabs button")
+        .findAll(".tab-list button")
         .find((button) => button.text() === "Diff")
         ?.classes(),
     ).toContain("active");
@@ -1089,7 +1091,7 @@ describe("PrDetailPage 关闭权限", () => {
     expect(wrapper.get('[data-testid="locate-ai-suggestion"]').isVisible()).toBe(true);
     expect(
       wrapper
-        .findAll(".tabs button")
+        .findAll(".tab-list button")
         .find((button) => button.text() === "AI 评审")
         ?.classes(),
     ).toContain("active");
@@ -1112,7 +1114,7 @@ describe("PrDetailPage 关闭权限", () => {
     expect(wrapper.get('[data-testid="review-file-request"]').text()).toBe("src/old.ts|file|left");
     expect(
       wrapper
-        .findAll(".tabs button")
+        .findAll(".tab-list button")
         .find((button) => button.text() === "Diff")
         ?.classes(),
     ).toContain("active");
@@ -1252,7 +1254,7 @@ describe("PrDetailPage 关闭权限", () => {
     const wrapper = mountPage();
 
     expect(wrapper.get('[data-testid="app-layout"]').attributes("data-focus-mode")).toBe("false");
-    const diffTab = wrapper.findAll(".tabs button").find((button) => button.text() === "Diff");
+    const diffTab = wrapper.findAll(".tab-list button").find((button) => button.text() === "Diff");
     expect(diffTab).toBeDefined();
     await diffTab!.trigger("click");
 
@@ -1356,7 +1358,7 @@ describe("PrDetailPage 关闭权限", () => {
     );
     await flushPromises();
     const aiTab = wrapper
-      .findAll(".tabs button")
+      .findAll(".tab-list button")
       .find((button) => button.text().includes("AI 评审"));
     expect(aiTab?.classes()).toContain("active");
 
@@ -1365,7 +1367,7 @@ describe("PrDetailPage 关闭权限", () => {
     );
     await flushPromises();
     const diffTab = wrapper
-      .findAll(".tabs button")
+      .findAll(".tab-list button")
       .find((button) => button.text().includes("Diff"));
     expect(diffTab?.classes()).toContain("active");
     wrapper.unmount();

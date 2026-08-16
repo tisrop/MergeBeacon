@@ -1127,7 +1127,7 @@ onUnmounted(() => {
             "
             @load-more="loadMoreRepositories"
           />
-          <p v-if="repositoryError" class="error-msg" role="alert">{{ repositoryError }}</p>
+          <p v-if="repositoryError" class="form-error" role="alert">{{ repositoryError }}</p>
         </div>
         <div class="branch-grid">
           <div class="field">
@@ -1168,7 +1168,7 @@ onUnmounted(() => {
             />
           </div>
         </div>
-        <p v-if="branchError" class="error-msg" role="alert">{{ branchError }}</p>
+        <p v-if="branchError" class="form-error" role="alert">{{ branchError }}</p>
         <p
           v-else-if="
             sourceRepository?.fullName === targetRepository?.fullName &&
@@ -1212,24 +1212,24 @@ onUnmounted(() => {
           <span>{{ displayedPreviewWarning }}</span>
         </div>
 
-        <div class="preview-tabs" role="tablist" :aria-label="t('prNew.createPreview')">
+        <div class="tab-segmented" role="tablist" :aria-label="t('prNew.createPreview')">
           <button
             type="button"
             role="tab"
             :aria-selected="previewTab === 'commits'"
-            :class="{ active: previewTab === 'commits' }"
+            :class="['tab', { active: previewTab === 'commits' }]"
             @click="previewTab = 'commits'"
           >
-            Commit
+            {{ t("prNew.tabCommits") }}
           </button>
           <button
             type="button"
             role="tab"
             :aria-selected="previewTab === 'diff'"
-            :class="{ active: previewTab === 'diff' }"
+            :class="['tab', { active: previewTab === 'diff' }]"
             @click="previewTab = 'diff'"
           >
-            Diff
+            {{ t("prNew.tabDiff") }}
           </button>
         </div>
 
@@ -1370,8 +1370,8 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
-        <p v-if="templatesError" class="error-msg" role="alert">{{ templatesError }}</p>
-        <p v-if="aiDraftError" class="error-msg" role="alert">{{ aiDraftError }}</p>
+        <p v-if="templatesError" class="form-error" role="alert">{{ templatesError }}</p>
+        <p v-if="aiDraftError" class="form-error" role="alert">{{ aiDraftError }}</p>
         <p v-if="aiDraftDiffLimitNotice" class="draft-assistant-warning" role="status">
           {{ aiDraftDiffLimitNotice }}
         </p>
@@ -1394,12 +1394,12 @@ onUnmounted(() => {
         <div class="field field-wide description-field">
           <div class="description-toolbar">
             <span>{{ t("prNew.description") }}</span>
-            <div class="description-tabs" role="tablist" :aria-label="t('prNew.markdownMode')">
+            <div class="tab-segmented" role="tablist" :aria-label="t('prNew.markdownMode')">
               <button
                 type="button"
                 role="tab"
                 :aria-selected="descriptionMode === 'edit'"
-                :class="{ active: descriptionMode === 'edit' }"
+                :class="['tab', { active: descriptionMode === 'edit' }]"
                 @click="descriptionMode = 'edit'"
               >
                 {{ t("prNew.edit") }}
@@ -1408,7 +1408,7 @@ onUnmounted(() => {
                 type="button"
                 role="tab"
                 :aria-selected="descriptionMode === 'preview'"
-                :class="{ active: descriptionMode === 'preview' }"
+                :class="['tab', { active: descriptionMode === 'preview' }]"
                 @click="descriptionMode = 'preview'"
               >
                 {{ t("prNew.preview") }}
@@ -1429,7 +1429,7 @@ onUnmounted(() => {
               <template v-if="platformCapabilities">{{ t("prNew.imageUploading") }}</template>
               <template v-else>{{ t("prNew.imageCapabilityLoading") }}</template>
             </p>
-            <p v-if="descriptionImageError" class="error-msg" role="alert">
+            <p v-if="descriptionImageError" class="form-error" role="alert">
               {{ descriptionImageError }}
             </p>
             <p class="description-upload-help">
@@ -1521,14 +1521,14 @@ onUnmounted(() => {
             />
           </label>
         </div>
-        <p v-if="participantsError" class="error-msg" role="alert">{{ participantsError }}</p>
-        <p v-if="labelsError" class="error-msg" role="alert">{{ labelsError }}</p>
+        <p v-if="participantsError" class="form-error" role="alert">{{ participantsError }}</p>
+        <p v-if="labelsError" class="form-error" role="alert">{{ labelsError }}</p>
       </section>
 
-      <p v-if="capabilities.errors[creationPlatform]" class="error-msg" role="alert">
+      <p v-if="capabilities.errors[creationPlatform]" class="form-error" role="alert">
         {{ capabilities.errors[creationPlatform] }}
       </p>
-      <p v-if="error" class="error-msg" role="alert">{{ error }}</p>
+      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
       <p
         v-if="platformCapabilities && !platformCapabilities.supports_pr_creation"
         class="validation-note"

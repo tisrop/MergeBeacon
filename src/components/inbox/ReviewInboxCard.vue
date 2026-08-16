@@ -79,17 +79,17 @@ function formatUpdatedAt(value: string): string {
           <span
             v-for="relationship in props.item.relationships"
             :key="relationship"
-            class="relationship-badge"
+            class="chip chip-accent"
           >
             {{ relationshipLabels[relationship] }}
           </span>
-          <span v-if="localState.new_commits" class="activity-badge">{{
+          <span v-if="localState.new_commits" class="chip chip-accent">{{
             t("inbox.activityCommits")
           }}</span>
-          <span v-if="localState.new_comments" class="activity-badge">{{
+          <span v-if="localState.new_comments" class="chip chip-accent">{{
             t("inbox.activityComments")
           }}</span>
-          <span v-if="localState.status_changed" class="activity-badge status-change">{{
+          <span v-if="localState.status_changed" class="chip chip-warning">{{
             t("inbox.activityStatus")
           }}</span>
         </span>

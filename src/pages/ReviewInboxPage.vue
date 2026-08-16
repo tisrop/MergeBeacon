@@ -51,7 +51,7 @@ const blockerOptions = computed(() => [
   { value: "checks_pending", label: t("inbox.blockerChecksPending") },
   { value: "changes_requested", label: t("inbox.blockerChanges") },
   { value: "approvals_required", label: t("inbox.blockerApprovals") },
-  { value: "draft", label: "Draft" },
+  { value: "draft", label: t("pr.stateDraft") },
   { value: "conflicts", label: t("inbox.blockerConflicts") },
   { value: "branch_behind", label: t("inbox.blockerBehind") },
   { value: "discussions_unresolved", label: t("inbox.blockerDiscussions") },
@@ -165,7 +165,7 @@ onUnmounted(() => {
 <template>
   <AppLayout>
     <template #header>
-      <div class="header-row page-heading">
+      <div class="page-heading">
         <div>
           <h2>{{ t("inbox.title") }}</h2>
           <p class="subtitle">{{ t("inbox.subtitle") }}</p>
@@ -177,21 +177,20 @@ onUnmounted(() => {
           <button
             v-if="inbox.unreadCount > 0"
             type="button"
-            class="mark-all-read-button"
+            class="btn-ghost"
             @click="inbox.markAllRead"
           >
             {{ t("inbox.markAllRead") }}
           </button>
           <button
             type="button"
-            class="refresh-button"
+            :class="['btn-icon', { 'is-loading': inbox.loading }]"
             :disabled="inbox.loading || availablePlatforms.length === 0"
             :aria-label="t('layout.reviewInbox')"
             :title="t('layout.reviewInbox')"
             @click="refresh"
           >
             <svg
-              :class="{ spinning: inbox.loading }"
               width="15"
               height="15"
               viewBox="0 0 24 24"
@@ -333,7 +332,7 @@ onUnmounted(() => {
         />
       </div>
 
-      <div v-else-if="!inbox.loading" class="empty-state">
+      <div v-else-if="!inbox.loading" class="empty-state state-panel">
         <svg
           width="32"
           height="32"
@@ -364,7 +363,7 @@ onUnmounted(() => {
       <button
         v-if="inbox.hasMore"
         type="button"
-        class="load-more-button"
+        class="btn"
         :disabled="inbox.loading"
         @click="inbox.loadMore"
       >

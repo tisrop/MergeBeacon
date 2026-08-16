@@ -673,7 +673,7 @@ onUnmounted(() => {
       <div class="pr-header">
         <div class="pr-header-top">
           <button
-            class="pr-back-button"
+            class="btn btn-sm"
             type="button"
             :title="t('prDetail.back')"
             :aria-label="t('prDetail.back')"
@@ -714,7 +714,7 @@ onUnmounted(() => {
             <div class="skeleton skeleton-subtitle" />
           </div>
           <button
-            :class="['pr-refresh-button', { loading: refreshing }]"
+            :class="['btn', 'btn-sm', 'pr-refresh', { 'is-loading': refreshing }]"
             type="button"
             :title="t(refreshing ? 'prDetail.refreshing' : 'prDetail.refresh')"
             :aria-label="t(refreshing ? 'prDetail.refreshing' : 'prDetail.refresh')"
@@ -724,6 +724,7 @@ onUnmounted(() => {
             @click="handleRefresh"
           >
             <svg
+              :class="{ 'is-spinning': refreshing }"
               width="15"
               height="15"
               viewBox="0 0 24 24"
@@ -765,7 +766,7 @@ onUnmounted(() => {
           <span class="author">{{
             t("prDetail.byAuthor", { author: pr.currentPr.summary.author.login })
           }}</span>
-          <span :class="['pr-state-badge', pr.currentPr.summary.state]">
+          <span :class="['badge', `badge-${pr.currentPr.summary.state}`]">
             {{
               {
                 open: t("pr.open"),
@@ -843,7 +844,7 @@ onUnmounted(() => {
               class="input merge-commit-message"
               type="text"
               :disabled="operating"
-              placeholder="Commit message"
+              :placeholder="t('prDetail.commitMessagePlaceholder')"
             />
             <label
               v-if="platformCapabilities?.supports_issue_auto_close"
@@ -863,7 +864,7 @@ onUnmounted(() => {
 
           <div v-if="isOpen" class="close-btn-wrapper">
             <button
-              class="btn btn-outline btn-danger"
+              class="btn btn-danger"
               data-testid="close-pr-button"
               :disabled="!canClose || operating"
               :title="closeDisabledReason || t('prDetail.close')"
@@ -874,7 +875,7 @@ onUnmounted(() => {
           </div>
 
           <div v-if="canReopen" class="close-btn-wrapper">
-            <button class="btn btn-outline btn-reopen" :disabled="operating" @click="handleReopen">
+            <button class="btn btn-reopen" :disabled="operating" @click="handleReopen">
               {{ t("prDetail.reopen") }}
             </button>
           </div>
@@ -914,8 +915,8 @@ onUnmounted(() => {
     </div>
 
     <div v-else-if="pr.currentPr" class="pr-detail">
-      <div ref="tabsRef" class="tabs">
-        <button :class="{ active: activeTab === 'reviews' }" @click="selectTab('reviews')">
+      <div ref="tabsRef" class="tab-list">
+        <button :class="['tab', { active: activeTab === 'reviews' }]" @click="selectTab('reviews')">
           <svg
             width="14"
             height="14"
@@ -932,7 +933,7 @@ onUnmounted(() => {
         </button>
         <button
           v-if="isMergeContextVisible"
-          :class="{ active: activeTab === 'dependencies' }"
+          :class="['tab', { active: activeTab === 'dependencies' }]"
           @click="selectTab('dependencies')"
         >
           <svg
@@ -953,7 +954,7 @@ onUnmounted(() => {
           </svg>
           {{ t("prDetail.dependencies") }}
         </button>
-        <button :class="{ active: activeTab === 'diff' }" @click="selectTab('diff')">
+        <button :class="['tab', { active: activeTab === 'diff' }]" @click="selectTab('diff')">
           <svg
             width="14"
             height="14"
@@ -966,9 +967,9 @@ onUnmounted(() => {
           >
             <path d="M12 3v18M3 12h18" />
           </svg>
-          Diff
+          {{ t("prDetail.tabDiff") }}
         </button>
-        <button :class="{ active: activeTab === 'ai' }" @click="selectTab('ai')">
+        <button :class="['tab', { active: activeTab === 'ai' }]" @click="selectTab('ai')">
           <svg
             width="14"
             height="14"

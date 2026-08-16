@@ -43,7 +43,7 @@ describe("ReviewInboxCard", () => {
     expect(wrapper.text()).toContain("被阻塞");
     expect(wrapper.text()).toContain("审批未完成");
     expect(wrapper.text()).toContain("CI/测试失败");
-    expect(wrapper.text()).toContain("Draft");
+    expect(wrapper.text()).toContain("草稿");
     expect(wrapper.text()).toContain("存在冲突");
     expect(wrapper.get(".status-summary").attributes("title")).toBe(
       "CI 检查未通过；已有评审请求修改",

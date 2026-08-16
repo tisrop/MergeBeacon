@@ -18,7 +18,7 @@
 
 .metadata-eyebrow {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -26,7 +26,7 @@
 
 .metadata-heading-row h3 {
   margin-top: 2px;
-  font-size: 15px;
+  font-size: var(--font-size-lg);
 }
 
 .metadata-summary {
@@ -45,7 +45,7 @@
   display: block;
   margin-bottom: var(--space-1);
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
 }
 
@@ -53,7 +53,7 @@
   display: block;
   overflow-wrap: anywhere;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .metadata-reviewer-list {
@@ -103,7 +103,7 @@ button.metadata-reviewer:focus-visible {
   align-items: center;
   gap: 5px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 650;
 }
 
@@ -151,18 +151,18 @@ button.metadata-reviewer:focus-visible {
   min-height: 24px;
   padding: 2px 8px;
   border: 1px solid var(--color-primary-border);
-  border-radius: var(--radius-full, 999px);
+  border-radius: var(--radius-full);
   background: var(--color-primary-light);
   color: var(--color-primary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 650;
   cursor: pointer;
 }
 
 .metadata-linked-issue:hover {
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .metadata-linked-issue:focus-visible {
@@ -173,10 +173,10 @@ button.metadata-reviewer:focus-visible {
 .metadata-tag {
   padding: 2px 7px;
   border: 1px solid var(--label-tag-background, var(--color-primary-border));
-  border-radius: var(--radius-full, 999px);
+  border-radius: var(--radius-full);
   background: var(--label-tag-background, var(--color-primary-light));
   color: var(--label-tag-foreground, var(--color-primary));
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   line-height: 16px;
 }
@@ -187,7 +187,7 @@ button.metadata-reviewer:focus-visible {
   border-top: 1px solid var(--color-border-light);
   overflow-wrap: anywhere;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.6;
 }
 .metadata-markdown :deep(h1),
@@ -197,7 +197,7 @@ button.metadata-reviewer:focus-visible {
   margin: 0.5em 0 0.25em;
   font-weight: 600;
   color: var(--color-text);
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 .metadata-markdown :deep(p) {
   margin: 0.25em 0;
@@ -215,14 +215,14 @@ button.metadata-reviewer:focus-visible {
   padding: 1px 4px;
   border-radius: 3px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .metadata-markdown :deep(pre) {
   background: var(--color-surface-subtle);
   padding: var(--space-2);
   border-radius: 4px;
   overflow-x: auto;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .metadata-markdown :deep(pre code) {
   background: none;
@@ -269,10 +269,6 @@ button.metadata-reviewer:focus-visible {
   gap: var(--space-3);
 }
 
-.field {
-  min-width: 0;
-}
-
 .metadata-description-field {
   min-width: 0;
 }
@@ -287,52 +283,6 @@ button.metadata-reviewer:focus-visible {
 
 .metadata-description-toolbar > span {
   margin-bottom: 0;
-}
-
-.metadata-description-tabs {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-subtle);
-}
-
-.metadata-description-tabs button {
-  min-width: 56px;
-  padding: 4px 8px;
-  border: 0;
-  border-radius: calc(var(--radius-md) - 2px);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 650;
-  cursor: pointer;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast),
-    transform var(--transition-fast);
-}
-
-.metadata-description-tabs button:hover:not(.active) {
-  background: var(--color-surface);
-  color: var(--color-text);
-}
-
-.metadata-description-tabs button:active {
-  transform: translateY(1px);
-}
-
-.metadata-description-tabs button:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 1px;
-}
-
-.metadata-description-tabs button.active {
-  background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
-  color: var(--color-text);
 }
 
 .field-wide,
@@ -365,7 +315,7 @@ button.metadata-reviewer:focus-visible {
   background: var(--color-bg);
   color: var(--color-text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   transition:
     border-color var(--transition-fast),
     box-shadow var(--transition-fast);
@@ -402,7 +352,7 @@ button.metadata-reviewer:focus-visible {
   border-radius: var(--radius-md);
   background: var(--color-surface-subtle);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.6;
 }
 
@@ -421,12 +371,12 @@ button.metadata-reviewer:focus-visible {
   gap: var(--space-2);
   width: fit-content;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .permission-note {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .metadata-form-actions {

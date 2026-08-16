@@ -30,14 +30,14 @@
 }
 
 .review-list-heading h4 {
-  font-size: 16px;
+  font-size: var(--font-size-lg);
 }
 
 .review-list-heading p,
 .resolution-summary {
   margin: var(--space-1) 0 0;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .loading-state,
@@ -73,7 +73,7 @@
   bottom: 16px;
   left: 11px;
   width: 2px;
-  border-radius: var(--radius-full, 999px);
+  border-radius: var(--radius-full);
   background: var(--color-border);
   content: "";
 }
@@ -140,7 +140,7 @@
   gap: var(--space-2);
   min-width: 0;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .comment-header strong {
@@ -166,7 +166,7 @@
   border: 0;
   background: transparent;
   color: var(--color-primary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .text-button.danger {
@@ -179,50 +179,12 @@
   border-radius: 50%;
 }
 
-.kind-badge,
-.reply-badge,
-.review-state,
-.outdated-badge,
-.resolution-badge {
-  padding: 2px 7px;
-  border-radius: var(--radius-full, 999px);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.kind-badge,
-.reply-badge {
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-}
-
-.review-state,
-.resolution-badge.local-only {
-  background: var(--color-surface-hover);
-  color: var(--color-text-secondary);
-}
-
-.outdated-badge {
-  background: var(--color-warning-light);
-  color: var(--color-warning);
-}
-
-.resolution-badge.resolved {
-  background: var(--color-success-light);
-  color: var(--color-success);
-}
-
-.resolution-badge.unresolved {
-  background: var(--color-danger-light);
-  color: var(--color-danger);
-}
-
 .comment-body {
   min-width: 0;
   max-width: 100%;
   margin: var(--space-3) 0 0;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.6;
 }
 
@@ -305,7 +267,7 @@
   border: 0;
   background: transparent;
   color: var(--color-primary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .thread-section-heading > div:first-child {
@@ -327,7 +289,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .thread-filters button.active {
@@ -361,7 +323,7 @@
   background: transparent;
   color: var(--color-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -384,7 +346,7 @@
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-hover);
   color: var(--color-primary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   text-align: left;
 }
 
@@ -421,7 +383,7 @@
   border-radius: var(--radius-md);
   background: var(--color-warning-light);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .original-context-fallback strong {
@@ -460,14 +422,6 @@
 
 .thread-error {
   margin-top: var(--space-3);
-}
-
-.empty-state {
-  padding: var(--space-8);
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-lg);
-  color: var(--color-text-tertiary);
-  text-align: center;
 }
 
 @media (max-width: 900px) {

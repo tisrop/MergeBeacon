@@ -26,7 +26,7 @@
 }
 
 .issue-form-heading h3 {
-  font-size: 16px;
+  font-size: var(--font-size-lg);
   font-weight: 650;
   line-height: 1.35;
 }
@@ -34,7 +34,7 @@
 .issue-form-heading p {
   margin-top: 2px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .issue-form-fields {
@@ -66,7 +66,7 @@
   background: transparent;
   color: var(--color-primary);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
 }
 
@@ -78,7 +78,7 @@
 label,
 .field-caption {
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 650;
 }
 
@@ -87,14 +87,14 @@ label,
   border-radius: var(--radius-full);
   background: var(--color-danger-light);
   color: var(--color-danger);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   line-height: 1.5;
 }
 
 .field-help {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .issue-body-input {
@@ -108,7 +108,7 @@ label,
 }
 
 .field-message {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .field-message-error {
@@ -124,7 +124,7 @@ label,
   border-radius: var(--radius-md);
   background: var(--color-danger-light);
   color: var(--color-danger);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .error svg {
@@ -144,7 +144,7 @@ label,
 
 .form-actions > span {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .form-action-buttons {

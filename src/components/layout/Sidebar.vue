@@ -406,7 +406,7 @@ function selectForkRepo(r: RepoSummary, useUpstream: boolean, platform: Platform
           @click="repo.refreshRepos(auth.activePlatform)"
         >
           <svg
-            :class="{ spinning: repo.loading }"
+            :class="{ 'is-spinning': repo.loading }"
             width="14"
             height="14"
             viewBox="0 0 24 24"

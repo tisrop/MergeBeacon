@@ -8,23 +8,6 @@
   gap: var(--space-2);
 }
 
-.skeleton-card {
-  height: 84px;
-  border-radius: var(--radius-lg);
-}
-
-.empty-state {
-  min-height: 300px;
-}
-
-.empty-state p {
-  font-size: 14px;
-}
-
-.empty-state svg {
-  opacity: 0.4;
-}
-
 .issue-list {
   display: flex;
   flex-direction: column;

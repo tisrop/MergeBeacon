@@ -591,14 +591,14 @@ defineExpose({ refresh: loadReviews });
                   class="avatar"
                 />
                 <strong>{{ item.author.login }}</strong>
-                <span class="kind-badge">
+                <span class="chip chip-accent">
                   {{
                     item.kind === "overall_review"
                       ? t("review.overallReview")
                       : t("review.generalComment")
                   }}
                 </span>
-                <span v-if="item.kind === 'overall_review' && item.state" class="review-state">{{
+                <span v-if="item.kind === 'overall_review' && item.state" class="chip">{{
                   item.state
                 }}</span>
                 <time :datetime="item.time">{{
@@ -678,10 +678,10 @@ defineExpose({ refresh: loadReviews });
           </div>
         </div>
 
-        <div v-if="threads.length === 0" class="empty-state">
+        <div v-if="threads.length === 0" class="empty-state-quiet">
           <p>{{ t("review.noThreads") }}</p>
         </div>
-        <div v-else-if="filteredThreads.length === 0" class="empty-state">
+        <div v-else-if="filteredThreads.length === 0" class="empty-state-quiet">
           <p>{{ t("review.noFilteredThreads") }}</p>
         </div>
         <div v-else class="threads">
@@ -699,7 +699,7 @@ defineExpose({ refresh: loadReviews });
           >
             <header class="thread-header">
               <div class="thread-location">
-                <span class="kind-badge">{{ t("review.lineComment") }}</span>
+                <span class="chip chip-accent">{{ t("review.lineComment") }}</span>
                 <button
                   type="button"
                   class="path-button"
@@ -715,20 +715,18 @@ defineExpose({ refresh: loadReviews });
                 >
                   {{ thread.displayPath }}<template v-if="thread.line">:{{ thread.line }}</template>
                 </button>
-                <span v-if="threadIsOutdated(thread)" class="outdated-badge">{{
+                <span v-if="threadIsOutdated(thread)" class="chip chip-warning">{{
                   t("review.codeOutdated")
                 }}</span>
               </div>
               <div class="thread-status-actions">
-                <span v-if="thread.resolved === true" class="resolution-badge resolved">{{
+                <span v-if="thread.resolved === true" class="chip chip-success">{{
                   t("review.resolved")
                 }}</span>
-                <span v-else-if="thread.resolved === false" class="resolution-badge unresolved">{{
+                <span v-else-if="thread.resolved === false" class="chip chip-danger">{{
                   t("review.unresolved")
                 }}</span>
-                <span v-else class="resolution-badge local-only">{{
-                  t("review.resolutionUnavailable")
-                }}</span>
+                <span v-else class="chip chip-muted">{{ t("review.resolutionUnavailable") }}</span>
                 <button
                   v-if="canResolveThreads && thread.resolvable"
                   type="button"
@@ -803,7 +801,7 @@ defineExpose({ refresh: loadReviews });
                     class="avatar"
                   />
                   <strong>{{ comment.author.login }}</strong>
-                  <span v-if="comment.reply_to_id !== null" class="reply-badge">{{
+                  <span v-if="comment.reply_to_id !== null" class="chip chip-accent">{{
                     t("review.replyBadge")
                   }}</span>
                   <time :datetime="comment.created_at">{{

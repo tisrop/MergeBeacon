@@ -15,7 +15,7 @@
   transition:
     box-shadow var(--transition-base),
     border-color var(--transition-base),
-    background var(--transition-fast);
+    background var(--transition-base);
 }
 
 .pr-card:hover {
@@ -65,7 +65,7 @@
 .pr-title {
   flex: 1;
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -75,30 +75,19 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 
 .pr-number {
   color: var(--color-text-tertiary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .pr-labels {
   display: flex;
   gap: var(--space-1);
-}
-
-.label-tag {
-  padding: 2px 7px;
-  background: var(--label-tag-background, var(--color-surface-hover));
-  border: 1px solid var(--label-tag-background, var(--color-border-light));
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 16px;
-  color: var(--label-tag-foreground, var(--color-text-secondary));
 }
 
 .chevron {

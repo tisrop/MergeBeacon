@@ -25,7 +25,7 @@
   flex-direction: column;
   justify-content: center;
   padding: clamp(var(--space-8), 5vw, var(--space-12));
-  color: var(--color-text-inverse);
+  color: var(--color-on-brand);
   background: var(--gradient-beacon);
 }
 
@@ -50,6 +50,7 @@
 .intro-title {
   max-width: 360px;
   margin-bottom: var(--space-4);
+  /* 登录页品牌展示区专用 display 字号，不进入全局字阶 */
   font-size: 28px;
   font-weight: 700;
   line-height: 1.32;
@@ -58,7 +59,7 @@
 
 .login-intro > p:not(.intro-title) {
   max-width: 380px;
-  color: rgba(247, 249, 252, 0.72);
+  color: color-mix(in srgb, var(--color-on-brand) 72%, transparent);
   line-height: 1.7;
 }
 
@@ -67,8 +68,8 @@
   gap: var(--space-3);
   margin-top: var(--space-8);
   list-style: none;
-  color: rgba(247, 249, 252, 0.84);
-  font-size: 12px;
+  color: color-mix(in srgb, var(--color-on-brand) 84%, transparent);
+  font-size: var(--font-size-sm);
 }
 
 .login-intro li {
@@ -128,59 +129,30 @@ h1 {
 .subtitle {
   margin-bottom: var(--space-6);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
-.form-group {
+.field {
   margin-bottom: var(--space-4);
 }
 
-label {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.hint {
-  margin-top: 6px;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.error-box {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.error-box-inline {
   margin-bottom: var(--space-4);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-danger-border);
-  border-radius: var(--radius-md);
-  background: var(--color-danger-light);
-  color: var(--color-danger);
-  font-size: 12px;
 }
 
 .login-btn {
   width: 100%;
   min-height: 42px;
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .btn-spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: var(--color-text-inverse);
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
   border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: icon-spin 0.6s linear infinite;
 }
 
 .help-links {
@@ -196,7 +168,7 @@ label {
   background: none;
   color: var(--color-primary);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
 }
 
@@ -206,7 +178,7 @@ label {
 
 .skip {
   margin-top: var(--space-4);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: center;
 }
 
@@ -221,7 +193,7 @@ label {
 .http-warning {
   margin-top: var(--space-2);
   color: var(--color-warning);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 @media (max-width: 760px) {

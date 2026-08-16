@@ -1,6 +1,6 @@
 .update-dialog-backdrop {
   position: fixed;
-  z-index: 1100;
+  z-index: var(--z-modal);
   inset: 0;
   display: flex;
   align-items: center;
@@ -58,7 +58,7 @@
   display: block;
   margin-bottom: var(--space-1);
   color: var(--color-primary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.08em;
 }
@@ -66,14 +66,14 @@
 .update-dialog-heading h2 {
   margin: 0;
   color: var(--color-text);
-  font-size: 20px;
+  font-size: var(--font-size-2xl);
   line-height: 1.35;
 }
 
 .update-dialog-heading p {
   margin: var(--space-2) 0 0;
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.6;
 }
 
@@ -104,7 +104,7 @@
 .update-dialog-notes-heading {
   margin-bottom: var(--space-3);
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
 }
@@ -112,7 +112,7 @@
 .update-dialog-notes,
 .update-dialog-empty {
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.7;
 }
 
@@ -130,7 +130,7 @@
 .update-dialog-notes :deep(h4) {
   margin: var(--space-5) 0 var(--space-2);
   color: var(--color-text);
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.45;
 }
 
@@ -165,38 +165,6 @@
   padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--color-border);
   background: var(--color-surface-subtle);
-}
-
-.update-dialog-actions button {
-  min-height: 38px;
-  padding: 0 var(--space-4);
-  border-radius: var(--radius-md);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.update-dialog-secondary {
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-}
-
-.update-dialog-secondary:hover {
-  border-color: var(--color-border-strong);
-  color: var(--color-text);
-}
-
-.update-dialog-primary {
-  border: 1px solid var(--color-primary);
-  background: var(--color-primary);
-  color: var(--color-text-inverse);
-  box-shadow: var(--shadow-sm);
-}
-
-.update-dialog-primary:hover {
-  filter: brightness(0.96);
 }
 
 @media (max-width: 640px) {

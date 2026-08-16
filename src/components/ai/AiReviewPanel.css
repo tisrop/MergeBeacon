@@ -33,14 +33,14 @@
 .review-history summary {
   color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 650;
 }
 
 .repository-rules p {
   margin: var(--space-2) 0;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -50,7 +50,7 @@
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .discovered-rules code {
@@ -79,7 +79,7 @@
   gap: var(--space-2);
   margin-top: var(--space-2);
   color: var(--color-success);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .history-list {
@@ -101,7 +101,7 @@
   border-radius: var(--radius-md);
   background: var(--color-bg);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: left;
 }
 
@@ -127,7 +127,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-1);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   white-space: nowrap;
 }
 
@@ -150,7 +150,7 @@
 .review-language-status {
   flex-basis: 100%;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.35;
   white-space: normal;
 }
@@ -167,7 +167,7 @@
 .incremental-hint {
   max-width: 260px;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.35;
 }
 
@@ -175,7 +175,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   cursor: pointer;
   user-select: none;
@@ -235,7 +235,7 @@
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   background: var(--color-surface-hover);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   border-bottom: 1px solid var(--color-border);
 }
@@ -283,7 +283,7 @@
   margin: 0;
   padding: var(--space-2) var(--space-3) var(--space-3);
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 @keyframes stream-progress {
@@ -302,7 +302,7 @@
   border: 1px solid var(--color-danger-border);
   border-radius: var(--radius-md);
   margin-bottom: var(--space-4);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .ai-result {
@@ -336,7 +336,7 @@
 .draft-header p,
 .draft-location {
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .draft-item {
@@ -358,7 +358,7 @@
 
 .draft-success {
   color: var(--color-success);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .outdated-warning {
@@ -367,7 +367,7 @@
   border-radius: var(--radius-md);
   background: var(--color-warning-light);
   color: var(--color-warning);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .review-metadata {
@@ -375,7 +375,7 @@
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-4);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .review-metadata code {
@@ -394,19 +394,19 @@
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-2);
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
 }
 
 .summary-card p {
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.6;
   color: var(--color-text-secondary);
 }
 
 .suggestions h4 {
   margin-bottom: var(--space-3);
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
 }
 
@@ -417,7 +417,7 @@
   gap: var(--space-2);
   padding: var(--space-10);
   color: var(--color-success);
-  font-size: 15px;
+  font-size: var(--font-size-lg);
 }
 
 .no-issues svg {

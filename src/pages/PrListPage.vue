@@ -237,7 +237,7 @@ function onSelectPr(prNumber: number) {
 <template>
   <AppLayout>
     <template #header>
-      <div class="header-row page-heading">
+      <div class="page-heading">
         <div>
           <h2>{{ listTitle }}</h2>
           <p v-if="repo.activeFullName" class="repo-name">{{ repo.activeFullName }}</p>

@@ -40,6 +40,12 @@ const stateLabels = computed<Record<PrState, string>>(() => ({
   all: t("dependency.stateAll"),
 }));
 
+const stateBadgeClasses: Record<string, string> = {
+  open: "badge-open",
+  closed: "badge-closed",
+  merged: "badge-merged",
+};
+
 function parentNumbers(number: number): number[] {
   return (graph.value?.edges ?? [])
     .filter((edge) => edge.child_number === number)
@@ -80,7 +86,7 @@ defineExpose({ refresh: loadDependencies });
     <header class="dependency-header">
       <div class="dependency-heading">
         <h3 id="dependency-title">{{ t("dependency.title") }}</h3>
-        <span class="inferred-badge" :title="t('dependency.inferredTitle')">
+        <span class="chip" :title="t('dependency.inferredTitle')">
           {{ t("dependency.inferred") }}
         </span>
         <span v-if="loading && graph" class="refresh-status" role="status" aria-live="polite">
@@ -88,7 +94,7 @@ defineExpose({ refresh: loadDependencies });
         </span>
       </div>
       <button
-        :class="['refresh-button', { loading }]"
+        :class="['btn-icon', { 'is-loading': loading }]"
         type="button"
         :title="t('dependency.refresh')"
         :aria-label="t('dependency.refresh')"
@@ -190,17 +196,17 @@ defineExpose({ refresh: loadDependencies });
                   {{ node.title }}
                 </RouterLink>
                 <div class="node-badges">
-                  <span v-if="node.number === graph.current_number" class="current-badge">
+                  <span v-if="node.number === graph.current_number" class="chip chip-accent">
                     {{ t("dependency.current") }}
                   </span>
-                  <span v-if="blockingParents.has(node.number)" class="blocker-badge">
+                  <span v-if="blockingParents.has(node.number)" class="chip chip-warning">
                     {{
                       node.state === "closed"
                         ? t("dependency.closedBlocker")
                         : t("dependency.blocker")
                     }}
                   </span>
-                  <span :class="['state-badge', node.state]">
+                  <span :class="['badge', stateBadgeClasses[node.state] ?? 'badge-closed']">
                     {{ stateLabels[node.state] }}
                   </span>
                 </div>

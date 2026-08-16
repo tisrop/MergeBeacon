@@ -168,10 +168,10 @@ describe("PrDependenciesPanel", () => {
         }),
     );
 
-    await wrapper.get(".refresh-button").trigger("click");
+    await wrapper.get(".btn-icon").trigger("click");
 
     expect(wrapper.get(".dependency-panel").attributes("aria-busy")).toBe("true");
-    expect(wrapper.get(".refresh-button").classes()).toContain("loading");
+    expect(wrapper.get(".btn-icon").classes()).toContain("is-loading");
     expect(wrapper.text()).toContain("刷新中");
     expect(wrapper.findAll(".dependency-flow li")).toHaveLength(3);
 
