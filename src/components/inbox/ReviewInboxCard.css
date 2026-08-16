@@ -1,6 +1,7 @@
 .inbox-card {
   display: flex;
   width: 100%;
+  min-height: 76px;
   align-items: center;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -9,7 +10,7 @@
   box-shadow: none;
   transition:
     border-color var(--transition-base),
-    background var(--transition-fast);
+    background var(--transition-base);
 }
 
 .inbox-card.unread {
@@ -87,7 +88,7 @@
 .repository-name {
   overflow: hidden;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -95,7 +96,7 @@
 
 .card-title {
   overflow: hidden;
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -104,7 +105,7 @@
 .card-meta {
   flex-wrap: wrap;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .pr-number {
@@ -112,14 +113,12 @@
   font-family: var(--font-mono);
 }
 
-.platform-badge,
-.relationship-badge,
-.activity-badge {
+.platform-badge {
   flex: 0 0 auto;
   padding: 2px 7px;
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-full);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   line-height: 16px;
 }
@@ -130,32 +129,15 @@
 }
 
 .platform-gitlab {
-  border-color: #e7c5b8;
-  background: #fff4ef;
-  color: #9f2f13;
+  border-color: var(--color-platform-gitlab-border);
+  background: var(--color-platform-gitlab-bg);
+  color: var(--color-platform-gitlab-text);
 }
 
 .platform-gitee {
-  border-color: #f2c2c2;
-  background: #fff3f3;
-  color: #c71d23;
-}
-
-.relationship-badge {
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-}
-
-.activity-badge {
-  border-color: var(--color-primary-border);
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-}
-
-.activity-badge.status-change {
-  border-color: var(--color-warning-border);
-  background: var(--color-warning-light);
-  color: var(--color-warning);
+  border-color: var(--color-platform-gitee-border);
+  background: var(--color-platform-gitee-bg);
+  color: var(--color-platform-gitee-text);
 }
 
 .read-toggle {
@@ -166,7 +148,7 @@
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
 }
 
@@ -189,7 +171,7 @@
 }
 
 @media (max-width: 760px) {
-  .card-meta > span:not(.pr-number):not(.relationship-badge):not(.activity-badge) {
+  .card-meta > span:not(.pr-number):not(.chip) {
     display: none;
   }
 }

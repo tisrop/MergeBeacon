@@ -97,13 +97,13 @@ async function handleLogin() {
         </div>
         <p class="subtitle">{{ t("login.connect") }}</p>
 
-        <div class="form-group">
-          <label>{{ t("login.platform") }}</label>
+        <div class="field">
+          <label class="field-label">{{ t("login.platform") }}</label>
           <AppSelect v-model="platform" :options="platforms" />
         </div>
 
-        <div v-if="needsCustomUrl" class="form-group">
-          <label for="server-url">{{ t("login.serverUrl") }}</label>
+        <div v-if="needsCustomUrl" class="field">
+          <label class="field-label" for="server-url">{{ t("login.serverUrl") }}</label>
           <input
             id="server-url"
             v-model="gitlabUrl"
@@ -115,14 +115,14 @@ async function handleLogin() {
               })
             "
           />
-          <p class="hint">{{ t("login.serverHint") }}</p>
+          <p class="field-hint">{{ t("login.serverHint") }}</p>
           <p v-if="usesInsecureHttp" class="http-warning">
             {{ t("login.httpWarning") }}
           </p>
         </div>
 
-        <div class="form-group">
-          <label for="access-token">{{ t("login.accessToken") }}</label>
+        <div class="field">
+          <label class="field-label" for="access-token">{{ t("login.accessToken") }}</label>
           <input
             id="access-token"
             v-model="token"
@@ -131,10 +131,10 @@ async function handleLogin() {
             :placeholder="t('login.tokenPlaceholder')"
             @keyup.enter="handleLogin"
           />
-          <p class="hint">{{ t("login.tokenHint") }}</p>
+          <p class="field-hint">{{ t("login.tokenHint") }}</p>
         </div>
 
-        <div v-if="error" class="error-box" role="alert">
+        <div v-if="error" class="error-box-inline" role="alert">
           <svg
             width="14"
             height="14"

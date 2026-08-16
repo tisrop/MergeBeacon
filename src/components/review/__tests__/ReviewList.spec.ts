@@ -220,7 +220,7 @@ describe("ReviewList", () => {
       "第一条修复说明",
       "整体需要修改",
     ]);
-    expect(items.map((item) => item.find(".kind-badge").text())).toEqual([
+    expect(items.map((item) => item.find(".chip-accent").text())).toEqual([
       "普通评论",
       "普通评论",
       "整体评审",
@@ -357,7 +357,7 @@ describe("ReviewList", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("新 PR 未解决线程");
-    expect(wrapper.get(".review-thread .resolution-badge").text()).toBe("未解决");
+    expect(wrapper.get(".review-thread .chip-danger").text()).toBe("未解决");
   });
 
   it("支持回复线程以及编辑、删除自己的评论", async () => {

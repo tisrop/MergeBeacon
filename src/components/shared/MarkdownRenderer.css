@@ -1,7 +1,7 @@
 .markdown-renderer-document {
   min-width: 0;
   color: var(--color-text-secondary);
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
@@ -31,23 +31,23 @@
 .markdown-renderer-document :deep(h1) {
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--color-border-light);
-  font-size: 22px;
+  font-size: var(--font-size-2xl);
 }
 
 .markdown-renderer-document :deep(h2) {
   padding-bottom: var(--space-1);
   border-bottom: 1px solid var(--color-border-light);
-  font-size: 18px;
+  font-size: var(--font-size-xl);
 }
 
 .markdown-renderer-document :deep(h3) {
-  font-size: 16px;
+  font-size: var(--font-size-lg);
 }
 
 .markdown-renderer-document :deep(h4),
 .markdown-renderer-document :deep(h5),
 .markdown-renderer-document :deep(h6) {
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .markdown-renderer-document :deep(p) {
@@ -141,7 +141,7 @@
   color: var(--color-text);
   background: var(--color-surface-subtle);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .markdown-renderer-document :deep(.markdown-code-block) {
@@ -208,7 +208,7 @@
 }
 
 .markdown-renderer-document :deep(.markdown-code-copy[data-copy-state]::after) {
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   font-weight: 700;
   line-height: 1;
 }

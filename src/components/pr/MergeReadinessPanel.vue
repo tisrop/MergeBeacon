@@ -61,7 +61,7 @@ const statusDetails = computed(() => {
     </div>
 
     <button
-      class="refresh-button"
+      class="btn-icon"
       type="button"
       :disabled="loading"
       :aria-label="loading ? t('readiness.refreshing') : t('readiness.refresh')"
@@ -69,7 +69,7 @@ const statusDetails = computed(() => {
       @click="emit('retry')"
     >
       <svg
-        :class="{ spinning: loading }"
+        :class="{ 'is-spinning': loading }"
         width="14"
         height="14"
         viewBox="0 0 24 24"

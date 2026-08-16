@@ -52,12 +52,16 @@ describe("UpdateAvailableDialog", () => {
     const wrapper = mountDialog();
     await flushPromises();
 
-    const primary = document.body.querySelector<HTMLButtonElement>(".update-dialog-primary");
+    const primary = document.body.querySelector<HTMLButtonElement>(
+      ".update-dialog-actions .btn-primary",
+    );
     expect(document.activeElement).toBe(primary);
     primary?.click();
     expect(wrapper.emitted("confirm")).toHaveLength(1);
 
-    document.body.querySelector<HTMLButtonElement>(".update-dialog-secondary")?.click();
+    document.body
+      .querySelector<HTMLButtonElement>(".update-dialog-actions .btn:not(.btn-primary)")
+      ?.click();
     document.body.querySelector<HTMLButtonElement>(".update-dialog-close")?.click();
     document.body
       .querySelector<HTMLElement>(".update-dialog-backdrop")
@@ -75,7 +79,9 @@ describe("UpdateAvailableDialog", () => {
     mountDialog();
     await flushPromises();
 
-    const primary = document.body.querySelector<HTMLButtonElement>(".update-dialog-primary");
+    const primary = document.body.querySelector<HTMLButtonElement>(
+      ".update-dialog-actions .btn-primary",
+    );
     const close = document.body.querySelector<HTMLButtonElement>(".update-dialog-close");
     expect(document.activeElement).toBe(primary);
 

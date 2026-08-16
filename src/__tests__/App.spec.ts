@@ -261,7 +261,7 @@ describe("App", () => {
 
     expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(true);
     expect(document.activeElement).toBe(
-      document.body.querySelector<HTMLButtonElement>(".update-dialog-primary"),
+      document.body.querySelector<HTMLButtonElement>(".update-dialog-actions .btn-primary"),
     );
     wrapper.unmount();
   });
@@ -309,7 +309,7 @@ describe("App", () => {
     expect(document.body.querySelector(".command-palette")).toBeNull();
     expect(wrapper.getComponent(UpdateAvailableDialog).props("open")).toBe(true);
     expect(document.activeElement).toBe(
-      document.body.querySelector<HTMLButtonElement>(".update-dialog-primary"),
+      document.body.querySelector<HTMLButtonElement>(".update-dialog-actions .btn-primary"),
     );
 
     window.__openCommandPalette?.();

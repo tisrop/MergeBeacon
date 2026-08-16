@@ -577,16 +577,12 @@ onScopeDispose(() => {
         </div>
 
         <div class="field">
-          <div
-            class="issue-editor-tabs"
-            role="tablist"
-            :aria-label="t('issue.editDescriptionMode')"
-          >
+          <div class="tab-segmented" role="tablist" :aria-label="t('issue.editDescriptionMode')">
             <button
               type="button"
               role="tab"
               :aria-selected="editDescriptionMode === 'edit'"
-              :class="{ active: editDescriptionMode === 'edit' }"
+              :class="['tab', { active: editDescriptionMode === 'edit' }]"
               @click="editDescriptionMode = 'edit'"
             >
               {{ t("issue.edit") }}
@@ -595,7 +591,7 @@ onScopeDispose(() => {
               type="button"
               role="tab"
               :aria-selected="editDescriptionMode === 'preview'"
-              :class="{ active: editDescriptionMode === 'preview' }"
+              :class="['tab', { active: editDescriptionMode === 'preview' }]"
               @click="editDescriptionMode = 'preview'"
             >
               {{ t("issue.preview") }}

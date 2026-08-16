@@ -63,23 +63,23 @@ describe("MergeReadinessPanel", () => {
 
   it("点击刷新图标重新检查合并状态", async () => {
     const wrapper = mountPanel();
-    await wrapper.get(".refresh-button").trigger("click");
+    await wrapper.get(".btn-icon").trigger("click");
 
     expect(wrapper.emitted("retry")).toHaveLength(1);
-    expect(wrapper.get(".refresh-button").attributes("aria-label")).toBe("刷新合并状态");
+    expect(wrapper.get(".btn-icon").attributes("aria-label")).toBe("刷新合并状态");
   });
 
   it("刷新期间禁用刷新图标并保留已有状态", () => {
     const wrapper = mountPanel(baseReadiness, null, true);
 
-    expect(wrapper.get(".refresh-button").attributes()).toHaveProperty("disabled");
-    expect(wrapper.get(".refresh-button").attributes("aria-label")).toBe("正在刷新合并状态");
+    expect(wrapper.get(".btn-icon").attributes()).toHaveProperty("disabled");
+    expect(wrapper.get(".btn-icon").attributes("aria-label")).toBe("正在刷新合并状态");
     expect(wrapper.get(".readiness-status").text()).toContain("可合并");
   });
 
   it("首次读取失败时通过悬浮详情显示错误并允许重试", async () => {
     const wrapper = mountPanel(null, "读取失败");
-    await wrapper.get(".refresh-button").trigger("click");
+    await wrapper.get(".btn-icon").trigger("click");
 
     expect(wrapper.get(".readiness-tooltip").text()).toContain("读取失败");
     expect(wrapper.emitted("retry")).toHaveLength(1);

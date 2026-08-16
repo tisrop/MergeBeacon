@@ -125,15 +125,10 @@ onUnmounted(() => {
         </div>
 
         <footer class="update-dialog-actions">
-          <button type="button" class="update-dialog-secondary" @click="close">
+          <button type="button" class="btn" @click="close">
             {{ t("update.close") }}
           </button>
-          <button
-            ref="primaryButtonRef"
-            type="button"
-            class="update-dialog-primary"
-            @click="confirm"
-          >
+          <button ref="primaryButtonRef" type="button" class="btn btn-primary" @click="confirm">
             {{ t("update.review") }}
           </button>
         </footer>

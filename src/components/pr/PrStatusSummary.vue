@@ -35,6 +35,13 @@ function blockingReasonText(): string {
     ? reasons.join(t("common.messageSeparator"))
     : overallLabels.value[props.status.status];
 }
+
+const chipClasses: Record<ReadinessState, string> = {
+  ready: "chip-success",
+  blocked: "chip-danger",
+  pending: "chip-warning",
+  unknown: "chip-muted",
+};
 </script>
 
 <template>
@@ -43,17 +50,17 @@ function blockingReasonText(): string {
     :title="blockingReasonText()"
     :aria-label="`${t('inbox.readiness')}: ${blockingReasonText()}`"
   >
-    <span class="status-chip overall-status" :class="`status-${props.status.status}`">
+    <span class="chip chip-strong" :class="chipClasses[props.status.status]">
       {{ overallLabels[props.status.status] }}
     </span>
-    <span class="status-chip" :class="`status-${props.status.approvals_status}`">
+    <span class="chip" :class="chipClasses[props.status.approvals_status]">
       {{ approvalLabels[props.status.approvals_status] }}
     </span>
-    <span class="status-chip" :class="`status-${props.status.checks_status}`">
+    <span class="chip" :class="chipClasses[props.status.checks_status]">
       {{ checksLabels[props.status.checks_status] }}
     </span>
-    <span v-if="props.status.draft" class="status-chip status-draft">Draft</span>
-    <span v-if="props.status.has_conflicts" class="status-chip status-blocked">{{
+    <span v-if="props.status.draft" class="chip chip-warning">{{ t("pr.stateDraft") }}</span>
+    <span v-if="props.status.has_conflicts" class="chip chip-danger">{{
       t("pr.stateConflict")
     }}</span>
   </span>

@@ -466,7 +466,7 @@ describe("PrNewPage", () => {
     await wrapper.get('button[aria-label="刷新分支"]').trigger("click");
     await flushPromises();
 
-    expect(wrapper.get(".error-msg").text()).toContain("network down");
+    expect(wrapper.get(".form-error").text()).toContain("network down");
     expect(wrapper.get('[aria-label="源分支"]').text()).toContain("feature");
     expect(wrapper.get('[aria-label="目标分支"]').text()).toContain("main");
     await wrapper.get('[aria-label="源分支"]').trigger("click");
@@ -861,7 +861,7 @@ describe("PrNewPage", () => {
 
     expect(textarea.element.value).toBe("说明");
     expect(textarea.element.value).not.toContain("mergebeacon-image-upload");
-    expect(wrapper.get(".description-field .error-msg").text()).toContain("upload unavailable");
+    expect(wrapper.get(".description-field .form-error").text()).toContain("upload unavailable");
     expect(wrapper.find(".description-upload-status").exists()).toBe(false);
 
     textarea.element.setSelectionRange(
@@ -874,7 +874,7 @@ describe("PrNewPage", () => {
     expect(prDescriptionImageUpload).toHaveBeenCalledTimes(2);
     expect(textarea.element.value).toBe("说明![clipboard.png](/uploads/hash/clipboard.png)");
     expect(textarea.element.value).not.toContain("mergebeacon-image-upload");
-    expect(wrapper.find(".description-field .error-msg").exists()).toBe(false);
+    expect(wrapper.find(".description-field .form-error").exists()).toBe(false);
     expect(wrapper.find(".description-upload-status").exists()).toBe(false);
   });
 
@@ -912,7 +912,7 @@ describe("PrNewPage", () => {
 
     expect(prDescriptionImageUpload).not.toHaveBeenCalled();
     expect(wrapper.get(".description-upload-status").text()).toContain("正在加载平台能力");
-    expect(wrapper.find(".description-field .error-msg").exists()).toBe(false);
+    expect(wrapper.find(".description-field .form-error").exists()).toBe(false);
 
     resolveCapabilities(platformCapabilities("gitlab"));
     await flushPromises();
@@ -963,8 +963,8 @@ describe("PrNewPage", () => {
 
     expect(prDescriptionImageUpload).not.toHaveBeenCalled();
     expect(textarea.element.value).toBe("");
-    expect(wrapper.get(".description-field .error-msg").text()).toContain("平台能力加载失败");
-    expect(wrapper.get(".description-field .error-msg").text()).not.toContain("不支持");
+    expect(wrapper.get(".description-field .form-error").text()).toContain("平台能力加载失败");
+    expect(wrapper.get(".description-field .form-error").text()).not.toContain("不支持");
     expect(wrapper.get(".description-upload-help").text()).toContain("平台能力加载失败");
   });
 
@@ -1043,7 +1043,7 @@ describe("PrNewPage", () => {
     });
 
     expect(prDescriptionImageUpload).not.toHaveBeenCalled();
-    expect(wrapper.get(".description-field .error-msg").text()).toContain("公开 API 不支持");
+    expect(wrapper.get(".description-field .form-error").text()).toContain("公开 API 不支持");
     expect(wrapper.get(".description-upload-help").text()).toContain("不支持从应用粘贴上传图片");
   });
 
@@ -1070,7 +1070,7 @@ describe("PrNewPage", () => {
 
     expect(file.arrayBuffer).not.toHaveBeenCalled();
     expect(prDescriptionImageUpload).not.toHaveBeenCalled();
-    expect(wrapper.get(".description-field .error-msg").text()).toContain("不能超过 5 MiB");
+    expect(wrapper.get(".description-field .form-error").text()).toContain("不能超过 5 MiB");
     expect(wrapper.get(".description-upload-help").text()).toContain("不超过 5 MiB");
   });
 
@@ -1082,7 +1082,7 @@ describe("PrNewPage", () => {
     });
 
     expect(prDescriptionImageUpload).not.toHaveBeenCalled();
-    expect(wrapper.find(".description-field .error-msg").exists()).toBe(false);
+    expect(wrapper.find(".description-field .form-error").exists()).toBe(false);
   });
 
   it("剪贴板同时包含文本和图片时优先保留原生文本粘贴", async () => {
@@ -1106,7 +1106,7 @@ describe("PrNewPage", () => {
     expect(getAsFile).not.toHaveBeenCalled();
     expect(prDescriptionImageUpload).not.toHaveBeenCalled();
     expect(wrapper.find(".description-upload-status").exists()).toBe(false);
-    expect(wrapper.find(".description-field .error-msg").exists()).toBe(false);
+    expect(wrapper.find(".description-field .form-error").exists()).toBe(false);
   });
 
   it("Diff 可以按提交切换，并支持恢复全部提交视图", async () => {

@@ -118,14 +118,14 @@ defineExpose({ refresh: loadStatus });
     <header class="queue-header">
       <div class="queue-heading">
         <h3 id="merge-queue-title">{{ queueKind ? queueName : t("mergeQueue.genericName") }}</h3>
-        <span class="readonly-badge">{{ t("mergeQueue.readonly") }}</span>
+        <span class="chip">{{ t("mergeQueue.readonly") }}</span>
         <span v-if="loading && status" class="refresh-status" role="status" aria-live="polite">
           {{ t("mergeQueue.refreshing") }}
         </span>
       </div>
       <button
         v-if="queueKind"
-        :class="['refresh-button', { loading }]"
+        :class="['btn-icon', { 'is-loading': loading }]"
         type="button"
         :title="t('mergeQueue.refresh')"
         :aria-label="t('mergeQueue.refresh')"

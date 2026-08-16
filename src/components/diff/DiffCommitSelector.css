@@ -18,7 +18,7 @@
 
 .commit-scope-caption {
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: nowrap;
 }
 
@@ -29,7 +29,7 @@
   align-items: center;
   padding: var(--space-1) var(--space-2);
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -66,13 +66,13 @@
 
 .commit-scope-caret {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
 }
 
 .commit-scope-reset {
   padding: var(--space-1) var(--space-2);
   color: var(--color-primary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   background: none;
   border: 0;
   border-radius: var(--radius-sm);
@@ -87,7 +87,7 @@
 .commit-scope-status,
 .commit-scope-flag {
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .commit-scope-flag {
@@ -100,14 +100,14 @@
   align-items: center;
   padding: 0 var(--space-3) var(--space-2);
   color: var(--color-danger);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 /* ── 浮层 ── */
 
 .commit-scope-menu {
   position: absolute;
-  z-index: 40;
+  z-index: var(--z-combobox);
   top: calc(100% - var(--space-1));
   left: var(--space-3);
   width: min(560px, calc(100vw - var(--space-8)));
@@ -122,7 +122,7 @@
   margin: var(--space-2);
   padding: var(--space-1) var(--space-2);
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-family: inherit;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -133,7 +133,7 @@
   margin: 0 var(--space-2) var(--space-2);
   padding: var(--space-2);
   color: var(--color-warning);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   background: var(--color-warning-light);
   border: 1px solid var(--color-warning-border);
   border-radius: var(--radius-sm);
@@ -181,13 +181,13 @@
 
 .commit-scope-check {
   color: var(--color-primary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .commit-scope-option > code {
   overflow: hidden;
   color: var(--color-primary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: var(--font-mono);
   text-overflow: ellipsis;
 }
@@ -197,14 +197,14 @@
   min-width: 0;
   color: var(--color-text);
   font-weight: 500;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .commit-scope-meta {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
 }
 
@@ -212,7 +212,7 @@
 .commit-scope-hint {
   padding: var(--space-2) var(--space-3);
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .commit-scope-hint {

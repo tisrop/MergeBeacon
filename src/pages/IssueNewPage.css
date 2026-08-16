@@ -35,7 +35,7 @@
 
 .issue-new-empty strong {
   color: var(--color-text);
-  font-size: 15px;
+  font-size: var(--font-size-lg);
 }
 
 .issue-new-empty p {

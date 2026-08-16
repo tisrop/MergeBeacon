@@ -203,7 +203,7 @@ describe("SettingsPage 诊断信息", () => {
     const wrapper = mountPage();
     useAuthStore().setActivePlatform("gitlab");
 
-    await wrapper.get("button.copy-support-button").trigger("click");
+    await wrapper.get('[data-testid="copy-support"]').trigger("click");
     await flushPromises();
 
     expect(copySupportInfo).toHaveBeenCalledWith("gitlab");
@@ -222,23 +222,23 @@ describe("SettingsPage 诊断信息", () => {
     vi.mocked(copySupportInfo).mockRejectedValue(new Error("clipboard denied"));
     const wrapper = mountPage();
 
-    await wrapper.get("button.copy-support-button").trigger("click");
+    await wrapper.get('[data-testid="copy-support"]').trigger("click");
     await flushPromises();
 
     expect(wrapper.get(".support-status.error").text()).toContain(
       "复制失败：Error: clipboard denied",
     );
-    expect(wrapper.get<HTMLButtonElement>("button.copy-support-button").element.disabled).toBe(
+    expect(wrapper.get<HTMLButtonElement>('[data-testid="copy-support"]').element.disabled).toBe(
       false,
     );
-    expect(wrapper.get("button.copy-support-button").text()).toBe("复制诊断信息");
+    expect(wrapper.get('[data-testid="copy-support"]').text()).toBe("复制诊断信息");
   });
 
   it("后端失败时显示错误并恢复按钮", async () => {
     vi.mocked(copySupportInfo).mockRejectedValue("诊断信息暂不可用");
     const wrapper = mountPage();
 
-    await wrapper.get("button.copy-support-button").trigger("click");
+    await wrapper.get('[data-testid="copy-support"]').trigger("click");
     await flushPromises();
 
     expect(copySupportInfo).toHaveBeenCalledOnce();
@@ -248,9 +248,7 @@ describe("SettingsPage 诊断信息", () => {
   it("复制脱敏的近期错误日志并显示记录数量", async () => {
     vi.mocked(copyRecentErrorLogs).mockResolvedValue(7);
     const wrapper = mountPage();
-    const button = wrapper
-      .findAll("button.copy-support-button")
-      .find((node) => node.text() === "复制近期错误日志");
+    const button = wrapper.get('[data-testid="copy-error-logs"]');
 
     expect(button).toBeDefined();
     await button!.trigger("click");
@@ -272,9 +270,7 @@ describe("SettingsPage 诊断信息", () => {
   it("近期错误日志为空时显示明确的空状态", async () => {
     vi.mocked(copyRecentErrorLogs).mockResolvedValue(0);
     const wrapper = mountPage();
-    const button = wrapper
-      .findAll("button.copy-support-button")
-      .find((node) => node.text() === "复制近期错误日志");
+    const button = wrapper.get('[data-testid="copy-error-logs"]');
 
     await button!.trigger("click");
     await flushPromises();
@@ -287,9 +283,7 @@ describe("SettingsPage 诊断信息", () => {
   it("近期错误日志复制失败时恢复按钮并显示错误", async () => {
     vi.mocked(copyRecentErrorLogs).mockRejectedValue(new Error("clipboard denied"));
     const wrapper = mountPage();
-    const button = wrapper
-      .findAll<HTMLButtonElement>("button.copy-support-button")
-      .find((node) => node.text() === "复制近期错误日志");
+    const button = wrapper.get<HTMLButtonElement>('[data-testid="copy-error-logs"]');
 
     await button!.trigger("click");
     await flushPromises();
@@ -314,7 +308,7 @@ describe("SettingsPage 诊断信息", () => {
     expect(getAppVersion).toHaveBeenCalledOnce();
     expect(wrapper.text()).toContain("当前版本：v0.3.0");
 
-    await wrapper.get("button.check-update-button").trigger("click");
+    await wrapper.get('[data-testid="check-update"]').trigger("click");
     await flushPromises();
 
     expect(checkForUpdates).toHaveBeenCalledOnce();
@@ -334,7 +328,7 @@ describe("SettingsPage 诊断信息", () => {
     });
     const wrapper = mountPage();
 
-    await wrapper.get("button.check-update-button").trigger("click");
+    await wrapper.get('[data-testid="check-update"]').trigger("click");
     await flushPromises();
 
     expect(wrapper.text()).toContain("发现新版本 v0.4.0");
@@ -354,7 +348,7 @@ describe("SettingsPage 诊断信息", () => {
       update_mode: "installer",
     });
     const wrapper = mountPage();
-    const button = wrapper.get<HTMLButtonElement>("button.check-update-button");
+    const button = wrapper.get<HTMLButtonElement>('[data-testid="check-update"]');
 
     await button.trigger("click");
     await flushPromises();
@@ -382,14 +376,14 @@ describe("SettingsPage 诊断信息", () => {
     vi.mocked(downloadAndInstallUpdate).mockResolvedValue(undefined);
     const wrapper = mountPage();
 
-    await wrapper.get("button.check-update-button").trigger("click");
+    await wrapper.get('[data-testid="check-update"]').trigger("click");
     await flushPromises();
-    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
 
     expect(downloadAndInstallUpdate).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("安装前请保存工作");
 
-    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
     await flushPromises();
 
     expect(downloadAndInstallUpdate).toHaveBeenCalledWith(expect.any(String), "0.4.0");
@@ -411,13 +405,13 @@ describe("SettingsPage 诊断信息", () => {
     vi.mocked(openExternalUrl).mockResolvedValue(undefined);
     const wrapper = mountPage();
 
-    await wrapper.get("button.check-update-button").trigger("click");
+    await wrapper.get('[data-testid="check-update"]').trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("浏览器中下载 ZIP");
     expect(wrapper.text()).toContain("MergeBeacon.exe 覆盖旧文件");
-    expect(wrapper.get("button.install-update-button").text()).toBe("下载便携版 ZIP");
+    expect(wrapper.get('[data-testid="install-update"]').text()).toBe("下载便携版 ZIP");
 
-    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
     await flushPromises();
     expect(openExternalUrl).toHaveBeenCalledWith(url);
     expect(downloadAndInstallUpdate).not.toHaveBeenCalled();
@@ -470,20 +464,20 @@ describe("SettingsPage 诊断信息", () => {
       });
     const wrapper = mountPage();
 
-    await wrapper.get("button.check-update-button").trigger("click");
+    await wrapper.get('[data-testid="check-update"]').trigger("click");
     await flushPromises();
-    await wrapper.get("button.install-update-button").trigger("click");
-    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
     await flushPromises();
 
     expect(wrapper.text()).toContain("Error: download interrupted");
-    expect(wrapper.get<HTMLButtonElement>("button.install-update-button").element.disabled).toBe(
+    expect(wrapper.get<HTMLButtonElement>('[data-testid="install-update"]').element.disabled).toBe(
       false,
     );
 
-    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
     expect(wrapper.text()).toContain("安装前请保存工作");
-    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
     await flushPromises();
 
     expect(downloadAndInstallUpdate).toHaveBeenNthCalledWith(1, "update-first", "0.4.0");
@@ -516,10 +510,10 @@ describe("SettingsPage 诊断信息", () => {
     });
     const firstPage = mountPage();
 
-    await firstPage.get("button.check-update-button").trigger("click");
+    await firstPage.get('[data-testid="check-update"]').trigger("click");
     await flushPromises();
-    await firstPage.get("button.install-update-button").trigger("click");
-    await firstPage.get("button.install-update-button").trigger("click");
+    await firstPage.get('[data-testid="install-update"]').trigger("click");
+    await firstPage.get('[data-testid="install-update"]').trigger("click");
     expect(listenToUpdateProgress).toHaveBeenCalledOnce();
 
     firstPage.unmount();
@@ -536,7 +530,7 @@ describe("SettingsPage 诊断信息", () => {
     const secondPage = mountPage();
     await flushPromises();
     expect(secondPage.text()).toContain("更新已安装，重启应用后生效");
-    expect(secondPage.get("button.install-update-button").text()).toBe("重启完成更新");
+    expect(secondPage.get('[data-testid="install-update"]').text()).toBe("重启完成更新");
     expect(downloadAndInstallUpdate).toHaveBeenCalledOnce();
   });
 
@@ -553,12 +547,12 @@ describe("SettingsPage 诊断信息", () => {
     vi.mocked(restartAfterUpdate).mockResolvedValue(undefined);
     const wrapper = mountPage();
 
-    await wrapper.get("button.check-update-button").trigger("click");
+    await wrapper.get('[data-testid="check-update"]').trigger("click");
     await flushPromises();
-    await wrapper.get("button.install-update-button").trigger("click");
-    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
     await flushPromises();
-    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
 
     expect(restartAfterUpdate).toHaveBeenCalledOnce();
   });
@@ -582,13 +576,13 @@ describe("SettingsPage 诊断信息", () => {
       .mockResolvedValueOnce(undefined);
     const wrapper = mountPage();
 
-    await wrapper.get("button.check-update-button").trigger("click");
+    await wrapper.get('[data-testid="check-update"]').trigger("click");
     await flushPromises();
-    await wrapper.get("button.install-update-button").trigger("click");
-    await wrapper.get("button.install-update-button").trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
+    await wrapper.get('[data-testid="install-update"]').trigger("click");
     await flushPromises();
 
-    const restartButton = wrapper.get<HTMLButtonElement>("button.install-update-button");
+    const restartButton = wrapper.get<HTMLButtonElement>('[data-testid="install-update"]');
     void restartButton.trigger("click");
     void restartButton.trigger("click");
     await wrapper.vm.$nextTick();
@@ -625,7 +619,7 @@ describe("SettingsPage 诊断信息", () => {
     });
     const wrapper = mountPage();
 
-    await wrapper.get("button.check-update-button").trigger("click");
+    await wrapper.get('[data-testid="check-update"]').trigger("click");
     await flushPromises();
 
     expect(checkForUpdates).toHaveBeenCalledOnce();

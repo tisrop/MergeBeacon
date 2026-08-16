@@ -1,6 +1,6 @@
 .command-palette-backdrop {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-command-palette);
   inset: 0;
   display: flex;
   align-items: flex-start;
@@ -41,7 +41,7 @@
   background: transparent;
   color: var(--color-text);
   font: inherit;
-  font-size: 16px;
+  font-size: var(--font-size-lg);
 }
 
 .command-search:focus-within {
@@ -110,7 +110,7 @@ kbd {
 }
 
 .command-copy strong {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
 }
 
@@ -119,7 +119,7 @@ kbd {
 .command-empty,
 .command-footer {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .command-group {
@@ -145,16 +145,6 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  clip-path: inset(50%);
 }
 
 @media (max-width: 640px) {

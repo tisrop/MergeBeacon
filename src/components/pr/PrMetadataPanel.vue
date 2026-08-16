@@ -605,18 +605,14 @@ onUnmounted(invalidateOptions);
       <div class="field-wide metadata-description-field">
         <div class="metadata-description-toolbar">
           <span id="metadata-description-label">{{ t("metadata.description") }}</span>
-          <div
-            class="metadata-description-tabs"
-            role="tablist"
-            :aria-label="t('metadata.descriptionMode')"
-          >
+          <div class="tab-segmented" role="tablist" :aria-label="t('metadata.descriptionMode')">
             <button
               id="metadata-description-edit-tab"
               type="button"
               role="tab"
               :aria-selected="descriptionMode === 'edit'"
               aria-controls="metadata-description-editor"
-              :class="{ active: descriptionMode === 'edit' }"
+              :class="['tab', { active: descriptionMode === 'edit' }]"
               @click="descriptionMode = 'edit'"
             >
               {{ t("metadata.descriptionEdit") }}
@@ -627,7 +623,7 @@ onUnmounted(invalidateOptions);
               role="tab"
               :aria-selected="descriptionMode === 'preview'"
               aria-controls="metadata-description-preview"
-              :class="{ active: descriptionMode === 'preview' }"
+              :class="['tab', { active: descriptionMode === 'preview' }]"
               @click="descriptionMode = 'preview'"
             >
               {{ t("metadata.descriptionPreview") }}
