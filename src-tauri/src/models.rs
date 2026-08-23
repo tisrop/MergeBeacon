@@ -461,8 +461,17 @@ pub struct PrCreatePreviewData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrBranchDetail {
+    pub name: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrBranchOptions {
     pub branches: Vec<String>,
+    #[serde(default)]
+    pub branch_details: Vec<PrBranchDetail>,
     pub default_branch: Option<String>,
 }
 

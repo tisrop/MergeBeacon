@@ -363,7 +363,14 @@ export interface PrCommitList {
 
 export interface PrBranchOptions {
   branches: string[];
+  branch_details?: PrBranchDetail[];
   default_branch: string | null;
+}
+
+export interface PrBranchDetail {
+  name: string;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface PrLabel {

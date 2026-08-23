@@ -9,6 +9,8 @@ use crate::models::*;
 
 /// GitHub 的 PR commits 接口最多返回 250 条，且不会用分页游标表达这个上限。
 const GITHUB_PR_COMMIT_LIMIT: usize = 250;
+/// 单次 GraphQL 请求批量查询的分支数量，减少大型仓库的顺序分页往返。
+const GITHUB_BRANCH_DETAIL_BATCH_SIZE: usize = 500;
 
 pub struct GitHubAdapter {
     client: HttpClient,
@@ -827,6 +829,46 @@ impl GitHubAdapter {
             .filter(|data| !data.is_null())
             .ok_or_else(|| AppError::Api(format!("GitHub GraphQL {operation}响应缺少 data")))?;
         Ok(data.clone())
+    }
+
+    async fn list_branch_details(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch_names: &[String],
+    ) -> Result<Vec<PrBranchDetail>, AppError> {
+        let mut details = Vec::new();
+        for batch in branch_names.chunks(GITHUB_BRANCH_DETAIL_BATCH_SIZE) {
+            let mut variable_definitions = String::new();
+            let mut selections = String::new();
+            let mut variables = serde_json::Map::new();
+            variables.insert("owner".into(), Value::String(owner.to_string()));
+            variables.insert("repo".into(), Value::String(repo.to_string()));
+            for (index, name) in batch.iter().enumerate() {
+                variable_definitions.push_str(&format!(", $branch{index}: String!"));
+                selections.push_str(&format!(
+                    "branch{index}: ref(qualifiedName: $branch{index}) {{ target {{ ... on Commit {{ authoredDate committedDate }} }} }}\n"
+                ));
+                variables.insert(format!("branch{index}"), Value::String(format!("refs/heads/{name}")));
+            }
+            let query = format!(
+                "query BranchDetails($owner: String!, $repo: String!{variable_definitions}) {{\n\
+                 repository(owner: $owner, name: $repo) {{\n{selections}}}\n}}"
+            );
+            let data = self.graphql("分支时间查询", &query, Value::Object(variables)).await?;
+            let repository = data["repository"]
+                .as_object()
+                .ok_or_else(|| AppError::Api("GitHub GraphQL 分支时间响应缺少 repository".into()))?;
+            details.extend(batch.iter().enumerate().filter_map(|(index, name)| {
+                let branch = repository.get(&format!("branch{index}"))?;
+                (!branch.is_null()).then(|| PrBranchDetail {
+                    name: name.clone(),
+                    created_at: branch["target"]["authoredDate"].as_str().map(str::to_string),
+                    updated_at: branch["target"]["committedDate"].as_str().map(str::to_string),
+                })
+            }));
+        }
+        Ok(details)
     }
 
     fn graphql_database_id(value: &Value) -> Option<(Value, String)> {
@@ -1655,11 +1697,24 @@ impl GitPlatform for GitHubAdapter {
     async fn list_branches(&self, owner: &str, repo: &str) -> Result<PrBranchOptions, AppError> {
         let endpoint = format!("{}/repos/{}/{}/branches", self.base_url, owner, repo);
         let items = super::collect_json_pages(self, &endpoint).await?;
-        let branches = items.iter().filter_map(|branch| branch["name"].as_str().map(str::to_string)).collect();
+        let mut branch_details = items.iter().filter_map(super::branch_detail_from_json).collect::<Vec<_>>();
+        let branches = branch_details.iter().map(|branch| branch.name.clone()).collect::<Vec<_>>();
+        if let Ok(graphql_details) = self.list_branch_details(owner, repo, &branches).await {
+            let graphql_details = graphql_details
+                .into_iter()
+                .map(|branch| (branch.name.clone(), branch))
+                .collect::<std::collections::HashMap<_, _>>();
+            for branch in &mut branch_details {
+                if let Some(detail) = graphql_details.get(&branch.name) {
+                    branch.created_at.clone_from(&detail.created_at);
+                    branch.updated_at.clone_from(&detail.updated_at);
+                }
+            }
+        }
         let repository_url = format!("{}/repos/{}/{}", self.base_url, owner, repo);
         let repository = self.get_json::<Value>(&repository_url).await?;
         let default_branch = repository["default_branch"].as_str().map(str::to_string);
-        Ok(PrBranchOptions { branches, default_branch })
+        Ok(PrBranchOptions { branches, branch_details, default_branch })
     }
 
     async fn list_labels(&self, owner: &str, repo: &str) -> Result<Vec<PrLabel>, AppError> {

@@ -623,6 +623,42 @@ describe("PrNewPage", () => {
     expect(wrapper.findAll(".dropdown-option").map((option) => option.text())).toEqual(["main"]);
   });
 
+  it("源分支按创建时间和更新时间降序排列", async () => {
+    vi.mocked(prBranches).mockResolvedValue({
+      branches: ["main", "older", "feature-a", "feature-b"],
+      branch_details: [
+        {
+          name: "main",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-08-15T00:00:00Z",
+        },
+        {
+          name: "older",
+          created_at: "2026-08-10T00:00:00Z",
+          updated_at: "2026-08-15T00:00:00Z",
+        },
+        {
+          name: "feature-a",
+          created_at: "2026-08-12T00:00:00Z",
+          updated_at: "2026-08-13T00:00:00Z",
+        },
+        {
+          name: "feature-b",
+          created_at: "2026-08-12T00:00:00Z",
+          updated_at: "2026-08-14T00:00:00Z",
+        },
+      ],
+      default_branch: "main",
+    });
+    const { wrapper } = await mountPage();
+
+    await wrapper.get('[aria-label="源分支"]').trigger("click");
+
+    expect(
+      wrapper.findAll(".dropdown-option").map((option) => option.attributes("data-value")),
+    ).toEqual(["feature-b", "feature-a", "older", "main"]);
+  });
+
   it("切换源仓库时重新请求并替换目标分支", async () => {
     let targetRequestCount = 0;
     vi.mocked(prBranches).mockImplementation(async (_platform, owner) => {

@@ -118,6 +118,26 @@ pub fn normalize_api_base(platform: &str, url: &str) -> String {
     }
 }
 
+pub(crate) fn branch_detail_from_json(branch: &Value) -> Option<PrBranchDetail> {
+    let name = branch["name"].as_str()?.to_string();
+    let commit = &branch["commit"];
+    let created_at = branch["created_at"]
+        .as_str()
+        .or_else(|| commit["authored_date"].as_str())
+        .or_else(|| commit["created_at"].as_str())
+        .or_else(|| commit["author"]["date"].as_str())
+        .or_else(|| commit["commit"]["author"]["date"].as_str())
+        .map(str::to_string);
+    let updated_at = branch["updated_at"]
+        .as_str()
+        .or_else(|| commit["committed_date"].as_str())
+        .or_else(|| commit["committer"]["date"].as_str())
+        .or_else(|| commit["commit"]["committer"]["date"].as_str())
+        .or_else(|| commit["created_at"].as_str())
+        .map(str::to_string);
+    Some(PrBranchDetail { name, created_at, updated_at })
+}
+
 /// Keep only remote page links that are safe to hand to the system browser.
 pub(crate) fn sanitize_web_url(value: &serde_json::Value) -> Option<String> {
     let url = value.as_str()?.trim();

@@ -1283,11 +1283,12 @@ impl GitPlatform for GiteeAdapter {
     async fn list_branches(&self, owner: &str, repo: &str) -> Result<PrBranchOptions, AppError> {
         let endpoint = format!("{}/repos/{}/{}/branches", self.base_url, owner, repo);
         let items = super::collect_json_pages(self, &endpoint).await?;
-        let branches = items.iter().filter_map(|branch| branch["name"].as_str().map(str::to_string)).collect();
+        let branch_details = items.iter().filter_map(super::branch_detail_from_json).collect::<Vec<_>>();
+        let branches = branch_details.iter().map(|branch| branch.name.clone()).collect();
         let repository_url = format!("{}/repos/{}/{}", self.base_url, owner, repo);
         let repository = self.get_json::<Value>(&repository_url).await?;
         let default_branch = repository["default_branch"].as_str().map(str::to_string);
-        Ok(PrBranchOptions { branches, default_branch })
+        Ok(PrBranchOptions { branches, branch_details, default_branch })
     }
 
     async fn list_labels(&self, owner: &str, repo: &str) -> Result<Vec<PrLabel>, AppError> {

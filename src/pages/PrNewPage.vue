@@ -343,6 +343,33 @@ function normalizedBranches(options: PrBranchOptions): string[] {
   );
 }
 
+function branchTime(value: string | null | undefined): number {
+  if (!value) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function normalizedSourceBranches(options: PrBranchOptions): string[] {
+  const branches = Array.from(
+    new Set(
+      options.default_branch ? [...options.branches, options.default_branch] : options.branches,
+    ),
+  );
+  const originalIndexes = new Map(branches.map((branch, index) => [branch, index]));
+  const details = new Map((options.branch_details ?? []).map((branch) => [branch.name, branch]));
+  return branches.sort((left, right) => {
+    const leftDetail = details.get(left);
+    const rightDetail = details.get(right);
+    return (
+      branchTime(rightDetail?.created_at) - branchTime(leftDetail?.created_at) ||
+      branchTime(rightDetail?.updated_at) - branchTime(leftDetail?.updated_at) ||
+      (originalIndexes.get(left) ?? 0) - (originalIndexes.get(right) ?? 0)
+    );
+  });
+}
+
 function preferredTargetBranch(options: PrBranchOptions, branches: string[]): string {
   return (
     (options.default_branch && branches.includes(options.default_branch)
@@ -773,7 +800,7 @@ async function loadBranches(preserveExisting = false): Promise<void> {
     const [targetOptions, sourceOptions] = await Promise.all([targetRequest, sourceRequest]);
     if (sequence !== branchSequence) return;
     targetBranches.value = normalizedBranches(targetOptions);
-    sourceBranches.value = normalizedBranches(sourceOptions);
+    sourceBranches.value = normalizedSourceBranches(sourceOptions);
     if (!targetBranches.value.includes(targetBranch.value)) {
       targetBranch.value = preferredTargetBranch(targetOptions, targetBranches.value);
     }
