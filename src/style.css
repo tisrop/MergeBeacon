@@ -177,6 +177,8 @@
   --diff-add-line: #1f4a3d;
   --diff-remove-bg: #402430;
   --diff-remove-line: #53303a;
+  --diff-search-match: var(--color-warning-light);
+  --diff-search-match-active: var(--color-warning-border);
 
   /* AI severity colors */
   --severity-critical: #e5807a;
@@ -318,8 +320,12 @@ button {
   box-shadow: none;
 }
 
-.btn:disabled {
-  opacity: 0.5;
+.btn:disabled,
+.btn-icon:disabled,
+.btn-ghost:disabled {
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border-light);
+  color: var(--color-text-tertiary);
   cursor: not-allowed;
   box-shadow: none;
 }
@@ -423,11 +429,6 @@ button {
   background: var(--color-primary-light);
 }
 
-.btn-icon:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 .btn-ghost {
   display: inline-flex;
   min-height: 28px;
@@ -448,11 +449,6 @@ button {
 
 .btn-ghost:hover:not(:disabled) {
   background: var(--color-primary-light);
-}
-
-.btn-ghost:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
 }
 
 .is-spinning {
