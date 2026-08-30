@@ -11,6 +11,40 @@ use mergebeacon_lib::platform::{github::GitHubAdapter, GitPlatform};
 use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+async fn mount_github_branch_listing<T: AsRef<str>>(mock_server: &MockServer, branch_names: &[T]) {
+    let branches = branch_names.iter().map(|name| serde_json::json!({ "name": name.as_ref() })).collect::<Vec<_>>();
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world/branches"))
+        .and(query_param("per_page", "100"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(branches))
+        .mount(mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/octocat/hello-world"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "default_branch": branch_names.first().map(|name| name.as_ref())
+        })))
+        .mount(mock_server)
+        .await;
+}
+
+fn github_branch_detail_response(branch_count: usize) -> serde_json::Value {
+    let repository = (0..branch_count)
+        .map(|index| {
+            (
+                format!("branch{index}"),
+                serde_json::json!({
+                    "target": {
+                        "authoredDate": "2026-08-20T10:00:00Z",
+                        "committedDate": "2026-08-21T10:00:00Z"
+                    }
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    serde_json::json!({ "data": { "repository": repository } })
+}
+
 fn github_search_issue(number: u64, title: &str, updated_at: &str) -> serde_json::Value {
     serde_json::json!({
         "number": number,
@@ -93,6 +127,28 @@ async fn test_github_lists_branches_and_creates_draft_from_fork() {
         .mount(&mock_server)
         .await;
     Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "repository": {
+                    "branch0": {
+                        "target": {
+                            "authoredDate": "2026-08-10T00:00:00Z",
+                            "committedDate": "2026-08-11T00:00:00Z"
+                        }
+                    },
+                    "branch1": {
+                        "target": {
+                            "authoredDate": "2026-08-12T00:00:00Z",
+                            "committedDate": "2026-08-13T00:00:00Z"
+                        }
+                    }
+                }
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
         .and(path("/repos/octocat/hello-world/pulls"))
         .and(body_json(serde_json::json!({
             "title": "Add feature",
@@ -130,6 +186,9 @@ async fn test_github_lists_branches_and_creates_draft_from_fork() {
     let branch_options = adapter.list_branches("octocat", "hello-world").await.unwrap();
     assert_eq!(branch_options.branches, vec!["main", "feature"]);
     assert_eq!(branch_options.default_branch.as_deref(), Some("feature"));
+    assert_eq!(branch_options.branch_details[1].name, "feature");
+    assert_eq!(branch_options.branch_details[1].created_at.as_deref(), Some("2026-08-12T00:00:00Z"));
+    assert_eq!(branch_options.branch_details[1].updated_at.as_deref(), Some("2026-08-13T00:00:00Z"));
     let preview = adapter
         .preview_pull_request(
             "octocat",
@@ -312,6 +371,90 @@ async fn test_github_lists_all_branch_pages() {
     let branches = adapter.list_branches("octocat", "hello-world").await.unwrap();
 
     assert_eq!(branches.branches, vec!["main", "feature-101"]);
+}
+
+#[tokio::test]
+async fn test_github_batches_more_than_one_hundred_branch_dates_in_one_graphql_request() {
+    let mock_server = MockServer::start().await;
+    let branch_names = (0..101).map(|index| format!("branch-{index}")).collect::<Vec<_>>();
+    mount_github_branch_listing(&mock_server, &branch_names).await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("\"branch100\":\"refs/heads/branch-100\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(github_branch_detail_response(101)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let branches = adapter.list_branches("octocat", "hello-world").await.expect("should list branches");
+
+    assert_eq!(branches.branch_details.len(), 101);
+    assert_eq!(branches.branch_details[0].name, "branch-0");
+    assert_eq!(branches.branch_details[100].name, "branch-100");
+    assert!(branches.branch_details.iter().all(|branch| branch.created_at.is_some() && branch.updated_at.is_some()));
+    let graphql_requests = mock_server
+        .received_requests()
+        .await
+        .expect("requests")
+        .into_iter()
+        .filter(|request| request.url.path() == "/graphql")
+        .count();
+    assert_eq!(graphql_requests, 1);
+}
+
+#[tokio::test]
+async fn test_github_keeps_branches_when_graphql_branch_dates_fail() {
+    let mock_server = MockServer::start().await;
+    mount_github_branch_listing(&mock_server, &["main", "feature"]).await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let branches = adapter.list_branches("octocat", "hello-world").await.expect("should fall back to REST branches");
+
+    assert_eq!(branches.branches, vec!["main", "feature"]);
+    assert_eq!(branches.default_branch.as_deref(), Some("main"));
+    assert!(branches.branch_details.iter().all(|branch| branch.created_at.is_none() && branch.updated_at.is_none()));
+}
+
+#[tokio::test]
+async fn test_github_splits_graphql_branch_detail_batches_after_five_hundred_branches() {
+    let mock_server = MockServer::start().await;
+    let branch_names = (0..501).map(|index| format!("branch-{index}")).collect::<Vec<_>>();
+    mount_github_branch_listing(&mock_server, &branch_names).await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("\"branch499\":\"refs/heads/branch-499\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(github_branch_detail_response(500)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("\"branch0\":\"refs/heads/branch-500\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(github_branch_detail_response(1)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = GitHubAdapter::new(HttpClient::new(), "token".into()).with_base_url(mock_server.uri());
+    let branches = adapter.list_branches("octocat", "hello-world").await.expect("should list branches");
+
+    assert_eq!(branches.branch_details.len(), 501);
+    assert_eq!(branches.branch_details[500].name, "branch-500");
+    let graphql_requests = mock_server
+        .received_requests()
+        .await
+        .expect("requests")
+        .into_iter()
+        .filter(|request| request.url.path() == "/graphql")
+        .count();
+    assert_eq!(graphql_requests, 2);
 }
 
 #[tokio::test]

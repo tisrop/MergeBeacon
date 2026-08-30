@@ -11,8 +11,8 @@
   --color-border-light: #e9edf2;
   --color-border-strong: #bdc7d4;
   --color-text: #18202d;
-  --color-text-secondary: #566273;
-  --color-text-tertiary: #778395;
+  --color-text-secondary: #3e4d5f;
+  --color-text-tertiary: #697789;
   --color-text-inverse: #f7f9fc;
   --color-primary: #27447f;
   --color-primary-hover: #1f386c;
@@ -66,8 +66,9 @@
 
   /* Typography */
   --font-sans:
-    -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "Noto Sans CJK SC",
-    "Microsoft YaHei UI", sans-serif;
+    "Segoe UI Variable Text", "Segoe UI Variable", "HarmonyOS Sans SC", "MiSans", "PingFang SC",
+    "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", "Segoe UI",
+    system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: "SFMono-Regular", "Cascadia Code", "Cascadia Mono", Consolas, monospace;
 
   /* Typography scale（正文最小 12px，交互文字最小 13px，见 FRONTEND_STANDARDS §3） */
@@ -139,8 +140,8 @@
   --color-border-light: #2e343f;
   --color-border-strong: #646e7f;
   --color-text: #eaecf0;
-  --color-text-secondary: #adb2b9;
-  --color-text-tertiary: #838891;
+  --color-text-secondary: #b8c6d2;
+  --color-text-tertiary: #8e9aa8;
   --color-text-inverse: #10131a;
   --color-primary: #7fa6ee;
   --color-primary-hover: #8cb0f0;
@@ -216,6 +217,8 @@ body,
   font-family: var(--font-sans);
   font-size: var(--font-size-base);
   line-height: 1.5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
   color: var(--color-text);
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;

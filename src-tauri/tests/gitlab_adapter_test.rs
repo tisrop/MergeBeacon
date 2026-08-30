@@ -192,8 +192,20 @@ async fn test_gitlab_lists_branches_and_creates_draft_from_fork() {
         .and(path("/api/v4/projects/group%2Frepo/repository/branches"))
         .and(query_param("per_page", "100"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-            { "name": "main" },
-            { "name": "feature" }
+            {
+                "name": "main",
+                "commit": {
+                    "authored_date": "2026-08-10T00:00:00Z",
+                    "committed_date": "2026-08-11T00:00:00Z"
+                }
+            },
+            {
+                "name": "feature",
+                "commit": {
+                    "authored_date": "2026-08-12T00:00:00Z",
+                    "committed_date": "2026-08-13T00:00:00Z"
+                }
+            }
         ])))
         .mount(&mock_server)
         .await;
@@ -248,6 +260,9 @@ async fn test_gitlab_lists_branches_and_creates_draft_from_fork() {
     let branch_options = adapter.list_branches("group", "repo").await.unwrap();
     assert_eq!(branch_options.branches, vec!["main", "feature"]);
     assert_eq!(branch_options.default_branch.as_deref(), Some("feature"));
+    assert_eq!(branch_options.branch_details[1].name, "feature");
+    assert_eq!(branch_options.branch_details[1].created_at.as_deref(), Some("2026-08-12T00:00:00Z"));
+    assert_eq!(branch_options.branch_details[1].updated_at.as_deref(), Some("2026-08-13T00:00:00Z"));
     let preview = adapter
         .preview_pull_request(
             "group",
